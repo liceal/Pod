@@ -214,40 +214,47 @@ class _NotesPaneState extends State<NotesPane> {
         children: [
           // Header with search input & buttons
           SizedBox(
-            height: 28,
+            height: 32,
             child: Row(
               children: [
                 if (_showList)
                   Expanded(
                     child: Container(
-                      height: 26,
+                      height: 32,
                       decoration: BoxDecoration(
                         color: widget.isDark
                             ? Colors.white.withOpacity(0.06)
                             : Colors.black.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(8),
                       ),
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: const TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 12),
                         decoration: InputDecoration(
                           hintText: '搜索便签...',
                           hintStyle: TextStyle(
-                            fontSize: 11,
-                            color: widget.isDark ? Colors.white30 : Colors.black38,
+                            fontSize: 12,
+                            color: widget.isDark
+                                ? Colors.white30
+                                : Colors.black.withOpacity(0.35),
                           ),
-                          prefixIcon: Icon(
-                            Icons.search,
-                            size: 13,
-                            color: widget.isDark ? Colors.white30 : Colors.black38,
+                          prefixIcon: Padding(
+                            padding: const EdgeInsets.only(left: 8, right: 6),
+                            child: Icon(
+                              Icons.search_rounded,
+                              size: 14,
+                              color: widget.isDark
+                                  ? Colors.white.withOpacity(0.5)
+                                  : Colors.black.withOpacity(0.5),
+                            ),
                           ),
                           prefixIconConstraints: const BoxConstraints(
-                            minWidth: 24,
-                            minHeight: 13,
+                            minWidth: 28,
+                            minHeight: 14,
                           ),
                           border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 12),
+                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
                           isDense: true,
                         ),
                       ),
@@ -255,37 +262,92 @@ class _NotesPaneState extends State<NotesPane> {
                   )
                 else
                   const Spacer(),
-                const SizedBox(width: 8),
+                const SizedBox(width: 4),
                 if (!_showList) ...[
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, size: 14),
-                    tooltip: '删除当前便签',
-                    onPressed: () => _showDeleteConfirmDialog(context, active, fromDetail: true),
-                    constraints: const BoxConstraints(),
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  Tooltip(
+                    message: '删除当前便签',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: GestureDetector(
+                        onTap: () => _showDeleteConfirmDialog(context, active, fromDetail: true),
+                        child: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Icon(
+                            Icons.delete_outline_rounded,
+                            size: 15,
+                            color: widget.isDark ? Colors.red[300] : Colors.red[600],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                   const SizedBox(width: 4),
                 ],
-                IconButton(
-                  icon: const Icon(Icons.add, size: 16),
-                  tooltip: '新建便签',
-                  onPressed: () async {
-                    await widget.state.createNote();
-                    _syncActiveNote();
-                    setState(() => _showList = false);
-                  },
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                Tooltip(
+                  message: '新建便签',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () async {
+                        await widget.state.createNote();
+                        _syncActiveNote();
+                        setState(() => _showList = false);
+                      },
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.06)
+                              : Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.add_rounded,
+                          size: 15,
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.6)
+                              : Colors.black.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
                 const SizedBox(width: 4),
-                IconButton(
-                  icon: const Icon(Icons.menu, size: 16),
-                  tooltip: _showList ? '当前为列表视图' : '返回列表视图',
-                  onPressed: () {
-                    setState(() => _showList = !_showList);
-                  },
-                  constraints: const BoxConstraints(),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                Tooltip(
+                  message: _showList ? '当前为列表视图' : '返回列表视图',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() => _showList = !_showList);
+                      },
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.06)
+                              : Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.menu_rounded,
+                          size: 15,
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.6)
+                              : Colors.black.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
               ],
             ),

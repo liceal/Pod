@@ -368,8 +368,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       Slider(
                         value: _panelWidthPercent,
                         min: 30,
-                        max: 95,
-                        divisions: 13,
+                        max: 100,
+                        divisions: 70,
                         activeColor: accentColor,
                         inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
                         label: '${_panelWidthPercent.toInt()}%',

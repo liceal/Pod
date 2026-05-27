@@ -453,14 +453,10 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
 
     return MouseRegion(
       onEnter: (_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _isHovered = true);
-        });
+        if (mounted) setState(() => _isHovered = true);
       },
       onExit: (_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _isHovered = false);
-        });
+        if (mounted) setState(() => _isHovered = false);
       },
       child: GestureDetector(
         onTap: _handleTap,
@@ -654,14 +650,10 @@ class _IconActionButtonState extends State<_IconActionButton> {
     return MouseRegion(
       cursor: SystemMouseCursors.click,
       onEnter: (_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _hovered = true);
-        });
+        if (mounted) setState(() => _hovered = true);
       },
       onExit: (_) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (mounted) setState(() => _hovered = false);
-        });
+        if (mounted) setState(() => _hovered = false);
       },
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,

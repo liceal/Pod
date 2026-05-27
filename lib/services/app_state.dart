@@ -30,7 +30,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // State Variables
   AppSettings settings = AppSettings();
   List<ClipboardItem> clipboardHistory = [];
-  List<File> storedFiles = [];
+  List<FileSystemEntity> storedFiles = [];
   List<Note> notes = [];
   Note? activeNote;
 
@@ -568,10 +568,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return filesDir.path;
   }
 
-  DateTime _getFileTime(File file) {
+  DateTime _getFileTime(FileSystemEntity entity) {
     try {
-      if (!file.existsSync()) return DateTime(0);
-      final stat = file.statSync();
+      if (!entity.existsSync()) return DateTime(0);
+      final stat = entity.statSync();
       // On Windows, stat.changed is creation time (birth time)
       return Platform.isWindows ? stat.changed : stat.modified;
     } catch (_) {
@@ -583,7 +583,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     try {
       final path = await _getFilesDirectoryPath();
       final dir = Directory(path);
-      storedFiles = dir.listSync().whereType<File>().toList()
+      storedFiles = dir.listSync().where((entity) => entity is File || entity is Directory).toList()
         ..sort((a, b) {
           final timeA = _getFileTime(a);
           final timeB = _getFileTime(b);
@@ -614,7 +614,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _getFilesDirectoryPath().then((path) {
       try {
         final dir = Directory(path);
-        storedFiles = dir.listSync().whereType<File>().toList()
+        storedFiles = dir.listSync().where((entity) => entity is File || entity is Directory).toList()
           ..sort((a, b) {
             final timeA = _getFileTime(a);
             final timeB = _getFileTime(b);
@@ -629,24 +629,46 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     final destPath = await _getFilesDirectoryPath();
     for (var filePath in filePaths) {
       try {
-        final srcFile = File(filePath);
-        if (srcFile.existsSync()) {
-          // Extract file name
-          final fileName = srcFile.uri.pathSegments.last;
-          final destFile = File('$destPath/$fileName');
+        if (FileSystemEntity.isDirectorySync(filePath)) {
+          // If it is a directory, copy the directory recursively or copy its folder structure
+          final srcDir = Directory(filePath);
+          final dirName = srcDir.uri.pathSegments.where((s) => s.isNotEmpty).last;
+          final destDir = Directory('$destPath/$dirName');
+          if (!destDir.existsSync()) {
+            await destDir.create(recursive: true);
+          }
+          // Copy files in folder (simple shallow copy for performance/safety)
+          await for (final entity in srcDir.list(recursive: true)) {
+            final relativePath = entity.path.substring(srcDir.path.length);
+            if (entity is File) {
+              final newFile = File('${destDir.path}$relativePath');
+              await newFile.parent.create(recursive: true);
+              await entity.copy(newFile.path);
+            } else if (entity is Directory) {
+              final newSubDir = Directory('${destDir.path}$relativePath');
+              await newSubDir.create(recursive: true);
+            }
+          }
+        } else {
+          final srcFile = File(filePath);
+          if (srcFile.existsSync()) {
+            // Extract file name
+            final fileName = srcFile.uri.pathSegments.last;
+            final destFile = File('$destPath/$fileName');
 
-          // Copy
-          await srcFile.copy(destFile.path);
+            // Copy
+            await srcFile.copy(destFile.path);
 
-          // Preserve the original file's creation/modification time by setting the copy's last modified time
-          try {
-            final srcStat = srcFile.statSync();
-            final creationTime = Platform.isWindows
-                ? srcStat.changed
-                : srcStat.modified;
-            await destFile.setLastModified(creationTime);
-          } catch (e) {
-            debugPrint('Failed to set last modified time for copied file: $e');
+            // Preserve the original file's creation/modification time by setting the copy's last modified time
+            try {
+              final srcStat = srcFile.statSync();
+              final creationTime = Platform.isWindows
+                  ? srcStat.changed
+                  : srcStat.modified;
+              await destFile.setLastModified(creationTime);
+            } catch (e) {
+              debugPrint('Failed to set last modified time for copied file: $e');
+            }
           }
         }
       } catch (e) {
@@ -656,10 +678,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _scanStoredFiles();
   }
 
-  Future<void> deleteFile(File file) async {
+  Future<void> deleteFile(FileSystemEntity entity) async {
     try {
-      if (file.existsSync()) {
-        await file.delete();
+      if (entity.existsSync()) {
+        await entity.delete(recursive: true);
       }
     } catch (e) {
       debugPrint('Failed to delete file: $e');
@@ -667,21 +689,63 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _scanStoredFiles();
   }
 
-  Future<void> openFile(File file) async {
+  Future<void> openFile(FileSystemEntity entity) async {
     try {
-      final uri = Uri.file(file.path);
+      final uri = Uri.file(entity.path);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri);
       } else {
         // Fallback using process execution
         if (Platform.isWindows) {
-          await Process.run('explorer.exe', [file.path]);
+          await Process.run('explorer.exe', [entity.path]);
         } else if (Platform.isMacOS) {
-          await Process.run('open', [file.path]);
+          await Process.run('open', [entity.path]);
         }
       }
     } catch (e) {
       debugPrint('Failed to open file: $e');
+    }
+  }
+
+  Future<void> createNewFile(String name) async {
+    try {
+      final basePath = await _getFilesDirectoryPath();
+      var fileName = name.trim().isEmpty ? '新建文件.txt' : name.trim();
+      var file = File('$basePath/$fileName');
+
+      // Handle duplicates by adding suffix
+      int counter = 2;
+      final nameWithoutExt = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+      final ext = fileName.contains('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
+      while (file.existsSync()) {
+        file = File('$basePath/$nameWithoutExt ($counter)$ext');
+        counter++;
+      }
+
+      await file.create();
+      await _scanStoredFiles();
+    } catch (e) {
+      debugPrint('Failed to create new file: $e');
+    }
+  }
+
+  Future<void> createNewDirectory(String name) async {
+    try {
+      final basePath = await _getFilesDirectoryPath();
+      var dirName = name.trim().isEmpty ? '新建文件夹' : name.trim();
+      var dir = Directory('$basePath/$dirName');
+
+      // Handle duplicates by adding suffix
+      int counter = 2;
+      while (dir.existsSync()) {
+        dir = Directory('$basePath/$dirName ($counter)');
+        counter++;
+      }
+
+      await dir.create();
+      await _scanStoredFiles();
+    } catch (e) {
+      debugPrint('Failed to create new directory: $e');
     }
   }
 
