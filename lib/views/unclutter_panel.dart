@@ -165,7 +165,20 @@ class _UnclutterPanelState extends State<UnclutterPanel>
 
   // Show settings popup — temporarily expand the native window so the dialog is not clipped
   void _showSettings() async {
-    final double panelW = widget.state.settings.panelWidth;
+    final settings = widget.state.settings;
+    double panelW;
+    try {
+      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
+      final screenWidth = primaryDisplay.size.width;
+      if (settings.isWidthPercentage) {
+        panelW = screenWidth * (settings.panelWidthPercent / 100.0);
+      } else {
+        panelW = settings.panelWidth;
+      }
+    } catch (_) {
+      panelW = settings.panelWidth;
+    }
+
     const double expandedH = 350.0;
     const double dialogH = 620.0;
 
@@ -191,12 +204,27 @@ class _UnclutterPanelState extends State<UnclutterPanel>
 
     widget.state.setDialogOpen(false);
 
+    // Recalculate panel width as it might have changed inside the settings dialog
+    final updatedSettings = widget.state.settings;
+    double updatedPanelW;
+    try {
+      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
+      final screenWidth = primaryDisplay.size.width;
+      if (updatedSettings.isWidthPercentage) {
+        updatedPanelW = screenWidth * (updatedSettings.panelWidthPercent / 100.0);
+      } else {
+        updatedPanelW = updatedSettings.panelWidth;
+      }
+    } catch (_) {
+      updatedPanelW = updatedSettings.panelWidth;
+    }
+
     // Restore normal window height after dialog closes
     try {
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
       final screenWidth = primaryDisplay.size.width;
-      final x = (screenWidth - panelW) / 2;
-      await windowManager.setBounds(Rect.fromLTWH(x, 0, panelW, expandedH));
+      final x = (screenWidth - updatedPanelW) / 2;
+      await windowManager.setBounds(Rect.fromLTWH(x, 0, updatedPanelW, expandedH));
     } catch (_) {}
 
     // Check if we need to auto-collapse since settings is closed and mouse might be outside

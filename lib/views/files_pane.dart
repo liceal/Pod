@@ -53,6 +53,7 @@ class _FilesPaneState extends State<FilesPane> {
   ];
 
   bool _isImage(String path) {
+    if (FileSystemEntity.isDirectorySync(path)) return false;
     final ext = path.split('.').last.toLowerCase();
     return _imageExts.contains(ext);
   }
@@ -60,11 +61,12 @@ class _FilesPaneState extends State<FilesPane> {
   void _showContextMenu(
     BuildContext context,
     Offset globalPosition,
-    File file,
+    FileSystemEntity file,
     VoidCallback onDelete,
   ) async {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isDir = file is Directory;
 
     final RenderBox overlay =
         Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
@@ -76,47 +78,36 @@ class _FilesPaneState extends State<FilesPane> {
         Offset.zero & overlay.size,
       ),
       items: [
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'open',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.open_in_new_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('打开文件', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.open_in_new_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(isDir ? '打开文件夹' : '打开文件', style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'show_in_explorer',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.folder_open_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('在资源管理器中显示', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.folder_open_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(Platform.isMacOS ? '在 Finder 中显示' : '在资源管理器中显示', style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
-        const PopupMenuItem<String>(
-          value: 'copy_file',
-          height: 32,
-          child: Row(
-            children: [
-              Icon(Icons.copy_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('复制文件路径', style: TextStyle(fontSize: 11)),
-            ],
-          ),
-        ),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'copy_path',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.insert_link_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('打开文件所在目录', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.copy_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(isDir ? '复制文件夹路径' : '复制文件路径', style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
@@ -133,7 +124,7 @@ class _FilesPaneState extends State<FilesPane> {
               ),
               const SizedBox(width: 8),
               Text(
-                '删除文件',
+                isDir ? '删除文件夹' : '删除文件',
                 style: TextStyle(
                   fontSize: 11,
                   color: isDark ? Colors.red[300] : Colors.red[700],
@@ -161,22 +152,15 @@ class _FilesPaneState extends State<FilesPane> {
           Process.run('open', ['-R', file.path]);
         }
         break;
-      case 'copy_file':
+      case 'copy_path':
         Clipboard.setData(ClipboardData(text: file.path));
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('文件路径已复制到剪贴板', style: TextStyle(fontSize: 11)),
-              duration: Duration(seconds: 1),
+            SnackBar(
+              content: Text(isDir ? '文件夹路径已复制到剪贴板' : '文件路径已复制到剪贴板', style: const TextStyle(fontSize: 11)),
+              duration: const Duration(seconds: 1),
             ),
           );
-        }
-        break;
-      case 'copy_path':
-        if (Platform.isWindows) {
-          Process.run('explorer.exe', ['/select,', file.path]);
-        } else if (Platform.isMacOS) {
-          Process.run('open', ['-R', file.path]);
         }
         break;
       case 'delete':
@@ -187,6 +171,9 @@ class _FilesPaneState extends State<FilesPane> {
 
   /// 返回 (图标, 颜色)
   (IconData, Color) _getFileIconAndColor(String path) {
+    if (FileSystemEntity.isDirectorySync(path)) {
+      return (Icons.folder_rounded, const Color(0xFFFFB300));
+    }
     final ext = path.split('.').last.toLowerCase();
     switch (ext) {
       // 压缩包
@@ -288,7 +275,8 @@ class _FilesPaneState extends State<FilesPane> {
 
     final files = widget.state.storedFiles.where((file) {
       if (_searchQuery.isEmpty) return true;
-      final fileName = file.uri.pathSegments.last.toLowerCase();
+      final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+      final fileName = segments.isEmpty ? '' : segments.last.toLowerCase();
       return fileName.contains(_searchQuery.toLowerCase());
     }).toList();
 
@@ -368,38 +356,43 @@ class _FilesPaneState extends State<FilesPane> {
 
                 // ── File Content ──
                 Expanded(
-                  child: files.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.move_to_inbox_outlined,
-                                size: 32,
-                                color: widget.isDark
-                                    ? Colors.white24
-                                    : Colors.black26,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                _searchQuery.isNotEmpty
-                                    ? '未找到匹配文件'
-                                    : '拖拽文件到此处暂存',
-                                style: TextStyle(
-                                  fontSize: 11,
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onSecondaryTapUp: (details) =>
+                        _showEmptySpaceContextMenu(context, details.globalPosition),
+                    child: files.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.move_to_inbox_outlined,
+                                  size: 32,
                                   color: widget.isDark
-                                      ? Colors.white30
-                                      : Colors.black.withOpacity(0.3),
+                                      ? Colors.white24
+                                      : Colors.black26,
                                 ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _viewMode == _ViewMode.list
-                      ? _buildListView(files)
-                      : _viewMode == _ViewMode.grid
-                      ? _buildGridView(files)
-                      : _buildDetailsView(files),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _searchQuery.isNotEmpty
+                                      ? '未找到匹配文件'
+                                      : '拖拽文件到此处暂存',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: widget.isDark
+                                        ? Colors.white30
+                                        : Colors.black.withOpacity(0.3),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : _viewMode == _ViewMode.list
+                        ? _buildListView(files)
+                        : _viewMode == _ViewMode.grid
+                        ? _buildGridView(files)
+                        : _buildDetailsView(files),
+                  ),
                 ),
               ],
             ),
@@ -450,14 +443,123 @@ class _FilesPaneState extends State<FilesPane> {
     );
   }
 
-  Widget _buildListView(List<File> files) {
+  void _showNewNameDialog(BuildContext context, bool isFolder) async {
+    final textController = TextEditingController(text: isFolder ? '新建文件夹' : '新建文件.txt');
+    widget.state.setDialogOpen(true);
+    await showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (ctx) => AlertDialog(
+        title: Text(isFolder ? '新建文件夹' : '新建文件'),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: isFolder ? '请输入文件夹名称' : '请输入文件名称',
+          ),
+        ),
+        actions: [
+          TextButton(
+            child: const Text('取消'),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+          TextButton(
+            child: const Text('创建'),
+            onPressed: () async {
+              final name = textController.text;
+              Navigator.of(ctx).pop();
+              if (isFolder) {
+                await widget.state.createNewDirectory(name);
+              } else {
+                await widget.state.createNewFile(name);
+              }
+              setState(() {});
+            },
+          ),
+        ],
+      ),
+    );
+    widget.state.setDialogOpen(false);
+  }
+
+  void _showEmptySpaceContextMenu(BuildContext context, Offset globalPosition) async {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    final RenderBox overlay =
+        Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
+
+    final result = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(globalPosition.dx, globalPosition.dy, 0, 0),
+        Offset.zero & overlay.size,
+      ),
+      items: [
+        const PopupMenuItem<String>(
+          value: 'new_file',
+          height: 32,
+          child: Row(
+            children: [
+              Icon(Icons.note_add_rounded, size: 14),
+              SizedBox(width: 8),
+              Text('新建文件', style: TextStyle(fontSize: 11)),
+            ],
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'new_folder',
+          height: 32,
+          child: Row(
+            children: [
+              Icon(Icons.create_new_folder_rounded, size: 14),
+              SizedBox(width: 8),
+              Text('新建文件夹', style: TextStyle(fontSize: 11)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        const PopupMenuItem<String>(
+          value: 'open_folder',
+          height: 32,
+          child: Row(
+            children: [
+              Icon(Icons.folder_open_rounded, size: 14),
+              SizedBox(width: 8),
+              Text('打开暂存目录', style: TextStyle(fontSize: 11)),
+            ],
+          ),
+        ),
+      ],
+      elevation: 4,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      color: isDark ? const Color(0xFF262626) : Colors.white,
+    );
+
+    if (result == null) return;
+
+    switch (result) {
+      case 'new_file':
+        if (context.mounted) _showNewNameDialog(context, false);
+        break;
+      case 'new_folder':
+        if (context.mounted) _showNewNameDialog(context, true);
+        break;
+      case 'open_folder':
+        widget.state.openFilesDirectoryInExplorer();
+        break;
+    }
+  }
+
+  Widget _buildListView(List<FileSystemEntity> files) {
     return ListView.builder(
       controller: _scrollController,
       itemCount: files.length,
       physics: const BouncingScrollPhysics(),
       itemBuilder: (ctx, index) {
         final file = files[index];
-        final fileName = file.uri.pathSegments.last;
+        final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+        final fileName = segments.isEmpty ? '未知' : segments.last;
         final (icon, iconColor) = _getFileIconAndColor(file.path);
         return _ListFileCard(
           file: file,
@@ -479,7 +581,7 @@ class _FilesPaneState extends State<FilesPane> {
     );
   }
 
-  Widget _buildGridView(List<File> files) {
+  Widget _buildGridView(List<FileSystemEntity> files) {
     return GridView.builder(
       controller: _scrollController,
       physics: const BouncingScrollPhysics(),
@@ -492,7 +594,8 @@ class _FilesPaneState extends State<FilesPane> {
       itemCount: files.length,
       itemBuilder: (ctx, index) {
         final file = files[index];
-        final fileName = file.uri.pathSegments.last;
+        final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+        final fileName = segments.isEmpty ? '未知' : segments.last;
         final (icon, iconColor) = _getFileIconAndColor(file.path);
         return _GridFileCard(
           file: file,
@@ -514,7 +617,7 @@ class _FilesPaneState extends State<FilesPane> {
     );
   }
 
-  Widget _buildDetailsView(List<File> files) {
+  Widget _buildDetailsView(List<FileSystemEntity> files) {
     return Column(
       children: [
         // Table Headers
@@ -572,10 +675,13 @@ class _FilesPaneState extends State<FilesPane> {
             physics: const BouncingScrollPhysics(),
             itemBuilder: (ctx, index) {
               final file = files[index];
-              final fileName = file.uri.pathSegments.last;
+              final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+              final fileName = segments.isEmpty ? '未知' : segments.last;
               final (icon, iconColor) = _getFileIconAndColor(file.path);
               final stat = file.existsSync() ? file.statSync() : null;
-              final sizeStr = stat != null ? formatFileSize(stat.size) : '—';
+              final sizeStr = FileSystemEntity.isDirectorySync(file.path)
+                  ? '—'
+                  : (stat != null ? formatFileSize(stat.size) : '—');
 
               String dateStr = '—';
               if (stat != null) {
@@ -709,7 +815,7 @@ class _SearchBar extends StatelessWidget {
 // List Card
 // ══════════════════════════════════════════════════
 class _ListFileCard extends StatefulWidget {
-  final File file;
+  final FileSystemEntity file;
   final String fileName;
   final IconData icon;
   final Color iconColor;
@@ -750,14 +856,10 @@ class _ListFileCardState extends State<_ListFileCard> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = true);
-          });
+          if (mounted) setState(() => _isHovered = true);
         },
         onExit: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = false);
-          });
+          if (mounted) setState(() => _isHovered = false);
         },
         child: GestureDetector(
           onDoubleTap: widget.onOpen,
@@ -789,7 +891,7 @@ class _ListFileCardState extends State<_ListFileCard> {
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(5),
                           child: Image.file(
-                            widget.file,
+                            File(widget.file.path),
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Icon(
                               widget.icon,
@@ -850,7 +952,7 @@ class _ListFileCardState extends State<_ListFileCard> {
 // Grid Card
 // ══════════════════════════════════════════════════
 class _GridFileCard extends StatefulWidget {
-  final File file;
+  final FileSystemEntity file;
   final String fileName;
   final IconData icon;
   final Color iconColor;
@@ -891,14 +993,10 @@ class _GridFileCardState extends State<_GridFileCard> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = true);
-          });
+          if (mounted) setState(() => _isHovered = true);
         },
         onExit: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = false);
-          });
+          if (mounted) setState(() => _isHovered = false);
         },
         child: GestureDetector(
           onDoubleTap: widget.onOpen,
@@ -934,7 +1032,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                               ? ClipRRect(
                                   borderRadius: BorderRadius.circular(6),
                                   child: Image.file(
-                                    widget.file,
+                                    File(widget.file.path),
                                     fit: BoxFit.cover,
                                     width: double.infinity,
                                     errorBuilder: (_, __, ___) => Icon(
@@ -1018,7 +1116,7 @@ class _GridFileCardState extends State<_GridFileCard> {
 // File Preview Dialog
 // ══════════════════════════════════════════════════
 class _FilePreviewDialog extends StatefulWidget {
-  final File file;
+  final FileSystemEntity file;
   final String fileName;
   final bool isImage;
   final bool isText;
@@ -1049,7 +1147,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
     super.initState();
     if (widget.isText) {
       _loadingText = true;
-      widget.file
+      File(widget.file.path)
           .readAsString()
           .then((content) {
             if (mounted) {
@@ -1212,7 +1310,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
         child: ClipRRect(
           borderRadius: BorderRadius.circular(8),
           child: Image.file(
-            widget.file,
+            File(widget.file.path),
             fit: BoxFit.contain,
             errorBuilder: (_, __, ___) => Center(
               child: Column(
@@ -1278,7 +1376,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
 // Details Card
 // ══════════════════════════════════════════════════
 class _DetailsFileCard extends StatefulWidget {
-  final File file;
+  final FileSystemEntity file;
   final String fileName;
   final String sizeStr;
   final String dateStr;
@@ -1323,14 +1421,10 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = true);
-          });
+          if (mounted) setState(() => _isHovered = true);
         },
         onExit: (_) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) setState(() => _isHovered = false);
-          });
+          if (mounted) setState(() => _isHovered = false);
         },
         child: GestureDetector(
           onDoubleTap: widget.onOpen,
@@ -1362,7 +1456,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                       ? ClipRRect(
                           borderRadius: BorderRadius.circular(4),
                           child: Image.file(
-                            widget.file,
+                            File(widget.file.path),
                             fit: BoxFit.cover,
                             errorBuilder: (_, __, ___) => Icon(
                               widget.icon,
