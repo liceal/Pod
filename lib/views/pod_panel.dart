@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:screen_retriever/screen_retriever.dart';
-import 'package:desktop_drop/desktop_drop.dart';
+import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../models/app_settings.dart';
 import '../theme/app_theme.dart';
@@ -165,34 +165,28 @@ class _PodPanelState extends State<PodPanel>
 
   // Show settings popup — temporarily expand the native window so the dialog is not clipped
   void _showSettings() async {
-    final settings = widget.state.settings;
-    double panelW;
-    try {
-      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      final screenWidth = primaryDisplay.size.width;
-      if (settings.isWidthPercentage) {
-        panelW = screenWidth * (settings.panelWidthPercent / 100.0);
-      } else {
-        panelW = settings.panelWidth;
-      }
-    } catch (_) {
-      panelW = settings.panelWidth;
-    }
-
     const double expandedH = 350.0;
     const double dialogH = 620.0;
 
-    // Expand window height to fit the dialog
+    // 只取一次屏幕宽度，后续复用，避免多次异步 I/O
+    double screenWidth = 0;
     try {
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      final screenWidth = primaryDisplay.size.width;
+      screenWidth = primaryDisplay.size.width;
+    } catch (_) {}
+
+    // 使用已缓存的面板宽度，避免重复计算
+    final double panelW = widget.state.lastCalculatedWidth;
+
+    // 展开窗口高度以容纳设置弹窗
+    if (screenWidth > 0) {
       final x = (screenWidth - panelW) / 2;
       await windowManager.setBounds(Rect.fromLTWH(x, 0, panelW, dialogH));
-    } catch (_) {}
+    }
 
     if (!mounted) return;
 
-    // Prevent auto-collapse while settings dialog is open
+    // 打开期间禁止自动收起
     widget.state.setDialogOpen(true);
     _autoCollapseTimer?.cancel();
 
@@ -204,33 +198,17 @@ class _PodPanelState extends State<PodPanel>
 
     widget.state.setDialogOpen(false);
 
-    // Recalculate panel width as it might have changed inside the settings dialog
-    final updatedSettings = widget.state.settings;
-    double updatedPanelW;
-    try {
-      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      final screenWidth = primaryDisplay.size.width;
-      if (updatedSettings.isWidthPercentage) {
-        updatedPanelW =
-            screenWidth * (updatedSettings.panelWidthPercent / 100.0);
-      } else {
-        updatedPanelW = updatedSettings.panelWidth;
-      }
-    } catch (_) {
-      updatedPanelW = updatedSettings.panelWidth;
-    }
-
-    // Restore normal window height after dialog closes
-    try {
-      final primaryDisplay = await screenRetriever.getPrimaryDisplay();
-      final screenWidth = primaryDisplay.size.width;
+    // 弹窗关闭后：直接用 lastCalculatedWidth（updateSettings 已更新）+ 缓存的 screenWidth
+    // 无需再次调用 screenRetriever，消除关闭卡顿
+    final double updatedPanelW = widget.state.lastCalculatedWidth;
+    if (screenWidth > 0) {
       final x = (screenWidth - updatedPanelW) / 2;
       await windowManager.setBounds(
         Rect.fromLTWH(x, 0, updatedPanelW, expandedH),
       );
-    } catch (_) {}
+    }
 
-    // Check if we need to auto-collapse since settings is closed and mouse might be outside
+    // 设置关闭后若鼠标不在面板内，启动自动收起计时器
     if (!_isMouseInside) {
       _onMouseExitedPanel();
     }
@@ -420,12 +398,22 @@ class _PodPanelState extends State<PodPanel>
                       left: 0,
                       right: 0,
                       height: Platform.isMacOS ? 24.0 : 3.0,
-                      child: DropTarget(
-                        onDragEntered: (_) {
+                      child: sdd.DropRegion(
+                        formats: const [sdd.Formats.fileUri],
+                        onDropEnter: (event) {
+                          final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+                          if (isInternal) return;
                           if (!widget.state.isExpanded &&
                               !widget.state.isAnimating) {
                             widget.state.expandPanel();
                           }
+                        },
+                        onDropOver: (event) {
+                          final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+                          return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
+                        },
+                        onPerformDrop: (event) async {
+                          // No-op
                         },
                         child: MouseRegion(
                           cursor: SystemMouseCursors.click,
