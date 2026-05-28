@@ -2,7 +2,6 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
-import 'package:desktop_drop/desktop_drop.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
@@ -24,7 +23,8 @@ class _FilesPaneState extends State<FilesPane> {
   String _searchQuery = '';
   _ViewMode _viewMode = _ViewMode.grid;
   final TextEditingController _searchController = TextEditingController();
-  final ScrollController _scrollController = ScrollController();
+  final ScrollController _gridScrollController = ScrollController();
+  final ScrollController _detailsScrollController = ScrollController();
 
   @override
   void initState() {
@@ -37,7 +37,8 @@ class _FilesPaneState extends State<FilesPane> {
   @override
   void dispose() {
     _searchController.dispose();
-    _scrollController.dispose();
+    _gridScrollController.dispose();
+    _detailsScrollController.dispose();
     super.dispose();
   }
 
@@ -280,14 +281,52 @@ class _FilesPaneState extends State<FilesPane> {
       return fileName.contains(_searchQuery.toLowerCase());
     }).toList();
 
-    return DropTarget(
-      onDragEntered: (_) => setState(() => _isDragging = true),
-      onDragExited: (_) => setState(() => _isDragging = false),
-      onDragDone: (detail) async {
+    return sdd.DropRegion(
+      formats: const [sdd.Formats.fileUri],
+      onDropEnter: (event) {
+        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+        if (!isInternal) {
+          setState(() => _isDragging = true);
+        }
+      },
+      onDropLeave: (event) => setState(() => _isDragging = false),
+      onDropOver: (event) {
+        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+        return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
+      },
+      onPerformDrop: (event) async {
+        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+        if (isInternal) return;
         setState(() => _isDragging = false);
-        await widget.state.addDroppedFiles(
-          detail.files.map((f) => f.path).toList(),
-        );
+        final filePaths = <String>[];
+        final items = event.session.items;
+        int completed = 0;
+        if (items.isEmpty) return;
+
+        for (final item in items) {
+          final reader = item.dataReader;
+          if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
+            reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
+              if (uri != null) {
+                filePaths.add(uri.toFilePath());
+              }
+              completed++;
+              if (completed == items.length && filePaths.isNotEmpty) {
+                widget.state.addDroppedFiles(filePaths);
+              }
+            }, onError: (err) {
+              completed++;
+              if (completed == items.length && filePaths.isNotEmpty) {
+                widget.state.addDroppedFiles(filePaths);
+              }
+            });
+          } else {
+            completed++;
+            if (completed == items.length && filePaths.isNotEmpty) {
+              widget.state.addDroppedFiles(filePaths);
+            }
+          }
+        }
       },
       child: Stack(
         children: [
@@ -551,7 +590,8 @@ class _FilesPaneState extends State<FilesPane> {
 
   Widget _buildGridView(List<FileSystemEntity> files) {
     return GridView.builder(
-      controller: _scrollController,
+      key: const PageStorageKey('files_grid_view'),
+      controller: _gridScrollController,
       physics: const BouncingScrollPhysics(),
       gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: 110,
@@ -637,7 +677,8 @@ class _FilesPaneState extends State<FilesPane> {
         // List items
         Expanded(
           child: ListView.builder(
-            controller: _scrollController,
+            key: const PageStorageKey('files_details_view'),
+            controller: _detailsScrollController,
             itemCount: files.length,
             physics: const BouncingScrollPhysics(),
             itemBuilder: (ctx, index) {
@@ -865,12 +906,13 @@ class _GridFileCard extends StatefulWidget {
 
 class _GridFileCardState extends State<_GridFileCard> {
   bool _isHovered = false;
+  DateTime? _lastTapTime;
 
   @override
   Widget build(BuildContext context) {
     return sdd.DragItemWidget(
       dragItemProvider: (request) {
-        final item = sdd.DragItem();
+        final item = sdd.DragItem(localData: 'internal_file_drag');
         item.add(sdd.Formats.fileUri(Uri.file(widget.file.path)));
         return item;
       },
@@ -891,7 +933,16 @@ class _GridFileCardState extends State<_GridFileCard> {
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(8),
-                onTap: widget.onOpen,
+                onTap: () {
+                  final now = DateTime.now();
+                  if (_lastTapTime != null &&
+                      now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
+                    _lastTapTime = null;
+                    widget.onOpen();
+                  } else {
+                    _lastTapTime = now;
+                  }
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   decoration: BoxDecoration(
@@ -1267,12 +1318,13 @@ class _DetailsFileCard extends StatefulWidget {
 
 class _DetailsFileCardState extends State<_DetailsFileCard> {
   bool _isHovered = false;
+  DateTime? _lastTapTime;
 
   @override
   Widget build(BuildContext context) {
     return sdd.DragItemWidget(
       dragItemProvider: (request) {
-        final item = sdd.DragItem();
+        final item = sdd.DragItem(localData: 'internal_file_drag');
         item.add(sdd.Formats.fileUri(Uri.file(widget.file.path)));
         return item;
       },
@@ -1293,7 +1345,16 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
               color: Colors.transparent,
               child: InkWell(
                 borderRadius: BorderRadius.circular(6),
-                onTap: widget.onOpen,
+                onTap: () {
+                  final now = DateTime.now();
+                  if (_lastTapTime != null &&
+                      now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
+                    _lastTapTime = null;
+                    widget.onOpen();
+                  } else {
+                    _lastTapTime = now;
+                  }
+                },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   margin: const EdgeInsets.only(bottom: 2),

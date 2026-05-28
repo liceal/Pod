@@ -32,7 +32,7 @@ class AppSettings {
     this.panelWidthPercent = 60.0,
     String? themeColorName = 'blue',
     bool? closeOnBlur = false,
-    this.autoCollapseDelay = 0,
+    this.autoCollapseDelay = 5,
     this.customFilesPath,
   })  : _themeColorName = themeColorName,
         _closeOnBlur = closeOnBlur;
@@ -100,7 +100,7 @@ class AppSettings {
       panelWidthPercent: (json['panelWidthPercent'] as num?)?.toDouble() ?? 60.0,
       themeColorName: json['themeColorName'] as String?,
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
-      autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 0,
+      autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 5,
       customFilesPath: json['customFilesPath'] as String?,
     );
   }

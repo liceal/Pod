@@ -45,7 +45,6 @@ dependencies:
   tray_manager: ^0.2.2
   
   # Drag and drop files to application
-  desktop_drop: ^0.4.4
   super_drag_and_drop: ^0.8.2
   
   # Finding system paths to store files/notes

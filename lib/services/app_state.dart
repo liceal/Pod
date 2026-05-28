@@ -183,15 +183,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       });
     } else {
       if (isExpanded) {
-        // When expanding or configuration changes while expanded, ensure style properties are set
-        await windowManager.setAsFrameless();
-        await windowManager.setAlwaysOnTop(true);
-        await windowManager.setBackgroundColor(Colors.transparent);
-        await windowManager.setSkipTaskbar(true);
-
-        final x = (screenWidth - w) / 2;
-        await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
-        await windowManager.show();
+        if (!isDialogOpen) {
+          // Simply update bounds when already expanded to prevent native styling rebuild flashes
+          final x = (screenWidth - w) / 2;
+          await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
+        }
         // await windowManager.focus();
       } else {
         // When collapsing, ONLY change size or hide. DO NOT call style/show/focus operations
