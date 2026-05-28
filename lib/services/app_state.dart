@@ -17,7 +17,9 @@ import '../models/note.dart';
 import '../models/app_settings.dart';
 
 class AppState extends ChangeNotifier with WindowListener, TrayListener {
-  static const _clipboardOwnerChannel = MethodChannel('app.unclutter/clipboard_owner');
+  static const _clipboardOwnerChannel = MethodChannel(
+    'app.pod/clipboard_owner',
+  );
 
   // Singleton
   static final AppState _instance = AppState._internal();
@@ -30,6 +32,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // State Variables
   AppSettings settings = AppSettings();
   List<ClipboardItem> clipboardHistory = [];
+  List<ClipboardItem> clipboardFavorites = [];
   List<FileSystemEntity> storedFiles = [];
   List<Note> notes = [];
   Note? activeNote;
@@ -37,6 +40,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool isExpanded = false;
   bool isAnimating = false;
   bool isDialogOpen = false;
+  double lastCalculatedWidth = 800.0;
 
   String _searchClipboardQuery = '';
   String _searchNotesQuery = '';
@@ -50,25 +54,32 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String _trayIconPath = '';
   StreamSubscription<FileSystemEvent>? _dirWatcher;
 
-  // Getters for filtered items
+  bool isItemFavorite(String content) {
+    return clipboardFavorites.any((x) => x.content == content);
+  }
+
   List<ClipboardItem> get filteredClipboardHistory {
     if (_searchClipboardQuery.isEmpty) {
-      // Sort: pinned first, then by timestamp descending
-      return List.from(clipboardHistory)..sort((a, b) {
-        if (a.isPinned && !b.isPinned) return -1;
-        if (!a.isPinned && b.isPinned) return 1;
-        return b.timestamp.compareTo(a.timestamp);
-      });
+      return List.from(clipboardHistory)
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     }
     final query = _searchClipboardQuery.toLowerCase();
     return clipboardHistory
         .where((item) => item.content.toLowerCase().contains(query))
         .toList()
-      ..sort((a, b) {
-        if (a.isPinned && !b.isPinned) return -1;
-        if (!a.isPinned && b.isPinned) return 1;
-        return b.timestamp.compareTo(a.timestamp);
-      });
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+  }
+
+  List<ClipboardItem> get filteredClipboardFavorites {
+    if (_searchClipboardQuery.isEmpty) {
+      return List.from(clipboardFavorites)
+        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    }
+    final query = _searchClipboardQuery.toLowerCase();
+    return clipboardFavorites
+        .where((item) => item.content.toLowerCase().contains(query))
+        .toList()
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
 
   List<Note> get filteredNotes {
@@ -117,6 +128,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _startClipboardMonitoring();
 
     // Position window
+    await windowManager.setMinimumSize(const Size(1, 1));
     await applyWindowTriggerConfiguration(isStartup: true);
   }
 
@@ -143,11 +155,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     } else {
       w = settings.panelWidth;
     }
+    lastCalculatedWidth = w;
+    final double wCollapsed = w;
     final double hCollapsed = Platform.isMacOS ? 24.0 : 3.0;
 
     if (isStartup) {
       WindowOptions windowOptions = WindowOptions(
-        size: Size(w, hCollapsed),
+        size: Size(wCollapsed, hCollapsed),
         backgroundColor: Colors.transparent,
         skipTaskbar: true,
         titleBarStyle: TitleBarStyle.hidden,
@@ -155,12 +169,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       await windowManager.waitUntilReadyToShow(windowOptions, () async {
         await windowManager.setAsFrameless();
+        await windowManager.setMinimumSize(const Size(1, 1));
         await windowManager.setAlwaysOnTop(true);
-        final x = (screenWidth - w) / 2;
+        final x = (screenWidth - wCollapsed) / 2;
         if (settings.triggerMode == TriggerMode.hotkeyOnly) {
           await windowManager.hide();
         } else {
-          await windowManager.setBounds(Rect.fromLTWH(x, 0, w, hCollapsed));
+          await windowManager.setBounds(
+            Rect.fromLTWH(x, 0, wCollapsed, hCollapsed),
+          );
           await windowManager.show();
         }
       });
@@ -175,7 +192,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final x = (screenWidth - w) / 2;
         await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
         await windowManager.show();
-        await windowManager.focus();
+        // await windowManager.focus();
       } else {
         // When collapsing, ONLY change size or hide. DO NOT call style/show/focus operations
         // because changing window style or calling show() on Windows forces window activation
@@ -183,8 +200,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (settings.triggerMode == TriggerMode.hotkeyOnly) {
           await windowManager.hide();
         } else {
-          final x = (screenWidth - w) / 2;
-          await windowManager.setBounds(Rect.fromLTWH(x, 0, w, hCollapsed));
+          final x = (screenWidth - wCollapsed) / 2;
+          await windowManager.setBounds(
+            Rect.fromLTWH(x, 0, wCollapsed, hCollapsed),
+          );
         }
       }
     }
@@ -200,7 +219,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  Future<void> expandPanel() async {
+  Future<void> expandPanel({bool focus = false}) async {
     if (isExpanded || isAnimating) return;
     isAnimating = true;
     isExpanded = true;
@@ -209,18 +228,21 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // 1. Expand native window bounds first to allow the animation to show
     final primaryDisplay = await screenRetriever.getPrimaryDisplay();
     final screenWidth = primaryDisplay.size.width;
-    
+
     double w;
     if (settings.isWidthPercentage) {
       w = screenWidth * (settings.panelWidthPercent / 100.0);
     } else {
       w = settings.panelWidth;
     }
-    
+    lastCalculatedWidth = w;
+
     final x = (screenWidth - w) / 2;
     await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
-    await windowManager.show();
-    await windowManager.focus();
+    if (focus || settings.triggerMode == TriggerMode.hotkeyOnly) {
+      await windowManager.show();
+      // await windowManager.focus();
+    }
 
     // Animation starts inside the sliding panel widget
     isAnimating = false;
@@ -295,13 +317,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> updateSettings(AppSettings newSettings) async {
+    final oldPath = settings.customFilesPath;
     settings = newSettings;
     await _prefs.setString('settings', jsonEncode(settings.toJson()));
-    notifyListeners();
 
     // Reconfigure hooks & window positions
     await _setupHotkeys();
     await applyWindowTriggerConfiguration();
+
+    if (oldPath != newSettings.customFilesPath) {
+      await _scanStoredFiles();
+    }
+    notifyListeners();
   }
 
   PhysicalKeyboardKey? _getPhysicalKey(String name) {
@@ -404,12 +431,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     final menuItems = [
-      MenuItem(key: 'toggle', label: '显示/隐藏 Unclutter'),
+      MenuItem(key: 'toggle', label: '显示/隐藏 Pod'),
       MenuItem.separator(),
       MenuItem(key: 'quit', label: '退出'),
     ];
     await trayManager.setContextMenu(Menu(items: menuItems));
-    await trayManager.setToolTip('Unclutter 助手');
+    await trayManager.setToolTip('Pod 助手');
   }
 
   @override
@@ -449,7 +476,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
               if (Platform.isWindows) {
                 try {
-                  final result = await _clipboardOwnerChannel.invokeMethod('getClipboardOwner');
+                  final result = await _clipboardOwnerChannel.invokeMethod(
+                    'getClipboardOwner',
+                  );
                   if (result is Map) {
                     appName = result['name'] as String?;
                     appIconPath = result['iconPath'] as String?;
@@ -459,7 +488,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                 }
               }
 
-              await addClipboardItem(text, appName: appName, appIconPath: appIconPath);
+              await addClipboardItem(
+                text,
+                appName: appName,
+                appIconPath: appIconPath,
+              );
             }
           }
         }
@@ -469,11 +502,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     });
   }
 
-  Future<void> addClipboardItem(String content, {String? appName, String? appIconPath}) async {
+  Future<void> addClipboardItem(
+    String content, {
+    String? appName,
+    String? appIconPath,
+  }) async {
     // Avoid duplicates of the exact same content in recent clipboard history list
-    clipboardHistory.removeWhere(
-      (item) => item.content == content && !item.isPinned,
-    );
+    clipboardHistory.removeWhere((item) => item.content == content);
 
     final newItem = ClipboardItem(
       id: _uuid.v4(),
@@ -487,13 +522,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Limit size
     if (clipboardHistory.length > 50) {
-      // Remove oldest unpinned items
-      int unpinnedIndex = clipboardHistory.lastIndexWhere(
-        (item) => !item.isPinned,
-      );
-      if (unpinnedIndex != -1) {
-        clipboardHistory.removeAt(unpinnedIndex);
-      }
+      clipboardHistory.removeLast();
     }
 
     await _saveClipboardHistory();
@@ -508,21 +537,32 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void deleteClipboardItem(String id) {
     clipboardHistory.removeWhere((item) => item.id == id);
-    Future.delayed(Duration.zero, _saveClipboardHistory);
+    clipboardFavorites.removeWhere((item) => item.id == id);
+    Future.delayed(Duration.zero, () {
+      _saveClipboardHistory();
+      _saveClipboardFavorites();
+    });
+    notifyListeners();
   }
 
-  void togglePinClipboardItem(String id) {
-    final idx = clipboardHistory.indexWhere((item) => item.id == id);
-    if (idx != -1) {
-      final item = clipboardHistory[idx];
-      clipboardHistory[idx] = item.copyWith(isPinned: !item.isPinned);
-      Future.delayed(Duration.zero, _saveClipboardHistory);
+  void toggleFavoriteClipboardItem(ClipboardItem item) {
+    final isFav = isItemFavorite(item.content);
+    if (isFav) {
+      clipboardFavorites.removeWhere((x) => x.content == item.content);
+    } else {
+      clipboardFavorites.insert(
+        0,
+        item.copyWith(isFavorite: true, timestamp: DateTime.now()),
+      );
     }
+    Future.delayed(Duration.zero, _saveClipboardFavorites);
+    notifyListeners();
   }
 
   void clearClipboardHistory() {
-    clipboardHistory.removeWhere((item) => !item.isPinned);
+    clipboardHistory.clear();
     Future.delayed(Duration.zero, _saveClipboardHistory);
+    notifyListeners();
   }
 
   Future<void> _loadClipboardHistory() async {
@@ -537,6 +577,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         clipboardHistory = [];
       }
     }
+    final favJson = _prefs.getString('clipboard_favorites');
+    if (favJson != null) {
+      try {
+        final decoded = jsonDecode(favJson) as List;
+        clipboardFavorites = decoded
+            .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
+            .toList();
+      } catch (e) {
+        clipboardFavorites = [];
+      }
+    }
   }
 
   Future<void> _saveClipboardHistory() async {
@@ -546,17 +597,41 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _prefs.setString('clipboard_history', encoded);
   }
 
+  Future<void> _saveClipboardFavorites() async {
+    final encoded = jsonEncode(
+      clipboardFavorites.map((item) => item.toJson()).toList(),
+    );
+    await _prefs.setString('clipboard_favorites', encoded);
+  }
+
   // --- Files Storage ---
+  Future<String> getFilesDirectoryPath() => _getFilesDirectoryPath();
+
   Future<String> _getFilesDirectoryPath() async {
+    if (settings.customFilesPath != null &&
+        settings.customFilesPath!.trim().isNotEmpty) {
+      final customDir = Directory(settings.customFilesPath!.trim());
+      if (!customDir.existsSync()) {
+        try {
+          customDir.createSync(recursive: true);
+        } catch (e) {
+          debugPrint('Failed to create custom files directory: $e');
+        }
+      }
+      if (customDir.existsSync()) {
+        return customDir.path;
+      }
+    }
+
     // 使用用户文档目录下的明显文件夹，方便用户找到
     late String basePath;
     if (Platform.isWindows) {
-      // Windows: C:\Users\<用户名>\Documents\Unclutter暂存
+      // Windows: C:\Users\<用户名>\Documents\Pod暂存
       basePath = Platform.environment['USERPROFILE'] ?? '';
-      basePath = '$basePath\\Documents\\Unclutter暂存';
+      basePath = '$basePath\\Documents\\Pod暂存';
     } else if (Platform.isMacOS) {
       basePath = Platform.environment['HOME'] ?? '';
-      basePath = '$basePath/Documents/Unclutter暂存';
+      basePath = '$basePath/Documents/Pod暂存';
     } else {
       final appSupport = await getApplicationSupportDirectory();
       basePath = '${appSupport.path}/files';
@@ -583,12 +658,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     try {
       final path = await _getFilesDirectoryPath();
       final dir = Directory(path);
-      storedFiles = dir.listSync().where((entity) => entity is File || entity is Directory).toList()
-        ..sort((a, b) {
-          final timeA = _getFileTime(a);
-          final timeB = _getFileTime(b);
-          return timeB.compareTo(timeA);
-        });
+      storedFiles =
+          dir
+              .listSync()
+              .where((entity) => entity is File || entity is Directory)
+              .toList()
+            ..sort((a, b) {
+              final timeA = _getFileTime(a);
+              final timeB = _getFileTime(b);
+              return timeB.compareTo(timeA);
+            });
       notifyListeners();
       // 每次扫描后重新建立监听（路径可能刚刚创建）
       await _startWatchingFilesDirectory(path);
@@ -614,12 +693,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _getFilesDirectoryPath().then((path) {
       try {
         final dir = Directory(path);
-        storedFiles = dir.listSync().where((entity) => entity is File || entity is Directory).toList()
-          ..sort((a, b) {
-            final timeA = _getFileTime(a);
-            final timeB = _getFileTime(b);
-            return timeB.compareTo(timeA);
-          });
+        storedFiles =
+            dir
+                .listSync()
+                .where((entity) => entity is File || entity is Directory)
+                .toList()
+              ..sort((a, b) {
+                final timeA = _getFileTime(a);
+                final timeB = _getFileTime(b);
+                return timeB.compareTo(timeA);
+              });
         notifyListeners();
       } catch (_) {}
     });
@@ -632,7 +715,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (FileSystemEntity.isDirectorySync(filePath)) {
           // If it is a directory, copy the directory recursively or copy its folder structure
           final srcDir = Directory(filePath);
-          final dirName = srcDir.uri.pathSegments.where((s) => s.isNotEmpty).last;
+          final dirName = srcDir.uri.pathSegments
+              .where((s) => s.isNotEmpty)
+              .last;
           final destDir = Directory('$destPath/$dirName');
           if (!destDir.existsSync()) {
             await destDir.create(recursive: true);
@@ -667,7 +752,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   : srcStat.modified;
               await destFile.setLastModified(creationTime);
             } catch (e) {
-              debugPrint('Failed to set last modified time for copied file: $e');
+              debugPrint(
+                'Failed to set last modified time for copied file: $e',
+              );
             }
           }
         }
@@ -715,8 +802,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       // Handle duplicates by adding suffix
       int counter = 2;
-      final nameWithoutExt = fileName.contains('.') ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
-      final ext = fileName.contains('.') ? fileName.substring(fileName.lastIndexOf('.')) : '';
+      final nameWithoutExt = fileName.contains('.')
+          ? fileName.substring(0, fileName.lastIndexOf('.'))
+          : fileName;
+      final ext = fileName.contains('.')
+          ? fileName.substring(fileName.lastIndexOf('.'))
+          : '';
       while (file.existsSync()) {
         file = File('$basePath/$nameWithoutExt ($counter)$ext');
         counter++;
@@ -752,6 +843,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Future<void> openFilesDirectoryInExplorer() async {
     try {
       final path = await _getFilesDirectoryPath();
+      await openDirectoryPath(path);
+    } catch (e) {
+      debugPrint('Failed to open directory: $e');
+    }
+  }
+
+  Future<void> openDirectoryPath(String path) async {
+    try {
       final uri = Uri.directory(path);
       if (Platform.isWindows) {
         await Process.run('explorer.exe', [path]);
@@ -761,7 +860,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         await launchUrl(uri);
       }
     } catch (e) {
-      debugPrint('Failed to open directory: $e');
+      debugPrint('Failed to open directory $path: $e');
     }
   }
 

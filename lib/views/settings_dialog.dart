@@ -1,7 +1,10 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:path_provider/path_provider.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
+
 
 class SettingsDialog extends StatefulWidget {
   final AppState state;
@@ -35,6 +38,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     'alt+n',
   ];
 
+  String _dataDir = '加载中...';
+  String _filesDir = '加载中...';
+  late TextEditingController _customFilesPathController;
+
   @override
   void initState() {
     super.initState();
@@ -48,6 +55,29 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _themeColorName = (widget.state.settings.themeColorName as dynamic) ?? 'blue';
     _closeOnBlur = widget.state.settings.closeOnBlur;
     _autoCollapseDelay = widget.state.settings.autoCollapseDelay;
+    _customFilesPathController = TextEditingController(text: widget.state.settings.customFilesPath ?? '');
+
+    // Fetch storage directories
+    getApplicationSupportDirectory().then((dir) {
+      if (mounted) {
+        setState(() {
+          _dataDir = dir.path;
+        });
+      }
+    });
+    widget.state.getFilesDirectoryPath().then((path) {
+      if (mounted) {
+        setState(() {
+          _filesDir = path;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _customFilesPathController.dispose();
+    super.dispose();
   }
 
   void _save() {
@@ -62,10 +92,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
       themeColorName: _themeColorName,
       closeOnBlur: _closeOnBlur,
       autoCollapseDelay: _autoCollapseDelay,
+      customFilesPath: _customFilesPathController.text.trim().isEmpty
+          ? null
+          : _customFilesPathController.text.trim(),
     );
     widget.state.updateSettings(updated);
     Navigator.of(context).pop();
   }
+
 
   String _getTriggerModeLabel(TriggerMode mode) {
     switch (mode) {
@@ -105,7 +139,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           children: [
             // Title
             Text(
-              'Unclutter 设置',
+              'Pod 设置',
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
@@ -496,6 +530,158 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     // closeOnBlur 已永久禁用，改为鼠标滚轮上滑收起
                     const SizedBox(height: 12),
+
+                    const Divider(height: 24),
+                    Text(
+                      '存储位置',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: subColor,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // 1. 便签与剪贴板数据
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '数据目录 (便签与剪贴板)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: textColor,
+                              ),
+                            ),
+                            TextButton.icon(
+                              onPressed: () {
+                                widget.state.openDirectoryPath(_dataDir);
+                              },
+                              icon: Icon(Icons.folder_open, size: 14, color: accentColor),
+                              label: Text('打开目录', style: TextStyle(fontSize: 11, color: accentColor)),
+                              style: TextButton.styleFrom(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                minimumSize: Size.zero,
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        SelectableText(
+                          _dataDir,
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: subColor.withOpacity(0.8),
+                            fontFamily: 'monospace',
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 2. 暂存文件目录
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              '文件目录 (暂存文件)',
+                              style: TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w500,
+                                color: textColor,
+                              ),
+                            ),
+                            Row(
+                              children: [
+                                if (_customFilesPathController.text.trim().isNotEmpty)
+                                  TextButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _customFilesPathController.clear();
+                                        widget.state.getFilesDirectoryPath().then((path) {
+                                          if (mounted) {
+                                            setState(() {
+                                              _filesDir = path;
+                                            });
+                                          }
+                                        });
+                                      });
+                                    },
+                                    style: TextButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                                      minimumSize: Size.zero,
+                                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    ),
+                                    child: const Text('恢复默认', style: TextStyle(fontSize: 11, color: Colors.redAccent)),
+                                  ),
+                                const SizedBox(width: 4),
+                                TextButton.icon(
+                                  onPressed: () {
+                                    widget.state.openDirectoryPath(_filesDir);
+                                  },
+                                  icon: Icon(Icons.folder_open, size: 14, color: accentColor),
+                                  label: Text('打开目录', style: TextStyle(fontSize: 11, color: accentColor)),
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: _customFilesPathController,
+                          style: TextStyle(fontSize: 12, color: textColor, fontFamily: 'monospace'),
+                          decoration: InputDecoration(
+                            hintText: '默认: 用户文档目录/Pod暂存',
+                            hintStyle: TextStyle(fontSize: 12, color: subColor.withOpacity(0.5)),
+                            border: const OutlineInputBorder(),
+                            enabledBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: _isDarkTheme ? Colors.white24 : Colors.black12),
+                            ),
+                            focusedBorder: OutlineInputBorder(
+                              borderSide: BorderSide(color: accentColor),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                            isDense: true,
+                          ),
+                          onChanged: (val) {
+                            if (val.trim().isEmpty) {
+                              widget.state.getFilesDirectoryPath().then((path) {
+                                if (mounted) {
+                                  setState(() {
+                                    _filesDir = path;
+                                  });
+                                }
+                              });
+                            } else {
+                              setState(() {
+                                _filesDir = val.trim();
+                              });
+                            }
+                          },
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          '当前实际路径: $_filesDir',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: subColor.withOpacity(0.6),
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),

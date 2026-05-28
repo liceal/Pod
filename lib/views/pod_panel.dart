@@ -14,16 +14,16 @@ import 'files_pane.dart';
 import 'notes_pane.dart';
 import 'settings_dialog.dart';
 
-class UnclutterPanel extends StatefulWidget {
+class PodPanel extends StatefulWidget {
   final AppState state;
 
-  const UnclutterPanel({super.key, required this.state});
+  const PodPanel({super.key, required this.state});
 
   @override
-  State<UnclutterPanel> createState() => _UnclutterPanelState();
+  State<PodPanel> createState() => _PodPanelState();
 }
 
-class _UnclutterPanelState extends State<UnclutterPanel>
+class _PodPanelState extends State<PodPanel>
     with SingleTickerProviderStateMixin {
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
@@ -211,7 +211,8 @@ class _UnclutterPanelState extends State<UnclutterPanel>
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
       final screenWidth = primaryDisplay.size.width;
       if (updatedSettings.isWidthPercentage) {
-        updatedPanelW = screenWidth * (updatedSettings.panelWidthPercent / 100.0);
+        updatedPanelW =
+            screenWidth * (updatedSettings.panelWidthPercent / 100.0);
       } else {
         updatedPanelW = updatedSettings.panelWidth;
       }
@@ -224,7 +225,9 @@ class _UnclutterPanelState extends State<UnclutterPanel>
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
       final screenWidth = primaryDisplay.size.width;
       final x = (screenWidth - updatedPanelW) / 2;
-      await windowManager.setBounds(Rect.fromLTWH(x, 0, updatedPanelW, expandedH));
+      await windowManager.setBounds(
+        Rect.fromLTWH(x, 0, updatedPanelW, expandedH),
+      );
     } catch (_) {}
 
     // Check if we need to auto-collapse since settings is closed and mouse might be outside
@@ -270,16 +273,18 @@ class _UnclutterPanelState extends State<UnclutterPanel>
                 onEnter: (_) => _onMouseEnteredPanel(),
                 onExit: (_) => _onMouseExitedPanel(),
                 child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // 1. Sliding Panel Box
-                  OverflowBox(
-                    minHeight: 350,
-                    maxHeight: 350,
-                    alignment: Alignment.topCenter,
-                    child: SlideTransition(
-                      position: _slideAnimation,
-                      child: Container(
+                  clipBehavior: Clip.none,
+                  children: [
+                    // 1. Sliding Panel Box
+                    OverflowBox(
+                      minWidth: widget.state.lastCalculatedWidth,
+                      maxWidth: widget.state.lastCalculatedWidth,
+                      minHeight: 350,
+                      maxHeight: 350,
+                      alignment: Alignment.topCenter,
+                      child: SlideTransition(
+                        position: _slideAnimation,
+                        child: Container(
                           height: 350,
                           margin: const EdgeInsets.symmetric(horizontal: 6),
                           decoration: AppTheme.getFrostedDecoration(
@@ -370,10 +375,11 @@ class _UnclutterPanelState extends State<UnclutterPanel>
                                             width: 36,
                                             height: 4,
                                             decoration: BoxDecoration(
-                                              color: baseColor.withOpacity(0.25),
-                                              borderRadius: BorderRadius.circular(
-                                                2,
+                                              color: baseColor.withOpacity(
+                                                0.25,
                                               ),
+                                              borderRadius:
+                                                  BorderRadius.circular(2),
                                             ),
                                           ),
                                         ),
@@ -405,45 +411,46 @@ class _UnclutterPanelState extends State<UnclutterPanel>
                             ],
                           ),
                         ),
+                      ),
                     ),
-                  ),
 
-                  // 2. 收起时显示的悬浮条：Windows上为 3px 的横杠，macOS上为 24px 透明层以捕获顶部系统状态栏的滚轮事件
-                  Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    height: Platform.isMacOS ? 24.0 : 3.0,
-                    child: DropTarget(
-                      onDragEntered: (_) {
-                        if (!widget.state.isExpanded && !widget.state.isAnimating) {
-                          widget.state.expandPanel();
-                        }
-                      },
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        onEnter: (_) => _onMouseEnteredTopStrip(),
-                        onExit: (_) => _onMouseExitedTopStrip(),
-                        child: Listener(
-                          behavior: HitTestBehavior.opaque,
-                          onPointerSignal: _handleTopScrollSignal, // 直接复用统一方法
-                          child: Container(
-                            color: Platform.isMacOS
-                                ? Colors.transparent
-                                : (isDark
-                                      ? Colors.white.withOpacity(0.1)
-                                      : Colors.black.withOpacity(0.05)),
+                    // 2. 收起时显示的悬浮条：Windows上为 2px 的横杠，macOS上为 24px 透明层以捕获顶部系统状态栏的滚轮事件
+                    Positioned(
+                      top: 0,
+                      left: 0,
+                      right: 0,
+                      height: Platform.isMacOS ? 24.0 : 3.0,
+                      child: DropTarget(
+                        onDragEntered: (_) {
+                          if (!widget.state.isExpanded &&
+                              !widget.state.isAnimating) {
+                            widget.state.expandPanel();
+                          }
+                        },
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          onEnter: (_) => _onMouseEnteredTopStrip(),
+                          onExit: (_) => _onMouseExitedTopStrip(),
+                          child: Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerSignal: _handleTopScrollSignal, // 直接复用统一方法
+                            child: Container(
+                              color: Platform.isMacOS
+                                  ? Colors.transparent
+                                  : (isDark
+                                        ? Colors.white.withOpacity(0.1)
+                                        : Colors.black.withOpacity(0.05)),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ],
-              ),         // Stack
-            ),           // MouseRegion (body)
-          ),             // Scaffold
-        ),               // Focus
-      );
+                  ],
+                ), // Stack
+              ), // MouseRegion (body)
+            ), // Scaffold
+          ), // Focus
+        );
       },
     );
   }

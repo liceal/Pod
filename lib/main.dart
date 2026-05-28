@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'services/app_state.dart';
-import 'views/unclutter_panel.dart';
+import 'views/pod_panel.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,9 +15,9 @@ void main() async {
 
   runApp(
     MaterialApp(
-      title: 'Unclutter',
+      title: 'Pod',
       debugShowCheckedModeBanner: false,
-      home: UnclutterPanel(state: appState),
+      home: PodPanel(state: appState),
     ),
   );
 }
