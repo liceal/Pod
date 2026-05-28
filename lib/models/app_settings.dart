@@ -17,6 +17,7 @@ class AppSettings {
   final bool? _closeOnBlur;
   /// Seconds to wait after mouse leaves before auto-collapsing. 0 = disabled.
   final int autoCollapseDelay;
+  final String? customFilesPath;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -32,6 +33,7 @@ class AppSettings {
     String? themeColorName = 'blue',
     bool? closeOnBlur = false,
     this.autoCollapseDelay = 0,
+    this.customFilesPath,
   })  : _themeColorName = themeColorName,
         _closeOnBlur = closeOnBlur;
 
@@ -46,6 +48,7 @@ class AppSettings {
     String? themeColorName,
     bool? closeOnBlur,
     int? autoCollapseDelay,
+    String? customFilesPath,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -58,6 +61,7 @@ class AppSettings {
       themeColorName: themeColorName ?? this.themeColorName,
       closeOnBlur: closeOnBlur ?? this.closeOnBlur,
       autoCollapseDelay: autoCollapseDelay ?? this.autoCollapseDelay,
+      customFilesPath: customFilesPath ?? this.customFilesPath,
     );
   }
 
@@ -73,6 +77,7 @@ class AppSettings {
       'themeColorName': themeColorName,
       'closeOnBlur': closeOnBlur,
       'autoCollapseDelay': autoCollapseDelay,
+      'customFilesPath': customFilesPath,
     };
   }
 
@@ -96,6 +101,8 @@ class AppSettings {
       themeColorName: json['themeColorName'] as String?,
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
       autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 0,
+      customFilesPath: json['customFilesPath'] as String?,
     );
   }
+
 }

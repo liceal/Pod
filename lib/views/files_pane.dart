@@ -7,7 +7,7 @@ import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 
-enum _ViewMode { list, grid, details }
+enum _ViewMode { grid, details }
 
 class FilesPane extends StatefulWidget {
   final AppState state;
@@ -22,7 +22,7 @@ class FilesPane extends StatefulWidget {
 class _FilesPaneState extends State<FilesPane> {
   bool _isDragging = false;
   String _searchQuery = '';
-  _ViewMode _viewMode = _ViewMode.list;
+  _ViewMode _viewMode = _ViewMode.grid;
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
 
@@ -320,12 +320,10 @@ class _FilesPaneState extends State<FilesPane> {
                         cursor: SystemMouseCursors.click,
                         child: GestureDetector(
                           onTap: () => setState(() {
-                            if (_viewMode == _ViewMode.list) {
-                              _viewMode = _ViewMode.grid;
-                            } else if (_viewMode == _ViewMode.grid) {
+                            if (_viewMode == _ViewMode.grid) {
                               _viewMode = _ViewMode.details;
                             } else {
-                              _viewMode = _ViewMode.list;
+                              _viewMode = _ViewMode.grid;
                             }
                           }),
                           child: Container(
@@ -338,9 +336,9 @@ class _FilesPaneState extends State<FilesPane> {
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Icon(
-                              _viewMode == _ViewMode.list
-                                  ? Icons.grid_view_rounded
-                                  : Icons.view_list_rounded,
+                              _viewMode == _ViewMode.grid
+                                  ? Icons.view_list_rounded
+                                  : Icons.grid_view_rounded,
                               size: 15,
                               color: widget.isDark
                                   ? Colors.white60
@@ -387,8 +385,6 @@ class _FilesPaneState extends State<FilesPane> {
                               ],
                             ),
                           )
-                        : _viewMode == _ViewMode.list
-                        ? _buildListView(files)
                         : _viewMode == _ViewMode.grid
                         ? _buildGridView(files)
                         : _buildDetailsView(files),
@@ -551,35 +547,7 @@ class _FilesPaneState extends State<FilesPane> {
     }
   }
 
-  Widget _buildListView(List<FileSystemEntity> files) {
-    return ListView.builder(
-      controller: _scrollController,
-      itemCount: files.length,
-      physics: const BouncingScrollPhysics(),
-      itemBuilder: (ctx, index) {
-        final file = files[index];
-        final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
-        final fileName = segments.isEmpty ? '未知' : segments.last;
-        final (icon, iconColor) = _getFileIconAndColor(file.path);
-        return _ListFileCard(
-          file: file,
-          fileName: fileName,
-          icon: icon,
-          iconColor: iconColor,
-          isImage: _isImage(file.path),
-          isDark: widget.isDark,
-          onOpen: () => widget.state.openFile(file),
-          onDelete: () => widget.state.deleteFile(file),
-          onContextMenu: (ctx, pos) => _showContextMenu(
-            ctx,
-            pos,
-            file,
-            () => widget.state.deleteFile(file),
-          ),
-        );
-      },
-    );
-  }
+
 
   Widget _buildGridView(List<FileSystemEntity> files) {
     return GridView.builder(
@@ -661,7 +629,6 @@ class _FilesPaneState extends State<FilesPane> {
                   ),
                 ),
               ),
-              const SizedBox(width: 20),
             ],
           ),
         ),
@@ -782,7 +749,7 @@ class _SearchBar extends StatelessWidget {
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: () => controller.clear(),
-                      child: const Icon(Icons.clear, size: 12),
+                      child: const Icon(Icons.clear, size: 15),
                     ),
                   ),
                 )
@@ -793,14 +760,14 @@ class _SearchBar extends StatelessWidget {
                     cursor: SystemMouseCursors.click,
                     child: GestureDetector(
                       onTap: onOpenFolder,
-                      child: const Icon(Icons.folder_open_outlined, size: 14),
+                      child: const Icon(Icons.folder_open_outlined, size: 16),
                     ),
                   ),
                 )
               : null,
           suffixIconConstraints: const BoxConstraints(
-            minWidth: 20,
-            minHeight: 12,
+            minWidth: 26,
+            minHeight: 16,
           ),
           isDense: true,
           border: InputBorder.none,
@@ -814,139 +781,57 @@ class _SearchBar extends StatelessWidget {
 // ══════════════════════════════════════════════════
 // List Card
 // ══════════════════════════════════════════════════
-class _ListFileCard extends StatefulWidget {
-  final FileSystemEntity file;
-  final String fileName;
-  final IconData icon;
-  final Color iconColor;
-  final bool isImage;
+// ══════════════════════════════════════════════════
+// Reusable Delete Button with Hover Feedback
+// ══════════════════════════════════════════════════
+class _DeleteButton extends StatefulWidget {
+  final VoidCallback onTap;
   final bool isDark;
-  final VoidCallback onOpen;
-  final VoidCallback onDelete;
-  final void Function(BuildContext, Offset) onContextMenu;
 
-  const _ListFileCard({
-    required this.file,
-    required this.fileName,
-    required this.icon,
-    required this.iconColor,
-    required this.isImage,
-    required this.isDark,
-    required this.onOpen,
-    required this.onDelete,
-    required this.onContextMenu,
-  });
+  const _DeleteButton({required this.onTap, required this.isDark});
 
   @override
-  State<_ListFileCard> createState() => _ListFileCardState();
+  State<_DeleteButton> createState() => _DeleteButtonState();
 }
 
-class _ListFileCardState extends State<_ListFileCard> {
+class _DeleteButtonState extends State<_DeleteButton> {
   bool _isHovered = false;
 
   @override
   Widget build(BuildContext context) {
-    return sdd.DragItemWidget(
-      dragItemProvider: (request) {
-        final item = sdd.DragItem();
-        item.add(sdd.Formats.fileUri(Uri.file(widget.file.path)));
-        return item;
-      },
-      allowedOperations: () => [sdd.DropOperation.copy],
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) {
-          if (mounted) setState(() => _isHovered = true);
-        },
-        onExit: (_) {
-          if (mounted) setState(() => _isHovered = false);
-        },
-        child: GestureDetector(
-          onDoubleTap: widget.onOpen,
-          onSecondaryTapUp: (details) =>
-              widget.onContextMenu(context, details.globalPosition),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            margin: const EdgeInsets.only(bottom: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: _isHovered
-                  ? (widget.isDark
-                        ? Colors.white.withOpacity(0.06)
-                        : Colors.black.withOpacity(0.04))
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                // File icon / thumbnail
-                Container(
-                  width: 24,
-                  height: 24,
-                  decoration: BoxDecoration(
-                    color: widget.iconColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(5),
-                  ),
-                  child: widget.isImage
-                      ? ClipRRect(
-                          borderRadius: BorderRadius.circular(5),
-                          child: Image.file(
-                            File(widget.file.path),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(
-                              widget.icon,
-                              size: 13,
-                              color: widget.iconColor,
-                            ),
-                          ),
-                        )
-                      : Icon(widget.icon, size: 13, color: widget.iconColor),
-                ),
-                const SizedBox(width: 7),
-                Expanded(
-                  child: Text(
-                    widget.fileName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: widget.isDark ? Colors.white70 : Colors.black87,
-                    ),
-                  ),
-                ),
-                // Delete button
-                if (_isHovered)
-                  MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
-                      behavior: HitTestBehavior.opaque,
-                      onTap: widget.onDelete,
-                      onDoubleTap: () {},
-                      child: Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: BoxDecoration(
-                          color: Colors.red.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(4),
-                        ),
-                        child: Icon(
-                          Icons.close,
-                          size: 10,
-                          color: widget.isDark
-                              ? Colors.red[300]
-                              : Colors.red[700],
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: widget.onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: _isHovered
+                ? (widget.isDark ? Colors.red.withOpacity(0.24) : Colors.red.withOpacity(0.2))
+                : (widget.isDark ? Colors.red.withOpacity(0.12) : Colors.red.withOpacity(0.08)),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Icon(
+            Icons.close,
+            size: 11,
+            color: _isHovered
+                ? Colors.red
+                : (widget.isDark ? Colors.red[300] : Colors.red[700]),
           ),
         ),
       ),
     );
   }
 }
+
+// ══════════════════════════════════════════════════
+// List Card
+// ══════════════════════════════════════════════════
+
 
 // ══════════════════════════════════════════════════
 // Grid Card
@@ -990,120 +875,94 @@ class _GridFileCardState extends State<_GridFileCard> {
         return item;
       },
       allowedOperations: () => [sdd.DropOperation.copy],
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) {
-          if (mounted) setState(() => _isHovered = true);
-        },
-        onExit: (_) {
-          if (mounted) setState(() => _isHovered = false);
-        },
-        child: GestureDetector(
-          onDoubleTap: widget.onOpen,
-          onSecondaryTapUp: (details) =>
-              widget.onContextMenu(context, details.globalPosition),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            decoration: BoxDecoration(
-              color: _isHovered
-                  ? (widget.isDark
-                        ? Colors.white.withOpacity(0.07)
-                        : Colors.black.withOpacity(0.05))
-                  : (widget.isDark
-                        ? Colors.white.withOpacity(0.03)
-                        : Colors.black.withOpacity(0.02)),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: _isHovered
-                    ? (widget.isDark ? Colors.white12 : Colors.black12)
-                    : Colors.transparent,
-              ),
-            ),
-            child: Stack(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(8),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Expanded(
-                        child: Center(
-                          child: widget.isImage
-                              ? ClipRRect(
-                                  borderRadius: BorderRadius.circular(6),
-                                  child: Image.file(
-                                    File(widget.file.path),
-                                    fit: BoxFit.cover,
-                                    width: double.infinity,
-                                    errorBuilder: (_, __, ___) => Icon(
+      child: sdd.DraggableWidget(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) {
+            if (mounted) setState(() => _isHovered = true);
+          },
+          onExit: (_) {
+            if (mounted) setState(() => _isHovered = false);
+          },
+          child: GestureDetector(
+            onSecondaryTapUp: (details) =>
+                widget.onContextMenu(context, details.globalPosition),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(8),
+                onTap: widget.onOpen,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  decoration: BoxDecoration(
+                    color: _isHovered
+                        ? (widget.isDark
+                            ? Colors.white.withOpacity(0.07)
+                            : Colors.black.withOpacity(0.05))
+                        : (widget.isDark
+                            ? Colors.white.withOpacity(0.03)
+                            : Colors.black.withOpacity(0.02)),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: _isHovered
+                          ? (widget.isDark ? Colors.white12 : Colors.black12)
+                          : Colors.transparent,
+                    ),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          child: Center(
+                            child: widget.isImage
+                                ? ClipRRect(
+                                    borderRadius: BorderRadius.circular(6),
+                                    child: Image.file(
+                                      File(widget.file.path),
+                                      fit: BoxFit.cover,
+                                      width: double.infinity,
+                                      errorBuilder: (_, __, ___) => Icon(
+                                        widget.icon,
+                                        size: 30,
+                                        color: widget.iconColor,
+                                      ),
+                                    ),
+                                  )
+                                : Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: widget.iconColor.withOpacity(0.12),
+                                      borderRadius: BorderRadius.circular(8),
+                                    ),
+                                    child: Icon(
                                       widget.icon,
-                                      size: 30,
+                                      size: 22,
                                       color: widget.iconColor,
                                     ),
                                   ),
-                                )
-                              : Container(
-                                  width: 40,
-                                  height: 40,
-                                  decoration: BoxDecoration(
-                                    color: widget.iconColor.withOpacity(0.12),
-                                    borderRadius: BorderRadius.circular(8),
-                                  ),
-                                  child: Icon(
-                                    widget.icon,
-                                    size: 22,
-                                    color: widget.iconColor,
-                                  ),
-                                ),
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        widget.fileName,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 9,
-                          color: widget.isDark
-                              ? Colors.white70
-                              : Colors.black87,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                // Delete button on hover
-                if (_isHovered)
-                  Positioned(
-                    top: 3,
-                    right: 3,
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: widget.onDelete,
-                        onDoubleTap: () {},
-                        child: Container(
-                          padding: const EdgeInsets.all(2),
-                          decoration: BoxDecoration(
-                            color: widget.isDark
-                                ? Colors.black54
-                                : Colors.white.withOpacity(0.85),
-                            borderRadius: BorderRadius.circular(4),
-                          ),
-                          child: Icon(
-                            Icons.close,
-                            size: 10,
-                            color: widget.isDark
-                                ? Colors.red[300]
-                                : Colors.red[700],
                           ),
                         ),
-                      ),
+                        const SizedBox(height: 4),
+                        Text(
+                          widget.fileName,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: widget.isDark
+                                ? Colors.white70
+                                : Colors.black87,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
           ),
         ),
@@ -1418,127 +1277,106 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
         return item;
       },
       allowedOperations: () => [sdd.DropOperation.copy],
-      child: MouseRegion(
-        cursor: SystemMouseCursors.click,
-        onEnter: (_) {
-          if (mounted) setState(() => _isHovered = true);
-        },
-        onExit: (_) {
-          if (mounted) setState(() => _isHovered = false);
-        },
-        child: GestureDetector(
-          onDoubleTap: widget.onOpen,
-          onSecondaryTapUp: (details) =>
-              widget.onContextMenu(context, details.globalPosition),
-          child: AnimatedContainer(
-            duration: const Duration(milliseconds: 120),
-            margin: const EdgeInsets.only(bottom: 2),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-            decoration: BoxDecoration(
-              color: _isHovered
-                  ? (widget.isDark
-                        ? Colors.white.withOpacity(0.06)
-                        : Colors.black.withOpacity(0.04))
-                  : Colors.transparent,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Row(
-              children: [
-                // Icon
-                Container(
-                  width: 20,
-                  height: 20,
+      child: sdd.DraggableWidget(
+        child: MouseRegion(
+          cursor: SystemMouseCursors.click,
+          onEnter: (_) {
+            if (mounted) setState(() => _isHovered = true);
+          },
+          onExit: (_) {
+            if (mounted) setState(() => _isHovered = false);
+          },
+          child: GestureDetector(
+            onSecondaryTapUp: (details) =>
+                widget.onContextMenu(context, details.globalPosition),
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(6),
+                onTap: widget.onOpen,
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 120),
+                  margin: const EdgeInsets.only(bottom: 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                   decoration: BoxDecoration(
-                    color: widget.iconColor.withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(4),
+                    color: _isHovered
+                        ? (widget.isDark
+                            ? Colors.white.withOpacity(0.06)
+                            : Colors.black.withOpacity(0.04))
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  child: widget.isImage
-                      ? ClipRRect(
+                  child: Row(
+                    children: [
+                      // Icon
+                      Container(
+                        width: 20,
+                        height: 20,
+                        decoration: BoxDecoration(
+                          color: widget.iconColor.withOpacity(0.12),
                           borderRadius: BorderRadius.circular(4),
-                          child: Image.file(
-                            File(widget.file.path),
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => Icon(
-                              widget.icon,
-                              size: 11,
-                              color: widget.iconColor,
-                            ),
-                          ),
-                        )
-                      : Icon(widget.icon, size: 11, color: widget.iconColor),
-                ),
-                const SizedBox(width: 6),
-                // Name
-                Expanded(
-                  child: Text(
-                    widget.fileName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.w500,
-                      color: widget.isDark ? Colors.white70 : Colors.black87,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // Size
-                SizedBox(
-                  width: 50,
-                  child: Text(
-                    widget.sizeStr,
-                    textAlign: TextAlign.right,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: widget.isDark ? Colors.white38 : Colors.black45,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                // Date
-                SizedBox(
-                  width: 65,
-                  child: Text(
-                    widget.dateStr,
-                    textAlign: TextAlign.right,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: widget.isDark ? Colors.white38 : Colors.black45,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 4),
-                // Delete Button Space or Close Icon
-                SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: _isHovered
-                      ? MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            behavior: HitTestBehavior.opaque,
-                            onTap: widget.onDelete,
-                            onDoubleTap: () {},
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.red.withOpacity(0.12),
+                        ),
+                        child: widget.isImage
+                            ? ClipRRect(
                                 borderRadius: BorderRadius.circular(4),
-                              ),
-                              child: Icon(
-                                Icons.close,
-                                size: 10,
-                                color: widget.isDark
-                                    ? Colors.red[300]
-                                    : Colors.red[700],
-                              ),
-                            ),
+                                child: Image.file(
+                                  File(widget.file.path),
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Icon(
+                                    widget.icon,
+                                    size: 11,
+                                    color: widget.iconColor,
+                                  ),
+                                ),
+                              )
+                            : Icon(widget.icon, size: 11, color: widget.iconColor),
+                      ),
+                      const SizedBox(width: 6),
+                      // Name
+                      Expanded(
+                        child: Text(
+                          widget.fileName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w500,
+                            color: widget.isDark ? Colors.white70 : Colors.black87,
                           ),
-                        )
-                      : const SizedBox.shrink(),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Size
+                      SizedBox(
+                        width: 50,
+                        child: Text(
+                          widget.sizeStr,
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: widget.isDark ? Colors.white38 : Colors.black45,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      // Date
+                      SizedBox(
+                        width: 65,
+                        child: Text(
+                          widget.dateStr,
+                          textAlign: TextAlign.right,
+                          maxLines: 1,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: widget.isDark ? Colors.white38 : Colors.black45,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ],
+              ),
             ),
           ),
         ),

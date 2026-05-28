@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.liceal.unclutter" "\0"
-            VALUE "FileDescription", "unclutter" "\0"
+            VALUE "CompanyName", "com.liceal.pod" "\0"
+            VALUE "FileDescription", "Pod" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "unclutter" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.liceal.unclutter. All rights reserved." "\0"
-            VALUE "OriginalFilename", "unclutter.exe" "\0"
-            VALUE "ProductName", "unclutter" "\0"
+            VALUE "InternalName", "Pod" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.liceal.pod. All rights reserved." "\0"
+            VALUE "OriginalFilename", "Pod.exe" "\0"
+            VALUE "ProductName", "Pod" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

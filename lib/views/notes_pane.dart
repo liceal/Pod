@@ -173,7 +173,7 @@ class _NotesPaneState extends State<NotesPane> {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.only(left: 6, right: 6, bottom: 4),
+      padding: const EdgeInsets.only(left: 10, right: 10, bottom: 8),
       child: TextField(
         controller: _editorController,
         scrollController: _scrollController,
@@ -208,7 +208,7 @@ class _NotesPaneState extends State<NotesPane> {
     }
 
     return Padding(
-      padding: const EdgeInsets.all(8.0),
+      padding: const EdgeInsets.all(4.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -352,7 +352,7 @@ class _NotesPaneState extends State<NotesPane> {
               ],
             ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 4),
 
           // Main Content Area with Transition
           Expanded(

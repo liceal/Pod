@@ -19,6 +19,7 @@ class ClipboardPane extends StatefulWidget {
 class _ClipboardPaneState extends State<ClipboardPane> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  bool _showFavoritesOnly = false;
 
   @override
   void initState() {
@@ -38,7 +39,9 @@ class _ClipboardPaneState extends State<ClipboardPane> {
 
   @override
   Widget build(BuildContext context) {
-    final items = widget.state.filteredClipboardHistory;
+    final items = _showFavoritesOnly
+        ? widget.state.filteredClipboardFavorites
+        : widget.state.filteredClipboardHistory;
     final accentColor = AppTheme.getAccentColor(
       widget.state.settings.themeColorName,
       widget.isDark,
@@ -54,7 +57,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Search Field (Header integrated) with Scroll Listener
+          // Search Field & Favorite Toggle
           Listener(
             onPointerSignal: (pointerSignal) {
               if (pointerSignal is PointerScrollEvent &&
@@ -62,147 +65,226 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                 widget.state.collapsePanel();
               }
             },
-            child: Container(
-              height: 32,
-              decoration: BoxDecoration(
-                color: widget.isDark
-                    ? Colors.white.withOpacity(0.06)
-                    : Colors.black.withOpacity(0.04),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: TextField(
-                controller: _searchController,
-                textAlignVertical: TextAlignVertical.center,
-                style: const TextStyle(fontSize: 12),
-                decoration: InputDecoration(
-                  hintText: '搜索剪贴板记录...',
-                  hintStyle: TextStyle(
-                    fontSize: 12,
-                    color: widget.isDark
-                        ? Colors.white30
-                        : Colors.black.withOpacity(0.3),
-                  ),
-                  prefixIcon: Padding(
-                    padding: const EdgeInsets.only(left: 8.0, right: 6.0),
-                    child: Icon(
-                      Icons.search_rounded,
-                      size: 14,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 32,
+                    decoration: BoxDecoration(
                       color: widget.isDark
-                          ? Colors.white.withOpacity(0.5)
-                          : Colors.black.withOpacity(0.5),
+                          ? Colors.white.withOpacity(0.06)
+                          : Colors.black.withOpacity(0.04),
+                      borderRadius: BorderRadius.circular(8),
                     ),
-                  ),
-                  prefixIconConstraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 14,
-                  ),
-                  suffixIcon: _searchController.text.isNotEmpty
-                      ? Padding(
-                          padding: const EdgeInsets.only(right: 8.0),
-                          child: IconButton(
-                            icon: const Icon(Icons.clear, size: 12),
-                            onPressed: () => _searchController.clear(),
-                            constraints: const BoxConstraints(),
-                            padding: EdgeInsets.zero,
+                    child: TextField(
+                      controller: _searchController,
+                      textAlignVertical: TextAlignVertical.center,
+                      style: const TextStyle(fontSize: 12),
+                      decoration: InputDecoration(
+                        hintText: _showFavoritesOnly
+                            ? '搜索收藏记录...'
+                            : '搜索剪贴板记录...',
+                        hintStyle: TextStyle(
+                          fontSize: 12,
+                          color: widget.isDark
+                              ? Colors.white30
+                              : Colors.black.withOpacity(0.3),
+                        ),
+                        prefixIcon: Padding(
+                          padding: const EdgeInsets.only(left: 8.0, right: 6.0),
+                          child: Icon(
+                            Icons.search_rounded,
+                            size: 14,
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.5)
+                                : Colors.black.withOpacity(0.5),
                           ),
-                        )
-                      : (items.isNotEmpty
+                        ),
+                        prefixIconConstraints: const BoxConstraints(
+                          minWidth: 28,
+                          minHeight: 14,
+                        ),
+                        suffixIcon: _searchController.text.isNotEmpty
                             ? Padding(
                                 padding: const EdgeInsets.only(right: 8.0),
                                 child: IconButton(
-                                  icon: const Icon(
-                                    Icons.delete_sweep_outlined,
-                                    size: 14,
-                                  ),
-                                  tooltip: '清空历史（保留固定项）',
+                                  icon: const Icon(Icons.clear, size: 15),
+                                  onPressed: () => _searchController.clear(),
                                   constraints: const BoxConstraints(),
                                   padding: EdgeInsets.zero,
-                                  onPressed: () async {
-                                    widget.state.setDialogOpen(true);
-                                    await showDialog(
-                                      context: context,
-                                      barrierColor: Colors.transparent,
-                                      builder: (ctx) => AlertDialog(
-                                        title: const Text('清空剪贴板历史？'),
-                                        content: const Text(
-                                          '这将删除历史中所有未固定的记录，此操作不可撤销。',
-                                        ),
-                                        actions: [
-                                          TextButton(
-                                            child: const Text('取消'),
-                                            onPressed: () =>
-                                                Navigator.of(ctx).pop(),
-                                          ),
-                                          TextButton(
-                                            child: const Text('立即清空'),
-                                            onPressed: () {
-                                              widget.state
-                                                  .clearClipboardHistory();
-                                              setState(() {});
-                                              Navigator.of(ctx).pop();
-                                            },
-                                          ),
-                                        ],
-                                      ),
-                                    );
-                                    widget.state.setDialogOpen(false);
-                                  },
                                 ),
                               )
-                            : null),
-                  suffixIconConstraints: const BoxConstraints(
-                    minWidth: 20,
-                    minHeight: 12,
+                            : (widget
+                                          .state
+                                          .filteredClipboardHistory
+                                          .isNotEmpty &&
+                                      !_showFavoritesOnly
+                                  ? Padding(
+                                      padding: const EdgeInsets.only(
+                                        right: 8.0,
+                                      ),
+                                      child: IconButton(
+                                        icon: const Icon(
+                                          Icons.delete_sweep_outlined,
+                                          size: 16,
+                                        ),
+                                        tooltip: '清空历史记录',
+                                        constraints: const BoxConstraints(),
+                                        padding: EdgeInsets.zero,
+                                        onPressed: () async {
+                                          widget.state.setDialogOpen(true);
+                                          await showDialog(
+                                            context: context,
+                                            barrierColor: Colors.transparent,
+                                            builder: (ctx) => AlertDialog(
+                                              title: const Text('清空剪贴板历史？'),
+                                              content: const Text(
+                                                '这将删除所有的剪贴板历史记录，此操作不可撤销。',
+                                              ),
+                                              actions: [
+                                                TextButton(
+                                                  child: const Text('取消'),
+                                                  onPressed: () =>
+                                                      Navigator.of(ctx).pop(),
+                                                ),
+                                                TextButton(
+                                                  child: const Text('立即清空'),
+                                                  onPressed: () {
+                                                    widget.state
+                                                        .clearClipboardHistory();
+                                                    setState(() {});
+                                                    Navigator.of(ctx).pop();
+                                                  },
+                                                ),
+                                              ],
+                                            ),
+                                          );
+                                          widget.state.setDialogOpen(false);
+                                        },
+                                      ),
+                                    )
+                                  : null),
+                        suffixIconConstraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 16,
+                        ),
+                        isDense: true,
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
                   ),
-                  isDense: true,
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
                 ),
-              ),
+                const SizedBox(width: 4),
+                Tooltip(
+                  message: _showFavoritesOnly ? '所有记录' : '收藏记录',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: () {
+                        setState(() {
+                          _showFavoritesOnly = !_showFavoritesOnly;
+                        });
+                      },
+                      child: Container(
+                        width: 32,
+                        height: 32,
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.06)
+                              : Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          _showFavoritesOnly
+                              ? Icons.star_rounded
+                              : Icons.star_outline_rounded,
+                          size: 16,
+                          color: _showFavoritesOnly
+                              ? Colors.amber
+                              : (widget.isDark
+                                    ? Colors.white.withOpacity(0.6)
+                                    : Colors.black.withOpacity(0.6)),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
           const SizedBox(height: 4),
 
-          // History List
+          // History List with transition animation
           Expanded(
-            child: items.isEmpty
-                ? Center(
-                    child: Text(
-                      _searchController.text.isNotEmpty ? '没有找到匹配项' : '剪贴板历史为空',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: widget.isDark
-                            ? Colors.white30
-                            : Colors.black.withOpacity(0.3),
-                      ),
-                    ),
-                  )
-                : ListView.builder(
-                    controller: _scrollController,
-                    itemCount: items.length,
-                    physics: const BouncingScrollPhysics(),
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-
-                      return ClipboardItemCard(
-                        key: ValueKey(item.id),
-                        item: item,
-                        isDark: widget.isDark,
-                        accentColor: accentColor,
-                        onCopy: () =>
-                            widget.state.copyToClipboard(item.content),
-                        onPinToggle: () =>
-                            widget.state.togglePinClipboardItem(item.id),
-                        onDelete: () {
-                          widget.state.deleteClipboardItem(item.id);
-                          // Deferred rebuild — card hides instantly via its own state
-                          Future.delayed(Duration.zero, () {
-                            if (mounted) setState(() {});
-                          });
-                        },
-                      );
-                    },
+            child: AnimatedSwitcher(
+              duration: const Duration(milliseconds: 250),
+              transitionBuilder: (Widget child, Animation<double> animation) {
+                return FadeTransition(
+                  opacity: animation,
+                  child: SlideTransition(
+                    position: Tween<Offset>(
+                      begin: const Offset(0.05, 0),
+                      end: Offset.zero,
+                    ).animate(animation),
+                    child: child,
                   ),
+                );
+              },
+              child: KeyedSubtree(
+                key: ValueKey<bool>(_showFavoritesOnly),
+                child: items.isEmpty
+                    ? Center(
+                        child: Text(
+                          _showFavoritesOnly
+                              ? (_searchController.text.isNotEmpty
+                                    ? '没有找到匹配的收藏项'
+                                    : '没有收藏的记录')
+                              : (_searchController.text.isNotEmpty
+                                    ? '没有找到匹配项'
+                                    : '剪贴板历史为空'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: widget.isDark
+                                ? Colors.white30
+                                : Colors.black.withOpacity(0.3),
+                          ),
+                        ),
+                      )
+                    : ListView.builder(
+                        key: PageStorageKey<String>(
+                          _showFavoritesOnly ? 'favs_list' : 'all_list',
+                        ),
+                        controller: _scrollController,
+                        itemCount: items.length,
+                        physics: const BouncingScrollPhysics(),
+                        itemBuilder: (context, index) {
+                          final item = items[index];
+
+                          return ClipboardItemCard(
+                            key: ValueKey(item.id),
+                            item: item,
+                            isDark: widget.isDark,
+                            accentColor: accentColor,
+                            isFavorite: widget.state.isItemFavorite(
+                              item.content,
+                            ),
+                            onCopy: () =>
+                                widget.state.copyToClipboard(item.content),
+                            onFavoriteToggle: () =>
+                                widget.state.toggleFavoriteClipboardItem(item),
+                            onDelete: () {
+                              widget.state.deleteClipboardItem(item.id);
+                              // Deferred rebuild — card hides instantly via its own state
+                              Future.delayed(Duration.zero, () {
+                                if (mounted) setState(() {});
+                              });
+                            },
+                          );
+                        },
+                      ),
+              ),
+            ),
           ),
         ],
       ),
@@ -214,8 +296,9 @@ class ClipboardItemCard extends StatefulWidget {
   final ClipboardItem item;
   final bool isDark;
   final Color accentColor;
+  final bool isFavorite;
   final VoidCallback onCopy;
-  final VoidCallback onPinToggle;
+  final VoidCallback onFavoriteToggle;
   final VoidCallback onDelete;
 
   const ClipboardItemCard({
@@ -223,8 +306,9 @@ class ClipboardItemCard extends StatefulWidget {
     required this.item,
     required this.isDark,
     required this.accentColor,
+    required this.isFavorite,
     required this.onCopy,
-    required this.onPinToggle,
+    required this.onFavoriteToggle,
     required this.onDelete,
   });
 
@@ -235,7 +319,6 @@ class ClipboardItemCard extends StatefulWidget {
 class _ClipboardItemCardState extends State<ClipboardItemCard> {
   bool _isHovered = false;
   bool _isCopied = false;
-  late bool _isPinned;
   bool _isDeleted = false;
 
   Widget _buildAppIcon() {
@@ -261,18 +344,6 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
       size: 14,
       color: widget.isDark ? Colors.white30 : Colors.black38,
     );
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    _isPinned = widget.item.isPinned;
-  }
-
-  @override
-  void didUpdateWidget(covariant ClipboardItemCard oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    _isPinned = widget.item.isPinned;
   }
 
   void _showAllContentDialog(BuildContext context) async {
@@ -337,7 +408,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                         : Colors.black.withOpacity(0.01),
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(
-                       color: widget.isDark ? Colors.white10 : Colors.black12,
+                      color: widget.isDark ? Colors.white10 : Colors.black12,
                     ),
                   ),
                   child: SingleChildScrollView(
@@ -435,9 +506,8 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     });
   }
 
-  void _handlePinToggle() {
-    setState(() => _isPinned = !_isPinned);
-    widget.onPinToggle();
+  void _handleFavoriteToggle() {
+    widget.onFavoriteToggle();
   }
 
   void _handleDelete() {
@@ -468,7 +538,9 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(6),
             border: Border.all(
-              color: _isCopied ? themeAccent.withOpacity(0.35) : Colors.transparent,
+              color: _isCopied
+                  ? themeAccent.withOpacity(0.35)
+                  : Colors.transparent,
               width: 1,
             ),
             gradient: _isCopied
@@ -483,8 +555,8 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                 : null,
             color: !_isCopied && _isHovered
                 ? (widget.isDark
-                    ? Colors.white.withOpacity(0.04)
-                    : Colors.black.withOpacity(0.03))
+                      ? Colors.white.withOpacity(0.04)
+                      : Colors.black.withOpacity(0.03))
                 : Colors.transparent,
             boxShadow: _isCopied
                 ? [
@@ -492,7 +564,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                       color: themeAccent.withOpacity(0.08),
                       blurRadius: 8,
                       offset: const Offset(0, 2),
-                    )
+                    ),
                   ]
                 : null,
           ),
@@ -511,7 +583,9 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                   curve: Curves.easeOut,
                   style: TextStyle(
                     fontSize: 12,
-                    fontWeight: _isPinned ? FontWeight.w500 : FontWeight.normal,
+                    fontWeight: widget.isFavorite
+                        ? FontWeight.w500
+                        : FontWeight.normal,
                     color: _isCopied
                         ? themeAccent
                         : (widget.isDark ? Colors.white70 : Colors.black87),
@@ -529,15 +603,16 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                 width: 78,
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 180),
-                  transitionBuilder: (Widget child, Animation<double> animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: ScaleTransition(
-                        scale: animation,
-                        child: child,
-                      ),
-                    );
-                  },
+                  transitionBuilder:
+                      (Widget child, Animation<double> animation) {
+                        return FadeTransition(
+                          opacity: animation,
+                          child: ScaleTransition(
+                            scale: animation,
+                            child: child,
+                          ),
+                        );
+                      },
                   child: _isCopied
                       ? SizedBox(
                           height: 24,
@@ -571,7 +646,9 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                             children: [
                               _IconActionButton(
                                 icon: Icons.info_outline,
-                                iconColor: widget.isDark ? Colors.white60 : Colors.black54,
+                                iconColor: widget.isDark
+                                    ? Colors.white60
+                                    : Colors.black54,
                                 hoverBgColor: widget.isDark
                                     ? Colors.white.withOpacity(0.15)
                                     : Colors.black.withOpacity(0.1),
@@ -580,18 +657,20 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 onTap: () => _showAllContentDialog(context),
                               ),
                               _IconActionButton(
-                                icon: _isPinned
-                                    ? Icons.push_pin
-                                    : Icons.push_pin_outlined,
-                                iconColor: _isPinned
-                                    ? Colors.orange
-                                    : (widget.isDark ? Colors.white60 : Colors.black54),
+                                icon: widget.isFavorite
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                                iconColor: widget.isFavorite
+                                    ? Colors.amber
+                                    : (widget.isDark
+                                          ? Colors.white60
+                                          : Colors.black54),
                                 hoverBgColor: widget.isDark
-                                    ? Colors.orange.withOpacity(0.15)
-                                    : Colors.orange.withOpacity(0.1),
-                                visible: _isHovered || _isPinned,
+                                    ? Colors.amber.withOpacity(0.15)
+                                    : Colors.amber.withOpacity(0.1),
+                                visible: _isHovered || widget.isFavorite,
                                 isDark: widget.isDark,
-                                onTap: _handlePinToggle,
+                                onTap: _handleFavoriteToggle,
                               ),
                               _IconActionButton(
                                 icon: Icons.close,

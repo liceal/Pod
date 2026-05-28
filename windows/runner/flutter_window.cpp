@@ -21,6 +21,16 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
 
+  // Force window to be borderless popup style from the beginning
+  HWND hwnd = GetHandle();
+  LONG style = GetWindowLong(hwnd, GWL_STYLE);
+  style &= ~WS_CAPTION;
+  style &= ~WS_THICKFRAME;
+  style &= ~WS_SYSMENU;
+  style |= WS_POPUP;
+  SetWindowLong(hwnd, GWL_STYLE, style);
+  SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+
   // Initialize GDI+
   Gdiplus::GdiplusStartupInput gdiplusStartupInput;
   Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplusStartupInput, NULL);
@@ -41,7 +51,7 @@ bool FlutterWindow::OnCreate() {
   // Register Method Channel
   method_channel_ = std::make_unique<flutter::MethodChannel<>>(
       flutter_controller_->engine()->messenger(),
-      "app.unclutter/clipboard_owner",
+      "app.pod/clipboard_owner",
       &flutter::StandardMethodCodec::GetInstance());
 
   method_channel_->SetMethodCallHandler(
@@ -92,7 +102,7 @@ bool FlutterWindow::OnCreate() {
           // Get temp directory and icon directory
           wchar_t temp_path[MAX_PATH];
           GetTempPathW(MAX_PATH, temp_path);
-          std::wstring icon_dir = std::wstring(temp_path) + L"unclutter_icons";
+          std::wstring icon_dir = std::wstring(temp_path) + L"pod_icons";
           CreateDirectoryW(icon_dir.c_str(), NULL);
 
           std::wstring dest_file = icon_dir + L"\\" + exe_name + L".png";
@@ -188,6 +198,28 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  // Prevent caption/thickframe/sysmenu styles from being added back
+  if (message == WM_STYLECHANGING) {
+    STYLESTRUCT* ss = reinterpret_cast<STYLESTRUCT*>(lparam);
+    if (wparam == GWL_STYLE) {
+      ss->styleNew &= ~WS_CAPTION;
+      ss->styleNew &= ~WS_THICKFRAME;
+      ss->styleNew &= ~WS_SYSMENU;
+      ss->styleNew |= WS_POPUP;
+    }
+  }
+
+  // Overwrite min/max constraints to allow window height to be less than 39px
+  if (message == WM_GETMINMAXINFO) {
+    if (flutter_controller_) {
+      flutter_controller_->HandleTopLevelWindowProc(hwnd, message, wparam, lparam);
+    }
+    MINMAXINFO* mmi = reinterpret_cast<MINMAXINFO*>(lparam);
+    mmi->ptMinTrackSize.x = 0;
+    mmi->ptMinTrackSize.y = 0;
+    return 0;
+  }
+
   // Give Flutter, including plugins, an opportunity to handle window messages.
   if (flutter_controller_) {
     std::optional<LRESULT> result =
