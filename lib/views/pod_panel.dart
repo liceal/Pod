@@ -30,6 +30,7 @@ class _PodPanelState extends State<PodPanel>
   Timer? _hoverTimer;
   Timer? _autoCollapseTimer;
   bool _isMouseInside = false;
+  bool _isDragDropReady = false;
 
   @override
   void initState() {
@@ -54,8 +55,12 @@ class _PodPanelState extends State<PodPanel>
         );
 
     // Listen to animation status to finalize native window collapse
-    _animationController.addStatusListener((status) {
-      if (status == AnimationStatus.dismissed) {
+    _animationController.addStatusListener((status) async {
+      if (status == AnimationStatus.completed) {
+        if (Platform.isMacOS) {
+          await windowManager.setIgnoreMouseEvents(false);
+        }
+      } else if (status == AnimationStatus.dismissed) {
         if (!widget.state.isExpanded) {
           widget.state.onCollapseAnimationFinished();
         }
@@ -68,6 +73,14 @@ class _PodPanelState extends State<PodPanel>
     if (widget.state.isExpanded) {
       _animationController.value = 1.0;
     }
+
+    Future.delayed(const Duration(milliseconds: 5000), () {
+      if (mounted) {
+        setState(() {
+          _isDragDropReady = true;
+        });
+      }
+    });
   }
 
   @override
@@ -168,11 +181,15 @@ class _PodPanelState extends State<PodPanel>
     const double expandedH = 350.0;
     const double dialogH = 620.0;
 
-    // 只取一次屏幕宽度，后续复用，避免多次异步 I/O
+    // 只取一次屏幕和菜单栏信息，后续复用，避免多次异步 I/O
     double screenWidth = 0;
+    double menuBarHeight = 0;
     try {
       final primaryDisplay = await screenRetriever.getPrimaryDisplay();
       screenWidth = primaryDisplay.size.width;
+      if (Platform.isMacOS) {
+        menuBarHeight = primaryDisplay.visiblePosition?.dy ?? 24.0;
+      }
     } catch (_) {}
 
     // 使用已缓存的面板宽度，避免重复计算
@@ -181,7 +198,7 @@ class _PodPanelState extends State<PodPanel>
     // 展开窗口高度以容纳设置弹窗
     if (screenWidth > 0) {
       final x = (screenWidth - panelW) / 2;
-      await windowManager.setBounds(Rect.fromLTWH(x, 0, panelW, dialogH));
+      await windowManager.setBounds(Rect.fromLTWH(x, menuBarHeight, panelW, dialogH));
     }
 
     if (!mounted) return;
@@ -204,7 +221,7 @@ class _PodPanelState extends State<PodPanel>
     if (screenWidth > 0) {
       final x = (screenWidth - updatedPanelW) / 2;
       await windowManager.setBounds(
-        Rect.fromLTWH(x, 0, updatedPanelW, expandedH),
+        Rect.fromLTWH(x, menuBarHeight, updatedPanelW, expandedH),
       );
     }
 
@@ -226,7 +243,6 @@ class _PodPanelState extends State<PodPanel>
         );
 
         // Background and layout styling configurations
-        final baseColor = isDark ? Colors.white : Colors.black;
         final dividerColor = isDark ? Colors.white10 : Colors.black12;
 
         return Theme(
@@ -260,13 +276,19 @@ class _PodPanelState extends State<PodPanel>
                       minHeight: 350,
                       maxHeight: 350,
                       alignment: Alignment.topCenter,
-                      child: SlideTransition(
-                        position: _slideAnimation,
-                        child: Container(
+                      child: ClipRect(
+                        child: SlideTransition(
+                          position: _slideAnimation,
+                          child: Container(
                           height: 350,
-                          margin: const EdgeInsets.symmetric(horizontal: 6),
+                          margin: (widget.state.settings.themeStyle == ThemeStyle.compact ||
+                              (widget.state.settings.isWidthPercentage &&
+                               widget.state.settings.panelWidthPercent >= 100))
+                              ? EdgeInsets.zero
+                              : const EdgeInsets.symmetric(horizontal: 6),
                           decoration: AppTheme.getFrostedDecoration(
                             isDark: isDark,
+                            themeStyle: widget.state.settings.themeStyle,
                           ),
 
                           child: Column(
@@ -304,84 +326,8 @@ class _PodPanelState extends State<PodPanel>
                                       child: NotesPane(
                                         state: widget.state,
                                         isDark: isDark,
+                                        onShowSettings: _showSettings,
                                       ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-
-                              // Divider above bottom bar
-                              Divider(
-                                height: 1,
-                                thickness: 1,
-                                color: dividerColor,
-                              ),
-
-                              // Bottom Tiny Control Bar
-                              Container(
-                                height: 24,
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 14,
-                                ),
-                                child: Row(
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceBetween,
-                                  children: [
-                                    // Left: Settings Button
-                                    IconButton(
-                                      icon: const Icon(
-                                        Icons.settings_outlined,
-                                        size: 13,
-                                      ),
-                                      onPressed: _showSettings,
-                                      tooltip: '设置',
-                                      constraints: const BoxConstraints(),
-                                      padding: EdgeInsets.zero,
-                                    ),
-
-                                    // Center: Grab Handle / Close indicator (tap to collapse)
-                                    GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () => widget.state.collapsePanel(),
-                                      child: MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: Container(
-                                          width: 80,
-                                          height: 24,
-                                          alignment: Alignment.center,
-                                          child: Container(
-                                            width: 36,
-                                            height: 4,
-                                            decoration: BoxDecoration(
-                                              color: baseColor.withOpacity(
-                                                0.25,
-                                              ),
-                                              borderRadius:
-                                                  BorderRadius.circular(2),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-
-                                    // Right: Theme Toggle
-                                    IconButton(
-                                      icon: Icon(
-                                        isDark
-                                            ? Icons.light_mode_outlined
-                                            : Icons.dark_mode_outlined,
-                                        size: 13,
-                                      ),
-                                      onPressed: () {
-                                        widget.state.updateSettings(
-                                          widget.state.settings.copyWith(
-                                            isDarkTheme: !isDark,
-                                          ),
-                                        );
-                                      },
-                                      tooltip: '切换主题',
-                                      constraints: const BoxConstraints(),
-                                      padding: EdgeInsets.zero,
                                     ),
                                   ],
                                 ),
@@ -391,48 +337,67 @@ class _PodPanelState extends State<PodPanel>
                         ),
                       ),
                     ),
+                  ),
 
-                    // 2. 收起时显示的悬浮条：Windows上为 2px 的横杠，macOS上为 24px 透明层以捕获顶部系统状态栏的滚轮事件
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      right: 0,
-                      height: Platform.isMacOS ? 24.0 : 3.0,
-                      child: sdd.DropRegion(
-                        formats: const [sdd.Formats.fileUri],
-                        onDropEnter: (event) {
-                          final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
-                          if (isInternal) return;
-                          if (!widget.state.isExpanded &&
-                              !widget.state.isAnimating) {
-                            widget.state.expandPanel();
-                          }
-                        },
-                        onDropOver: (event) {
-                          final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
-                          return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
-                        },
-                        onPerformDrop: (event) async {
-                          // No-op
-                        },
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          onEnter: (_) => _onMouseEnteredTopStrip(),
-                          onExit: (_) => _onMouseExitedTopStrip(),
-                          child: Listener(
-                            behavior: HitTestBehavior.opaque,
-                            onPointerSignal: _handleTopScrollSignal, // 直接复用统一方法
-                            child: Container(
-                              color: Platform.isMacOS
-                                  ? Colors.transparent
-                                  : (isDark
-                                        ? Colors.white.withOpacity(0.1)
-                                        : Colors.black.withOpacity(0.05)),
-                            ),
-                          ),
-                        ),
+                    // 2. 收起时显示的悬浮条：仅在收起状态下渲染 (macOS上已取消，改用菜单栏滚动触发)
+                    if (!widget.state.isExpanded && !Platform.isMacOS)
+                      Positioned(
+                        top: 0.0,
+                        left: 0,
+                        right: 0,
+                        height: 3.0,
+                        child: _isDragDropReady
+                            ? sdd.DropRegion(
+                                formats: const [sdd.Formats.fileUri],
+                                onDropEnter: (event) {
+                                  final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+                                  if (isInternal) return;
+                                  if (!widget.state.isExpanded &&
+                                      !widget.state.isAnimating) {
+                                    widget.state.expandPanel();
+                                  }
+                                },
+                                onDropOver: (event) {
+                                  final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+                                  return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
+                                },
+                                onPerformDrop: (event) async {
+                                  // No-op
+                                },
+                                child: MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  onEnter: (_) => _onMouseEnteredTopStrip(),
+                                  onExit: (_) => _onMouseExitedTopStrip(),
+                                  child: Listener(
+                                    behavior: HitTestBehavior.opaque,
+                                    onPointerSignal: _handleTopScrollSignal, // 直接复用统一方法
+                                    child: Container(
+                                      color: Platform.isMacOS
+                                          ? Colors.white.withOpacity(0.01)
+                                          : (isDark
+                                                ? Colors.white.withOpacity(0.1)
+                                                : Colors.black.withOpacity(0.05)),
+                                    ),
+                                  ),
+                                ),
+                              )
+                            : MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                onEnter: (_) => _onMouseEnteredTopStrip(),
+                                onExit: (_) => _onMouseExitedTopStrip(),
+                                child: Listener(
+                                  behavior: HitTestBehavior.opaque,
+                                    onPointerSignal: _handleTopScrollSignal, // 直接复用统一方法
+                                    child: Container(
+                                      color: Platform.isMacOS
+                                          ? Colors.white.withOpacity(0.01)
+                                          : (isDark
+                                                ? Colors.white.withOpacity(0.1)
+                                                : Colors.black.withOpacity(0.05)),
+                                    ),
+                                ),
+                              ),
                       ),
-                    ),
                   ],
                 ), // Stack
               ), // MouseRegion (body)

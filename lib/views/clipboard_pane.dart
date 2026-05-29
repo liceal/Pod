@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:intl/intl.dart';
 import '../models/clipboard_item.dart';
+import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 
@@ -47,13 +48,9 @@ class _ClipboardPaneState extends State<ClipboardPane> {
       widget.isDark,
     );
 
+    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
     return Padding(
-      padding: const EdgeInsets.only(
-        top: 4.0,
-        bottom: 4.0,
-        left: 4.0,
-        right: 4.0,
-      ),
+      padding: EdgeInsets.all(isCompact ? 2.0 : 4.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -69,23 +66,23 @@ class _ClipboardPaneState extends State<ClipboardPane> {
               children: [
                 Expanded(
                   child: Container(
-                    height: 32,
+                    height: isCompact ? 26 : 32,
                     decoration: BoxDecoration(
                       color: widget.isDark
                           ? Colors.white.withOpacity(0.06)
                           : Colors.black.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(8),
+                      borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
                     ),
                     child: TextField(
                       controller: _searchController,
                       textAlignVertical: TextAlignVertical.center,
-                      style: const TextStyle(fontSize: 12),
+                      style: TextStyle(fontSize: isCompact ? 11 : 12),
                       decoration: InputDecoration(
                         hintText: _showFavoritesOnly
                             ? '搜索收藏记录...'
                             : '搜索剪贴板记录...',
                         hintStyle: TextStyle(
-                          fontSize: 12,
+                          fontSize: isCompact ? 11 : 12,
                           color: widget.isDark
                               ? Colors.white30
                               : Colors.black.withOpacity(0.3),
@@ -175,7 +172,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 4),
+                SizedBox(width: isCompact ? 2 : 4),
                 Tooltip(
                   message: _showFavoritesOnly ? '所有记录' : '收藏记录',
                   child: MouseRegion(
@@ -187,13 +184,15 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                         });
                       },
                       child: Container(
-                        width: 32,
-                        height: 32,
+                        width: isCompact ? 26 : 32,
+                        height: isCompact ? 26 : 32,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            isCompact ? 0 : 8,
+                          ),
                         ),
                         child: Icon(
                           _showFavoritesOnly
@@ -213,7 +212,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
               ],
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: isCompact ? 2 : 4),
 
           // History List with transition animation
           Expanded(
@@ -520,6 +519,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     if (_isDeleted) return const SizedBox.shrink();
 
     final themeAccent = widget.accentColor;
+    final isCompact = AppState().settings.themeStyle == ThemeStyle.compact;
 
     return MouseRegion(
       onEnter: (_) {
@@ -533,10 +533,13 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
-          margin: const EdgeInsets.only(bottom: 3),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          margin: EdgeInsets.only(bottom: isCompact ? 1 : 3),
+          padding: EdgeInsets.symmetric(
+            horizontal: 8,
+            vertical: isCompact ? 3 : 6,
+          ),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(isCompact ? 0 : 6),
             border: Border.all(
               color: _isCopied
                   ? themeAccent.withOpacity(0.35)

@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
+import '../models/app_settings.dart'; // import ThemeStyle
 
 class NotesPane extends StatefulWidget {
   final AppState state;
   final bool isDark;
+  final VoidCallback onShowSettings;
 
-  const NotesPane({super.key, required this.state, required this.isDark});
+  const NotesPane({
+    super.key,
+    required this.state,
+    required this.isDark,
+    required this.onShowSettings,
+  });
 
   @override
   State<NotesPane> createState() => _NotesPaneState();
@@ -62,7 +69,11 @@ class _NotesPaneState extends State<NotesPane> {
     widget.state.updateActiveNoteContent(val);
   }
 
-  void _showDeleteConfirmDialog(BuildContext context, Note note, {bool fromDetail = false}) async {
+  void _showDeleteConfirmDialog(
+    BuildContext context,
+    Note note, {
+    bool fromDetail = false,
+  }) async {
     widget.state.setDialogOpen(true);
     await showDialog(
       context: context,
@@ -96,7 +107,10 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   String _getSnippet(String content) {
-    final lines = content.split('\n').where((l) => l.trim().isNotEmpty).toList();
+    final lines = content
+        .split('\n')
+        .where((l) => l.trim().isNotEmpty)
+        .toList();
     if (lines.isEmpty) return '无内容';
     return lines.first;
   }
@@ -107,12 +121,15 @@ class _NotesPaneState extends State<NotesPane> {
       itemBuilder: (context, index) {
         final note = allNotes[index];
         final snippet = _getSnippet(note.content);
-        final dateStr = '${note.updatedAt.month}-${note.updatedAt.day} ${note.updatedAt.hour.toString().padLeft(2, '0')}:${note.updatedAt.minute.toString().padLeft(2, '0')}';
+        final dateStr =
+            '${note.updatedAt.month}-${note.updatedAt.day} ${note.updatedAt.hour.toString().padLeft(2, '0')}:${note.updatedAt.minute.toString().padLeft(2, '0')}';
 
         return Container(
           margin: const EdgeInsets.only(bottom: 6),
           child: Material(
-            color: widget.isDark ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.03),
+            color: widget.isDark
+                ? Colors.white.withValues(alpha: 0.05)
+                : Colors.black.withValues(alpha: 0.03),
             borderRadius: BorderRadius.circular(8),
             child: InkWell(
               borderRadius: BorderRadius.circular(8),
@@ -122,7 +139,10 @@ class _NotesPaneState extends State<NotesPane> {
                 setState(() => _showList = false);
               },
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -136,7 +156,9 @@ class _NotesPaneState extends State<NotesPane> {
                             style: TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w600,
-                              color: widget.isDark ? Colors.white : Colors.black87,
+                              color: widget.isDark
+                                  ? Colors.white
+                                  : Colors.black87,
                             ),
                           ),
                           const SizedBox(height: 4),
@@ -144,7 +166,9 @@ class _NotesPaneState extends State<NotesPane> {
                             dateStr,
                             style: TextStyle(
                               fontSize: 11,
-                              color: widget.isDark ? Colors.white54 : Colors.black54,
+                              color: widget.isDark
+                                  ? Colors.white54
+                                  : Colors.black54,
                             ),
                           ),
                         ],
@@ -152,7 +176,11 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.delete_outline, size: 14),
-                      onPressed: () => _showDeleteConfirmDialog(context, note, fromDetail: false),
+                      onPressed: () => _showDeleteConfirmDialog(
+                        context,
+                        note,
+                        fromDetail: false,
+                      ),
                       color: widget.isDark ? Colors.white54 : Colors.black45,
                       hoverColor: Colors.red.withValues(alpha: 0.1),
                       constraints: const BoxConstraints(),
@@ -207,37 +235,38 @@ class _NotesPaneState extends State<NotesPane> {
       return const Center(child: CircularProgressIndicator());
     }
 
+    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
     return Padding(
-      padding: const EdgeInsets.all(4.0),
+      padding: EdgeInsets.all(isCompact ? 2.0 : 4.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header with search input & buttons
           SizedBox(
-            height: 32,
+            height: isCompact ? 26 : 32,
             child: Row(
               children: [
                 if (_showList)
                   Expanded(
                     child: Container(
-                      height: 32,
+                      height: isCompact ? 26 : 32,
                       decoration: BoxDecoration(
                         color: widget.isDark
                             ? Colors.white.withOpacity(0.06)
                             : Colors.black.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
                       ),
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: const TextStyle(fontSize: 12),
+                        style: TextStyle(fontSize: isCompact ? 11 : 12),
                         decoration: InputDecoration(
                           hintText: '搜索便签...',
                           hintStyle: TextStyle(
-                            fontSize: 12,
+                            fontSize: isCompact ? 11 : 12,
                             color: widget.isDark
                                 ? Colors.white30
-                                : Colors.black.withOpacity(0.35),
+                                : Colors.black.withOpacity(0.3),
                           ),
                           prefixIcon: Padding(
                             padding: const EdgeInsets.only(left: 8, right: 6),
@@ -253,42 +282,56 @@ class _NotesPaneState extends State<NotesPane> {
                             minWidth: 28,
                             minHeight: 14,
                           ),
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                          suffixIconConstraints: const BoxConstraints(
+                            minWidth: 26,
+                            minHeight: 16,
+                          ),
                           isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                          ),
                         ),
                       ),
                     ),
                   )
                 else
                   const Spacer(),
-                const SizedBox(width: 4),
+                SizedBox(width: isCompact ? 2 : 4),
                 if (!_showList) ...[
                   Tooltip(
                     message: '删除当前便签',
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: GestureDetector(
-                        onTap: () => _showDeleteConfirmDialog(context, active, fromDetail: true),
+                        onTap: () => _showDeleteConfirmDialog(
+                          context,
+                          active,
+                          fromDetail: true,
+                        ),
                         child: Container(
-                          width: 32,
-                          height: 32,
+                          width: isCompact ? 26 : 32,
+                          height: isCompact ? 26 : 32,
                           decoration: BoxDecoration(
                             color: widget.isDark
                                 ? Colors.white.withOpacity(0.06)
                                 : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(8),
+                            borderRadius: BorderRadius.circular(
+                              isCompact ? 0 : 8,
+                            ),
                           ),
                           child: Icon(
                             Icons.delete_outline_rounded,
                             size: 15,
-                            color: widget.isDark ? Colors.red[300] : Colors.red[600],
+                            color: widget.isDark
+                                ? Colors.red[300]
+                                : Colors.red[600],
                           ),
                         ),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 4),
+                  SizedBox(width: isCompact ? 2 : 4),
                 ],
                 Tooltip(
                   message: '新建便签',
@@ -301,13 +344,15 @@ class _NotesPaneState extends State<NotesPane> {
                         setState(() => _showList = false);
                       },
                       child: Container(
-                        width: 32,
-                        height: 32,
+                        width: isCompact ? 26 : 32,
+                        height: isCompact ? 26 : 32,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            isCompact ? 0 : 8,
+                          ),
                         ),
                         child: Icon(
                           Icons.add_rounded,
@@ -320,7 +365,7 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                   ),
                 ),
-                const SizedBox(width: 4),
+                SizedBox(width: isCompact ? 2 : 4),
                 Tooltip(
                   message: _showList ? '当前为列表视图' : '返回列表视图',
                   child: MouseRegion(
@@ -330,13 +375,15 @@ class _NotesPaneState extends State<NotesPane> {
                         setState(() => _showList = !_showList);
                       },
                       child: Container(
-                        width: 32,
-                        height: 32,
+                        width: isCompact ? 26 : 32,
+                        height: isCompact ? 26 : 32,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.circular(
+                            isCompact ? 0 : 8,
+                          ),
                         ),
                         child: Icon(
                           Icons.menu_rounded,
@@ -349,10 +396,39 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                   ),
                 ),
+                SizedBox(width: isCompact ? 2 : 4),
+                Tooltip(
+                  message: '设置',
+                  child: MouseRegion(
+                    cursor: SystemMouseCursors.click,
+                    child: GestureDetector(
+                      onTap: widget.onShowSettings,
+                      child: Container(
+                        width: isCompact ? 26 : 32,
+                        height: isCompact ? 26 : 32,
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.06)
+                              : Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.circular(
+                            isCompact ? 0 : 8,
+                          ),
+                        ),
+                        child: Icon(
+                          Icons.settings_outlined,
+                          size: 15,
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.6)
+                              : Colors.black.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
-          const SizedBox(height: 4),
+          SizedBox(height: isCompact ? 2 : 4),
 
           // Main Content Area with Transition
           Expanded(

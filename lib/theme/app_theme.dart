@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../models/app_settings.dart';
 
 class AppTheme {
   // Dark theme colors (Mac-like)
@@ -30,12 +31,17 @@ class AppTheme {
     );
   }
 
-  static BoxDecoration getFrostedDecoration({required bool isDark, double radius = panelBorderRadius}) {
+  static BoxDecoration getFrostedDecoration({
+    required bool isDark,
+    double radius = panelBorderRadius,
+    ThemeStyle themeStyle = ThemeStyle.normal,
+  }) {
+    final double computedRadius = (themeStyle == ThemeStyle.compact) ? 0.0 : radius;
     return BoxDecoration(
       color: isDark ? darkBg : lightBg,
       borderRadius: BorderRadius.only(
-        bottomLeft: Radius.circular(radius),
-        bottomRight: Radius.circular(radius),
+        bottomLeft: Radius.circular(computedRadius),
+        bottomRight: Radius.circular(computedRadius),
       ),
       border: Border.all(
         color: isDark ? darkBorder : lightBorder,

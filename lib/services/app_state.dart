@@ -21,6 +21,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     'app.pod/clipboard_owner',
   );
 
+  static const _menuBarScrollChannel = MethodChannel('app.pod/menu_bar_scroll');
+
   // Singleton
   static final AppState _instance = AppState._internal();
   factory AppState() => _instance;
@@ -127,6 +129,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _setupHotkeys();
     _startClipboardMonitoring();
 
+    if (Platform.isMacOS) {
+      _menuBarScrollChannel.setMethodCallHandler((call) async {
+        if (call.method == 'onMenuBarScroll') {
+          final double dy = (call.arguments as num).toDouble();
+          _handleMenuBarScroll(dy);
+        }
+      });
+    }
+
     // Position window
     await windowManager.setMinimumSize(const Size(1, 1));
     await applyWindowTriggerConfiguration(isStartup: true);
@@ -156,7 +167,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       w = settings.panelWidth;
     }
     lastCalculatedWidth = w;
-    final double wCollapsed = w;
+    final double wCollapsed = Platform.isMacOS ? screenWidth : w;
     final double hCollapsed = Platform.isMacOS ? 24.0 : 3.0;
 
     if (isStartup) {
@@ -171,28 +182,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         await windowManager.setAsFrameless();
         await windowManager.setMinimumSize(const Size(1, 1));
         await windowManager.setAlwaysOnTop(true);
-        final x = (screenWidth - wCollapsed) / 2;
-        if (settings.triggerMode == TriggerMode.hotkeyOnly) {
-          await windowManager.hide();
-        } else {
-          await windowManager.setBounds(
-            Rect.fromLTWH(x, 0, wCollapsed, hCollapsed),
-          );
-          await windowManager.show();
-        }
-      });
-    } else {
-      if (isExpanded) {
-        if (!isDialogOpen) {
-          // Simply update bounds when already expanded to prevent native styling rebuild flashes
-          final x = (screenWidth - w) / 2;
-          await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
-        }
-        // await windowManager.focus();
-      } else {
-        // When collapsing, ONLY change size or hide. DO NOT call style/show/focus operations
-        // because changing window style or calling show() on Windows forces window activation
-        // and steals input focus from other running applications.
+        await windowManager.setHasShadow(false); // No shadow when collapsed
+
         if (settings.triggerMode == TriggerMode.hotkeyOnly) {
           await windowManager.hide();
         } else {
@@ -200,7 +191,73 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           await windowManager.setBounds(
             Rect.fromLTWH(x, 0, wCollapsed, hCollapsed),
           );
+          if (Platform.isMacOS) {
+            // macOS: 显示窗口但保持非激活（不抢占焦点），确保界面正确渲染
+            await _menuBarScrollChannel.invokeMethod('showInactive');
+          } else {
+            // Windows: 初始化位置但隐藏，避免启动时抢夺焦点
+            await windowManager.hide();
+          }
         }
+      });
+    } else {
+      if (isExpanded) {
+        if (!isDialogOpen) {
+          // Simply update bounds when already expanded to prevent native styling rebuild flashes
+          final x = (screenWidth - w) / 2;
+          final double y = Platform.isMacOS
+              ? (primaryDisplay.visiblePosition?.dy ?? 24.0)
+              : 0.0;
+          await windowManager.setBounds(Rect.fromLTWH(x, y, w, 350));
+          if (!Platform.isMacOS) {
+            await windowManager.setHasShadow(true); // Shadow when expanded
+          } else {
+            await windowManager.setHasShadow(
+              false,
+            ); // Remove pure black shadow on macOS
+          }
+        }
+        // await windowManager.focus();
+      } else {
+        // When collapsing, ONLY change size or hide. DO NOT call style/show/focus operations
+        // because changing window style or calling show() on Windows forces window activation
+        // and steals input focus from other running applications.
+        await windowManager.setHasShadow(false); // No shadow when collapsed
+        if (settings.triggerMode == TriggerMode.hotkeyOnly) {
+          await windowManager.hide();
+        } else {
+          if (Platform.isMacOS) {
+            // Hide window completely on macOS to prevent dead-click blocking
+            await windowManager.setIgnoreMouseEvents(true);
+            await windowManager.hide();
+          } else {
+            final x = (screenWidth - wCollapsed) / 2;
+            final double y = 0.0;
+            await windowManager.setBounds(
+              Rect.fromLTWH(x, y, wCollapsed, hCollapsed),
+            );
+          }
+        }
+      }
+    }
+  }
+
+  void _handleMenuBarScroll(double dy) {
+    if (settings.triggerMode == TriggerMode.hotkeyOnly ||
+        settings.triggerMode == TriggerMode.hoverOnly) {
+      return;
+    }
+    if (dy > 0) {
+      // 下滑 → 展开 / 取消正在进行的收起动画
+      if (isAnimating && !isExpanded) {
+        cancelCollapseAndExpand();
+      } else if (!isExpanded && !isAnimating) {
+        expandPanel();
+      }
+    } else if (dy < 0) {
+      // 上滑 → 收起
+      if (isExpanded && !isAnimating) {
+        collapsePanel();
       }
     }
   }
@@ -211,7 +268,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (isExpanded) {
       await collapsePanel();
     } else {
-      await expandPanel();
+      await expandPanel(focus: true);
     }
   }
 
@@ -233,11 +290,31 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
     lastCalculatedWidth = w;
 
-    final x = (screenWidth - w) / 2;
-    await windowManager.setBounds(Rect.fromLTWH(x, 0, w, 350));
-    if (focus || settings.triggerMode == TriggerMode.hotkeyOnly) {
+    if (Platform.isMacOS) {
+      final x = (screenWidth - w) / 2;
+      final double y = primaryDisplay.visiblePosition?.dy ?? 24.0;
+      await windowManager.setBounds(Rect.fromLTWH(x, y, w, 350));
+      await windowManager.setHasShadow(false);
+      await windowManager.setIgnoreMouseEvents(
+        true,
+      ); // Click-through during expand animation
+      await _menuBarScrollChannel.invokeMethod('showInactive'); // Show native window on macOS inactive when expanding
+    } else {
+      final x = (screenWidth - w) / 2;
+      final double y = 0.0;
+      await windowManager.setBounds(Rect.fromLTWH(x, y, w, 350));
+      await windowManager.setHasShadow(true); // Shadow when expanded
+      // Windows上先显示窗口，避免在需要时才显示导致的闪烁
       await windowManager.show();
-      // await windowManager.focus();
+    }
+
+    if (focus || settings.triggerMode == TriggerMode.hotkeyOnly) {
+      if (Platform.isMacOS) {
+        await _menuBarScrollChannel.invokeMethod('focusWindow');
+      } else {
+        // Windows: focus is managed by show()
+        // await windowManager.focus();
+      }
     }
 
     // Animation starts inside the sliding panel widget
@@ -257,6 +334,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await forceSaveNotesIfPending();
     isAnimating = true;
     isExpanded = false;
+    if (Platform.isMacOS) {
+      await windowManager.setIgnoreMouseEvents(
+        true,
+      ); // Click-through immediately during collapse animation
+    }
     notifyListeners();
 
     // We wait for the sliding animation to complete inside the UI before resizing the native window.
