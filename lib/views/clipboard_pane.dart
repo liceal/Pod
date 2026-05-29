@@ -6,6 +6,7 @@ import '../models/clipboard_item.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
+import 'components/animated_press.dart';
 
 class ClipboardPane extends StatefulWidget {
   final AppState state;
@@ -104,11 +105,12 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                         suffixIcon: _searchController.text.isNotEmpty
                             ? Padding(
                                 padding: const EdgeInsets.only(right: 8.0),
-                                child: IconButton(
-                                  icon: const Icon(Icons.clear, size: 15),
-                                  onPressed: () => _searchController.clear(),
-                                  constraints: const BoxConstraints(),
-                                  padding: EdgeInsets.zero,
+                                child: MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: AnimatedPress(
+                                    onTap: () => _searchController.clear(),
+                                    child: const Icon(Icons.clear, size: 15),
+                                  ),
                                 ),
                               )
                             : (widget
@@ -120,44 +122,44 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                                       padding: const EdgeInsets.only(
                                         right: 8.0,
                                       ),
-                                      child: IconButton(
-                                        icon: const Icon(
-                                          Icons.delete_sweep_outlined,
-                                          size: 16,
-                                        ),
-                                        tooltip: '清空历史记录',
-                                        constraints: const BoxConstraints(),
-                                        padding: EdgeInsets.zero,
-                                        onPressed: () async {
-                                          widget.state.setDialogOpen(true);
-                                          await showDialog(
-                                            context: context,
-                                            barrierColor: Colors.transparent,
-                                            builder: (ctx) => AlertDialog(
-                                              title: const Text('清空剪贴板历史？'),
-                                              content: const Text(
-                                                '这将删除所有的剪贴板历史记录，此操作不可撤销。',
+                                      child: MouseRegion(
+                                        cursor: SystemMouseCursors.click,
+                                        child: AnimatedPress(
+                                          onTap: () async {
+                                            widget.state.setDialogOpen(true);
+                                            await showDialog(
+                                              context: context,
+                                              barrierColor: Colors.transparent,
+                                              builder: (ctx) => AlertDialog(
+                                                title: const Text('清空剪贴板历史？'),
+                                                content: const Text(
+                                                  '这将删除所有的剪贴板历史记录，此操作不可撤销。',
+                                                ),
+                                                actions: [
+                                                  TextButton(
+                                                    child: const Text('取消'),
+                                                    onPressed: () =>
+                                                        Navigator.of(ctx).pop(),
+                                                  ),
+                                                  TextButton(
+                                                    child: const Text('立即清空'),
+                                                    onPressed: () {
+                                                      widget.state
+                                                          .clearClipboardHistory();
+                                                      setState(() {});
+                                                      Navigator.of(ctx).pop();
+                                                    },
+                                                  ),
+                                                ],
                                               ),
-                                              actions: [
-                                                TextButton(
-                                                  child: const Text('取消'),
-                                                  onPressed: () =>
-                                                      Navigator.of(ctx).pop(),
-                                                ),
-                                                TextButton(
-                                                  child: const Text('立即清空'),
-                                                  onPressed: () {
-                                                    widget.state
-                                                        .clearClipboardHistory();
-                                                    setState(() {});
-                                                    Navigator.of(ctx).pop();
-                                                  },
-                                                ),
-                                              ],
-                                            ),
-                                          );
-                                          widget.state.setDialogOpen(false);
-                                        },
+                                            );
+                                            widget.state.setDialogOpen(false);
+                                          },
+                                          child: const Icon(
+                                            Icons.delete_sweep_outlined,
+                                            size: 16,
+                                          ),
+                                        ),
                                       ),
                                     )
                                   : null),
@@ -177,7 +179,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                   message: _showFavoritesOnly ? '所有记录' : '收藏记录',
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: () {
                         setState(() {
                           _showFavoritesOnly = !_showFavoritesOnly;
