@@ -17,6 +17,12 @@ void main() async {
     MaterialApp(
       title: 'Pod',
       debugShowCheckedModeBanner: false,
+      color: Colors.transparent,
+      theme: ThemeData(
+        scaffoldBackgroundColor: Colors.transparent,
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
+        useMaterial3: true,
+      ),
       home: PodPanel(state: appState),
     ),
   );

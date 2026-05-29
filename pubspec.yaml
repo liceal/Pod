@@ -37,6 +37,7 @@ dependencies:
 
   # Desktop window styling and management
   window_manager: ^0.4.3
+  screen_retriever: ^0.2.0
   
   # Global system hotkeys
   hotkey_manager: ^0.2.1

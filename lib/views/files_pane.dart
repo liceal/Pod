@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
+import '../models/app_settings.dart';
 import '../theme/app_theme.dart';
 
 enum _ViewMode { grid, details }
@@ -25,12 +26,20 @@ class _FilesPaneState extends State<FilesPane> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _gridScrollController = ScrollController();
   final ScrollController _detailsScrollController = ScrollController();
+  bool _isDragDropReady = false;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
+    });
+    Future.delayed(const Duration(milliseconds: 5000), () {
+      if (mounted) {
+        setState(() {
+          _isDragDropReady = true;
+        });
+      }
     });
   }
 
@@ -72,6 +81,7 @@ class _FilesPaneState extends State<FilesPane> {
     final RenderBox overlay =
         Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
 
+    widget.state.setDialogOpen(true);
     final result = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
@@ -139,6 +149,7 @@ class _FilesPaneState extends State<FilesPane> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
     );
+    widget.state.setDialogOpen(false);
 
     if (result == null) return;
 
@@ -281,57 +292,39 @@ class _FilesPaneState extends State<FilesPane> {
       return fileName.contains(_searchQuery.toLowerCase());
     }).toList();
 
-    return sdd.DropRegion(
-      formats: const [sdd.Formats.fileUri],
-      onDropEnter: (event) {
-        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
-        if (!isInternal) {
-          setState(() => _isDragging = true);
-        }
-      },
-      onDropLeave: (event) => setState(() => _isDragging = false),
-      onDropOver: (event) {
-        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
-        return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
-      },
-      onPerformDrop: (event) async {
-        final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
-        if (isInternal) return;
-        setState(() => _isDragging = false);
-        final filePaths = <String>[];
-        final items = event.session.items;
-        int completed = 0;
-        if (items.isEmpty) return;
+    if (!_isDragDropReady) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(accentColor),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '正在加载暂存区...',
+              style: TextStyle(
+                fontSize: 11,
+                color: widget.isDark
+                    ? Colors.white30
+                    : Colors.black.withOpacity(0.3),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
 
-        for (final item in items) {
-          final reader = item.dataReader;
-          if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
-            reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
-              if (uri != null) {
-                filePaths.add(uri.toFilePath());
-              }
-              completed++;
-              if (completed == items.length && filePaths.isNotEmpty) {
-                widget.state.addDroppedFiles(filePaths);
-              }
-            }, onError: (err) {
-              completed++;
-              if (completed == items.length && filePaths.isNotEmpty) {
-                widget.state.addDroppedFiles(filePaths);
-              }
-            });
-          } else {
-            completed++;
-            if (completed == items.length && filePaths.isNotEmpty) {
-              widget.state.addDroppedFiles(filePaths);
-            }
-          }
-        }
-      },
-      child: Stack(
+    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
+    final mainContent = Stack(
         children: [
           Padding(
-            padding: const EdgeInsets.all(4),
+            padding: EdgeInsets.all(isCompact ? 2 : 4),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -352,9 +345,10 @@ class _FilesPaneState extends State<FilesPane> {
                           showFolderBtn: _searchController.text.isEmpty,
                           onOpenFolder: () =>
                               widget.state.openFilesDirectoryInExplorer(),
+                          themeStyle: widget.state.settings.themeStyle,
                         ),
                       ),
-                      const SizedBox(width: 4),
+                      SizedBox(width: isCompact ? 2 : 4),
                       MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: GestureDetector(
@@ -366,13 +360,13 @@ class _FilesPaneState extends State<FilesPane> {
                             }
                           }),
                           child: Container(
-                            width: 32,
-                            height: 32,
+                            width: isCompact ? 26 : 32,
+                            height: isCompact ? 26 : 32,
                             decoration: BoxDecoration(
                               color: widget.isDark
                                   ? Colors.white.withOpacity(0.06)
                                   : Colors.black.withOpacity(0.04),
-                              borderRadius: BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
                             ),
                             child: Icon(
                               _viewMode == _ViewMode.grid
@@ -389,7 +383,7 @@ class _FilesPaneState extends State<FilesPane> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 4),
+                SizedBox(height: isCompact ? 2 : 4),
 
                 // ── File Content ──
                 Expanded(
@@ -474,8 +468,59 @@ class _FilesPaneState extends State<FilesPane> {
               ),
             ),
         ],
-      ),
-    );
+      );
+
+    return _isDragDropReady
+        ? sdd.DropRegion(
+            formats: const [sdd.Formats.fileUri],
+            onDropEnter: (event) {
+              final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+              if (!isInternal) {
+                setState(() => _isDragging = true);
+              }
+            },
+            onDropLeave: (event) => setState(() => _isDragging = false),
+            onDropOver: (event) {
+              final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+              return isInternal ? sdd.DropOperation.none : sdd.DropOperation.copy;
+            },
+            onPerformDrop: (event) async {
+              final isInternal = event.session.items.any((item) => item.localData == 'internal_file_drag');
+              if (isInternal) return;
+              setState(() => _isDragging = false);
+              final filePaths = <String>[];
+              final items = event.session.items;
+              int completed = 0;
+              if (items.isEmpty) return;
+
+              for (final item in items) {
+                final reader = item.dataReader;
+                if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
+                  reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
+                    if (uri != null) {
+                      filePaths.add(uri.toFilePath());
+                    }
+                    completed++;
+                    if (completed == items.length && filePaths.isNotEmpty) {
+                      widget.state.addDroppedFiles(filePaths);
+                    }
+                  }, onError: (err) {
+                    completed++;
+                    if (completed == items.length && filePaths.isNotEmpty) {
+                      widget.state.addDroppedFiles(filePaths);
+                    }
+                  });
+                } else {
+                  completed++;
+                  if (completed == items.length && filePaths.isNotEmpty) {
+                    widget.state.addDroppedFiles(filePaths);
+                  }
+                }
+              }
+            },
+            child: mainContent,
+          )
+        : mainContent;
   }
 
   void _showNewNameDialog(BuildContext context, bool isFolder) async {
@@ -524,6 +569,7 @@ class _FilesPaneState extends State<FilesPane> {
     final RenderBox overlay =
         Navigator.of(context).overlay!.context.findRenderObject() as RenderBox;
 
+    widget.state.setDialogOpen(true);
     final result = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
@@ -570,6 +616,7 @@ class _FilesPaneState extends State<FilesPane> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       color: isDark ? const Color(0xFF262626) : Colors.white,
     );
+    widget.state.setDialogOpen(false);
 
     if (result == null) return;
 
@@ -741,32 +788,35 @@ class _SearchBar extends StatelessWidget {
   final bool isDark;
   final bool showFolderBtn;
   final VoidCallback onOpenFolder;
+  final ThemeStyle themeStyle;
 
   const _SearchBar({
     required this.controller,
     required this.isDark,
     required this.showFolderBtn,
     required this.onOpenFolder,
+    required this.themeStyle,
   });
 
   @override
   Widget build(BuildContext context) {
+    final isCompact = themeStyle == ThemeStyle.compact;
     return Container(
-      height: 32,
+      height: isCompact ? 26 : 32,
       decoration: BoxDecoration(
         color: isDark
             ? Colors.white.withOpacity(0.06)
             : Colors.black.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
       ),
       child: TextField(
         controller: controller,
         textAlignVertical: TextAlignVertical.center,
-        style: const TextStyle(fontSize: 12),
+        style: TextStyle(fontSize: isCompact ? 11 : 12),
         decoration: InputDecoration(
           hintText: '搜索暂存文件...',
           hintStyle: TextStyle(
-            fontSize: 12,
+            fontSize: isCompact ? 11 : 12,
             color: isDark ? Colors.white30 : Colors.black.withOpacity(0.3),
           ),
           prefixIcon: Padding(
@@ -932,7 +982,7 @@ class _GridFileCardState extends State<_GridFileCard> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 8),
                 onTap: () {
                   final now = DateTime.now();
                   if (_lastTapTime != null &&
@@ -953,7 +1003,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                         : (widget.isDark
                             ? Colors.white.withOpacity(0.03)
                             : Colors.black.withOpacity(0.02)),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 8),
                     border: Border.all(
                       color: _isHovered
                           ? (widget.isDark ? Colors.white12 : Colors.black12)
@@ -969,7 +1019,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                           child: Center(
                             child: widget.isImage
                                 ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(6),
+                                    borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 6),
                                     child: Image.file(
                                       File(widget.file.path),
                                       fit: BoxFit.cover,
@@ -986,7 +1036,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                                     height: 40,
                                     decoration: BoxDecoration(
                                       color: widget.iconColor.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(8),
+                                      borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 8),
                                     ),
                                     child: Icon(
                                       widget.icon,
@@ -1344,7 +1394,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(6),
+                borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 6),
                 onTap: () {
                   final now = DateTime.now();
                   if (_lastTapTime != null &&
@@ -1357,15 +1407,15 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
-                  margin: const EdgeInsets.only(bottom: 2),
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                  margin: EdgeInsets.only(bottom: AppState().settings.themeStyle == ThemeStyle.compact ? 1 : 2),
+                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: AppState().settings.themeStyle == ThemeStyle.compact ? 2 : 4),
                   decoration: BoxDecoration(
                     color: _isHovered
                         ? (widget.isDark
                             ? Colors.white.withOpacity(0.06)
                             : Colors.black.withOpacity(0.04))
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(6),
+                    borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 6),
                   ),
                   child: Row(
                     children: [
@@ -1375,11 +1425,11 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                         height: 20,
                         decoration: BoxDecoration(
                           color: widget.iconColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(4),
+                          borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 4),
                         ),
                         child: widget.isImage
                             ? ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
+                                borderRadius: BorderRadius.circular(AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 4),
                                 child: Image.file(
                                   File(widget.file.path),
                                   fit: BoxFit.cover,

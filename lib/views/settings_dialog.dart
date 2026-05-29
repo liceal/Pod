@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/app_settings.dart';
@@ -29,6 +28,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String _themeColorName;
   late bool _closeOnBlur;
   late int _autoCollapseDelay;
+  late ThemeStyle _themeStyle;
 
   final List<String> _hotkeyPresets = [
     'alt+u',
@@ -55,6 +55,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _themeColorName = (widget.state.settings.themeColorName as dynamic) ?? 'blue';
     _closeOnBlur = widget.state.settings.closeOnBlur;
     _autoCollapseDelay = widget.state.settings.autoCollapseDelay;
+    _themeStyle = widget.state.settings.themeStyle;
     _customFilesPathController = TextEditingController(text: widget.state.settings.customFilesPath ?? '');
 
     // Fetch storage directories
@@ -95,6 +96,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       customFilesPath: _customFilesPathController.text.trim().isEmpty
           ? null
           : _customFilesPathController.text.trim(),
+      themeStyle: _themeStyle,
     );
     widget.state.updateSettings(updated);
     Navigator.of(context).pop();

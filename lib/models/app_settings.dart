@@ -5,6 +5,11 @@ enum TriggerMode {
   scrollOnly,
 }
 
+enum ThemeStyle {
+  normal,
+  compact,
+}
+
 class AppSettings {
   final TriggerMode triggerMode;
   final String hotkey; // e.g., "alt+u"
@@ -18,6 +23,7 @@ class AppSettings {
   /// Seconds to wait after mouse leaves before auto-collapsing. 0 = disabled.
   final int autoCollapseDelay;
   final String? customFilesPath;
+  final ThemeStyle themeStyle;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -34,6 +40,7 @@ class AppSettings {
     bool? closeOnBlur = false,
     this.autoCollapseDelay = 5,
     this.customFilesPath,
+    this.themeStyle = ThemeStyle.compact,
   })  : _themeColorName = themeColorName,
         _closeOnBlur = closeOnBlur;
 
@@ -49,6 +56,7 @@ class AppSettings {
     bool? closeOnBlur,
     int? autoCollapseDelay,
     String? customFilesPath,
+    ThemeStyle? themeStyle,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -62,6 +70,7 @@ class AppSettings {
       closeOnBlur: closeOnBlur ?? this.closeOnBlur,
       autoCollapseDelay: autoCollapseDelay ?? this.autoCollapseDelay,
       customFilesPath: customFilesPath ?? this.customFilesPath,
+      themeStyle: themeStyle ?? this.themeStyle,
     );
   }
 
@@ -78,6 +87,7 @@ class AppSettings {
       'closeOnBlur': closeOnBlur,
       'autoCollapseDelay': autoCollapseDelay,
       'customFilesPath': customFilesPath,
+      'themeStyle': themeStyle.name,
     };
   }
 
@@ -88,6 +98,10 @@ class AppSettings {
         (e) => e.name == name,
         orElse: () => TriggerMode.both,
       );
+    }
+
+    ThemeStyle parseThemeStyle(String? name) {
+      return ThemeStyle.compact;
     }
 
     return AppSettings(
@@ -102,6 +116,7 @@ class AppSettings {
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
       autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 5,
       customFilesPath: json['customFilesPath'] as String?,
+      themeStyle: parseThemeStyle(json['themeStyle'] as String?),
     );
   }
 
