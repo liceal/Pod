@@ -100,6 +100,7 @@ class _PodPanelState extends State<PodPanel>
       if (_animationController.status != AnimationStatus.reverse &&
           _animationController.status != AnimationStatus.dismissed) {
         _isMouseInside = false;
+        widget.state.isMouseInside = false; // Sync to AppState
         _animationController.reverse();
       }
     }
@@ -129,11 +130,13 @@ class _PodPanelState extends State<PodPanel>
   // 鼠标移出展开的面板窗口时开始倒计时自动收起
   void _onMouseEnteredPanel() {
     _isMouseInside = true;
+    widget.state.isMouseInside = true; // Sync to AppState
     widget.state.cancelAutoCollapseTimer();
   }
 
   void _onMouseExitedPanel() {
     _isMouseInside = false;
+    widget.state.isMouseInside = false; // Sync to AppState
     widget.state.startAutoCollapseTimer();
   }
 
@@ -322,6 +325,81 @@ class _PodPanelState extends State<PodPanel>
                                   ],
                                 ),
                               ),
+                              if (!Platform.isMacOS) ...[
+                                Divider(
+                                  height: 1,
+                                  thickness: 1,
+                                  color: dividerColor,
+                                ),
+                                Container(
+                                  height: 24,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 14,
+                                  ),
+                                  child: Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      // Left: Settings Button
+                                      IconButton(
+                                        icon: const Icon(
+                                          Icons.settings_outlined,
+                                          size: 13,
+                                        ),
+                                        onPressed: _showSettings,
+                                        tooltip: '设置',
+                                        constraints: const BoxConstraints(),
+                                        padding: EdgeInsets.zero,
+                                      ),
+
+                                      // Center: Grab Handle / Close indicator (tap to collapse)
+                                      GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () => widget.state.collapsePanel(),
+                                        child: MouseRegion(
+                                          cursor: SystemMouseCursors.click,
+                                          child: Container(
+                                            width: 80,
+                                            height: 24,
+                                            alignment: Alignment.center,
+                                            child: Container(
+                                              width: 36,
+                                              height: 4,
+                                              decoration: BoxDecoration(
+                                                color: (isDark ? Colors.white : Colors.black).withOpacity(
+                                                  0.25,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(2),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+
+                                      // Right: Theme Toggle
+                                      IconButton(
+                                        icon: Icon(
+                                          isDark
+                                              ? Icons.light_mode_outlined
+                                              : Icons.dark_mode_outlined,
+                                          size: 13,
+                                        ),
+                                        onPressed: () {
+                                          widget.state.updateSettings(
+                                            widget.state.settings.copyWith(
+                                              isDarkTheme: !isDark,
+                                            ),
+                                          );
+                                        },
+                                        tooltip: '切换主题',
+                                        constraints: const BoxConstraints(),
+                                        padding: EdgeInsets.zero,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
@@ -329,8 +407,8 @@ class _PodPanelState extends State<PodPanel>
                     ),
                   ),
 
-                    // 2. 收起时显示的悬浮条：仅在收起状态下渲染 (macOS上已取消，改用菜单栏滚动触发)
-                    if (!widget.state.isExpanded && !Platform.isMacOS)
+                    // 2. 收起时显示的悬浮条：Windows上始终渲染，方便下拉与顶部滑轮收起 (macOS上已取消，改用菜单栏滚动触发)
+                    if (!Platform.isMacOS)
                       Positioned(
                         top: 0.0,
                         left: 0,
