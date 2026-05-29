@@ -6,6 +6,7 @@ import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../models/app_settings.dart';
 import '../theme/app_theme.dart';
+import 'components/animated_press.dart';
 
 enum _ViewMode { grid, details }
 
@@ -351,7 +352,7 @@ class _FilesPaneState extends State<FilesPane> {
                       SizedBox(width: isCompact ? 2 : 4),
                       MouseRegion(
                         cursor: SystemMouseCursors.click,
-                        child: GestureDetector(
+                        child: AnimatedPress(
                           onTap: () => setState(() {
                             if (_viewMode == _ViewMode.grid) {
                               _viewMode = _ViewMode.details;
@@ -838,7 +839,7 @@ class _SearchBar extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 8),
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: () => controller.clear(),
                       child: const Icon(Icons.clear, size: 15),
                     ),
@@ -849,7 +850,7 @@ class _SearchBar extends StatelessWidget {
                   padding: const EdgeInsets.only(right: 8),
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: onOpenFolder,
                       child: const Icon(Icons.folder_open_outlined, size: 16),
                     ),

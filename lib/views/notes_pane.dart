@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
 import '../models/app_settings.dart'; // import ThemeStyle
+import 'components/animated_press.dart';
 
 class NotesPane extends StatefulWidget {
   final AppState state;
@@ -34,6 +35,7 @@ class _NotesPaneState extends State<NotesPane> {
     _searchController.text = widget.state.searchNotesQuery;
     _searchController.addListener(() {
       widget.state.searchNotesQuery = _searchController.text;
+      setState(() {});
     });
     _syncActiveNote();
   }
@@ -282,6 +284,18 @@ class _NotesPaneState extends State<NotesPane> {
                             minWidth: 28,
                             minHeight: 14,
                           ),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.only(right: 8.0),
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: AnimatedPress(
+                                      onTap: () => _searchController.clear(),
+                                      child: const Icon(Icons.clear, size: 15),
+                                    ),
+                                  ),
+                                )
+                              : null,
                           suffixIconConstraints: const BoxConstraints(
                             minWidth: 26,
                             minHeight: 16,
@@ -303,7 +317,7 @@ class _NotesPaneState extends State<NotesPane> {
                     message: '删除当前便签',
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
-                      child: GestureDetector(
+                      child: AnimatedPress(
                         onTap: () => _showDeleteConfirmDialog(
                           context,
                           active,
@@ -337,7 +351,7 @@ class _NotesPaneState extends State<NotesPane> {
                   message: '新建便签',
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: () async {
                         await widget.state.createNote();
                         _syncActiveNote();
@@ -370,7 +384,7 @@ class _NotesPaneState extends State<NotesPane> {
                   message: _showList ? '当前为列表视图' : '返回列表视图',
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: () {
                         setState(() => _showList = !_showList);
                       },
@@ -401,7 +415,7 @@ class _NotesPaneState extends State<NotesPane> {
                   message: '设置',
                   child: MouseRegion(
                     cursor: SystemMouseCursors.click,
-                    child: GestureDetector(
+                    child: AnimatedPress(
                       onTap: widget.onShowSettings,
                       child: Container(
                         width: isCompact ? 26 : 32,

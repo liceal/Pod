@@ -319,6 +319,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Animation starts inside the sliding panel widget
     isAnimating = false;
+    startAutoCollapseTimer();
   }
 
   Future<void> forceSaveNotesIfPending() async {
@@ -368,16 +369,34 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  void startAutoCollapseTimer() {
+    _autoCollapseTimer?.cancel();
+    if (isDialogOpen) return;
+    final delay = settings.autoCollapseDelay;
+    if (delay <= 0) return;
+    if (!isExpanded || isAnimating) return;
+    _autoCollapseTimer = Timer(Duration(seconds: delay), () {
+      if (isExpanded && !isAnimating) {
+        collapsePanel();
+      }
+    });
+  }
+
+  void cancelAutoCollapseTimer() {
+    _autoCollapseTimer?.cancel();
+  }
+
   // --- Window Listeners ---
   @override
   void onWindowBlur() {
-    // 焦点丢失由 collapsePanel 主动处理，此处不做额外操作
+    // Start auto-collapse timer when focus is lost (e.g. user clicked outside)
+    startAutoCollapseTimer();
   }
 
   @override
   void onWindowFocus() {
-    // 重新获得焦点时取消自动收起计时器（由 panel widget 的 MouseRegion 负责）
-    _autoCollapseTimer?.cancel();
+    // Cancel auto-collapse timer when window is focused
+    cancelAutoCollapseTimer();
   }
 
   // --- Settings Persistence ---

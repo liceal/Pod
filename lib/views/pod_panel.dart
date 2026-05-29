@@ -28,7 +28,6 @@ class _PodPanelState extends State<PodPanel>
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   Timer? _hoverTimer;
-  Timer? _autoCollapseTimer;
   bool _isMouseInside = false;
   bool _isDragDropReady = false;
 
@@ -88,7 +87,6 @@ class _PodPanelState extends State<PodPanel>
     widget.state.removeListener(_handleStateChange);
     _animationController.dispose();
     _hoverTimer?.cancel();
-    _autoCollapseTimer?.cancel();
     super.dispose();
   }
 
@@ -101,6 +99,7 @@ class _PodPanelState extends State<PodPanel>
     } else {
       if (_animationController.status != AnimationStatus.reverse &&
           _animationController.status != AnimationStatus.dismissed) {
+        _isMouseInside = false;
         _animationController.reverse();
       }
     }
@@ -130,21 +129,12 @@ class _PodPanelState extends State<PodPanel>
   // 鼠标移出展开的面板窗口时开始倒计时自动收起
   void _onMouseEnteredPanel() {
     _isMouseInside = true;
-    _autoCollapseTimer?.cancel();
+    widget.state.cancelAutoCollapseTimer();
   }
 
   void _onMouseExitedPanel() {
     _isMouseInside = false;
-    _autoCollapseTimer?.cancel();
-    if (widget.state.isDialogOpen) return;
-    final delay = widget.state.settings.autoCollapseDelay;
-    if (delay <= 0) return;
-    if (!widget.state.isExpanded || widget.state.isAnimating) return;
-    _autoCollapseTimer = Timer(Duration(seconds: delay), () {
-      if (widget.state.isExpanded && !widget.state.isAnimating) {
-        widget.state.collapsePanel();
-      }
-    });
+    widget.state.startAutoCollapseTimer();
   }
 
   // 顶部感应条/把手双向滚轮处理：上滑收起 / 下滑展开
@@ -205,7 +195,7 @@ class _PodPanelState extends State<PodPanel>
 
     // 打开期间禁止自动收起
     widget.state.setDialogOpen(true);
-    _autoCollapseTimer?.cancel();
+    widget.state.cancelAutoCollapseTimer();
 
     await showDialog(
       context: context,
