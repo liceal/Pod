@@ -5,6 +5,7 @@ class MainFlutterWindow: NSWindow {
   private var globalMonitor: Any?
   private var localMonitor: Any?
   private var previousFrontmostApp: NSRunningApplication?
+  private var lastScrollTime: TimeInterval = 0
 
   override func awakeFromNib() {
     let flutterViewController = FlutterViewController()
@@ -68,6 +69,73 @@ class MainFlutterWindow: NSWindow {
           prev.activate(options: [.activateIgnoringOtherApps])
         }
         self.previousFrontmostApp = nil
+        result(nil)
+      } else if call.method == "getCurrentScreenInfo" {
+        // Return the frame of the screen containing the mouse cursor
+        let mouseLocation = NSEvent.mouseLocation
+        var targetScreen = NSScreen.main ?? NSScreen.screens[0]
+        for screen in NSScreen.screens {
+          if screen.frame.contains(mouseLocation) {
+            targetScreen = screen
+            break
+          }
+        }
+        let frame = targetScreen.frame
+        let visibleFrame = targetScreen.visibleFrame
+        let primaryHeight = NSScreen.screens[0].frame.height
+        // Convert to Flutter top-left coordinates
+        let resultDict: [String: Any] = [
+          "x": frame.origin.x,
+          "y": primaryHeight - frame.origin.y - frame.height,
+          "width": frame.width,
+          "height": frame.height,
+          "visibleY": primaryHeight - visibleFrame.origin.y - visibleFrame.height,
+          "visibleHeight": visibleFrame.height,
+        ]
+        result(resultDict)
+      } else if call.method == "setWindowFrameOnScreen" {
+        guard let args = call.arguments as? [String: Any],
+              let x = args["x"] as? Double,
+              let y = args["y"] as? Double,
+              let width = args["width"] as? Double,
+              let height = args["height"] as? Double else {
+          result(FlutterError(code: "INVALID_ARGS", message: "Missing arguments", details: nil))
+          return
+        }
+        let primaryHeight = NSScreen.screens[0].frame.height
+        let macY = primaryHeight - y - height
+        self.setFrame(NSRect(x: x, y: macY, width: width, height: height), display: true)
+        result(nil)
+      } else if call.method == "expandOnScreen" {
+        guard let args = call.arguments as? [String: Any],
+              let x = args["x"] as? Double,
+              let y = args["y"] as? Double,
+              let width = args["width"] as? Double,
+              let height = args["height"] as? Double else {
+          result(FlutterError(code: "INVALID_ARGS", message: "Missing arguments", details: nil))
+          return
+        }
+        let shouldFocus = args["focus"] as? Bool ?? false
+        if shouldFocus {
+          if let frontmost = NSWorkspace.shared.frontmostApplication,
+             frontmost.bundleIdentifier != Bundle.main.bundleIdentifier {
+            self.previousFrontmostApp = frontmost
+          }
+        }
+        let primaryHeight = NSScreen.screens[0].frame.height
+        let macY = primaryHeight - y - height
+        
+        // Instantly set correct frame width to avoid lag/jump before Flutter animation starts
+        self.setFrame(NSRect(x: x, y: macY, width: width, height: height), display: false)
+        self.hasShadow = false
+        
+        if shouldFocus {
+          self.makeKeyAndOrderFront(nil)
+          NSApp.activate(ignoringOtherApps: true)
+        } else {
+          self.orderFront(nil)
+        }
+        
         result(nil)
       } else {
         result(FlutterMethodNotImplemented)
@@ -135,33 +203,47 @@ class MainFlutterWindow: NSWindow {
     }
   }
 
-  private func isMouseInMenuBar() -> Bool {
+  private func getMenuBarScreen() -> NSScreen? {
     let mouseLoc = NSEvent.mouseLocation
     for screen in NSScreen.screens {
       let frame = screen.frame
       let visibleFrame = screen.visibleFrame
       if visibleFrame.maxY < frame.maxY {
-        // Expand hit area slightly below the menu bar (e.g. 20px slop)
-        // This prevents the scroll event from dropping if the user's mouse drifts slightly down during a swipe
         let extendedMaxY = visibleFrame.maxY - 20.0
         if mouseLoc.x >= frame.minX && mouseLoc.x <= frame.maxX &&
            mouseLoc.y >= extendedMaxY && mouseLoc.y <= frame.maxY {
-          return true
+          return screen
         }
       }
     }
-    return false
+    return nil
   }
 
   private func handleScrollEvent(_ event: NSEvent, channel: FlutterMethodChannel) {
-    guard isMouseInMenuBar() else { return }
+    guard let targetScreen = getMenuBarScreen() else { return }
 
     let deltaY = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
     guard deltaY != 0 else { return }
 
-    // Map Cocoa scroll direction to Dart scroll direction
-    // By default, trackpad swipe down is a positive deltaY. We map this directly so swipe down = positive = expand.
-    let dartDeltaY = deltaY
-    channel.invokeMethod("onMenuBarScroll", arguments: dartDeltaY)
+    // Only throttle expand (dy > 0), let collapse (dy < 0) pass through
+    if deltaY > 0 {
+      let now = ProcessInfo.processInfo.systemUptime
+      if now - lastScrollTime < 0.2 { return }
+      lastScrollTime = now
+    }
+
+    let frame = targetScreen.frame
+    let visibleFrame = targetScreen.visibleFrame
+    let primaryHeight = NSScreen.screens[0].frame.height
+    let args: [String: Any] = [
+      "dy": deltaY,
+      "x": frame.origin.x,
+      "y": primaryHeight - frame.origin.y - frame.height,
+      "width": frame.width,
+      "height": frame.height,
+      "visibleY": primaryHeight - visibleFrame.origin.y - visibleFrame.height,
+      "visibleHeight": visibleFrame.height,
+    ]
+    channel.invokeMethod("onMenuBarScroll", arguments: args)
   }
 }
