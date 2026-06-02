@@ -62,6 +62,10 @@ dependencies:
   
   # Date formatting
   intl: ^0.19.0
+  
+  # Clipboard image support
+  pasteboard: ^0.5.0
+
 
 dev_dependencies:
   flutter_test:

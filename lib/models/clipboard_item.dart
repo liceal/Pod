@@ -5,6 +5,7 @@ class ClipboardItem {
   final bool isFavorite;
   final String? appName;
   final String? appIconPath;
+  final String? imagePath;
 
   ClipboardItem({
     required this.id,
@@ -13,6 +14,7 @@ class ClipboardItem {
     this.isFavorite = false,
     this.appName,
     this.appIconPath,
+    this.imagePath,
   });
 
   ClipboardItem copyWith({
@@ -21,6 +23,7 @@ class ClipboardItem {
     bool? isFavorite,
     String? appName,
     String? appIconPath,
+    String? imagePath,
   }) {
     return ClipboardItem(
       id: id,
@@ -29,6 +32,7 @@ class ClipboardItem {
       isFavorite: isFavorite ?? this.isFavorite,
       appName: appName ?? this.appName,
       appIconPath: appIconPath ?? this.appIconPath,
+      imagePath: imagePath ?? this.imagePath,
     );
   }
 
@@ -40,6 +44,7 @@ class ClipboardItem {
       'isPinned': isFavorite,
       'appName': appName,
       'appIconPath': appIconPath,
+      'imagePath': imagePath,
     };
   }
 
@@ -51,6 +56,7 @@ class ClipboardItem {
       isFavorite: json['isPinned'] as bool? ?? json['isFavorite'] as bool? ?? false,
       appName: json['appName'] as String?,
       appIconPath: json['appIconPath'] as String?,
+      imagePath: json['imagePath'] as String?,
     );
   }
 }
