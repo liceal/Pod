@@ -1182,6 +1182,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return imagesDir.path;
   }
 
+  bool _isOwnApp(String? appName) {
+    if (appName == null) return false;
+    try {
+      final exeName = Platform.resolvedExecutable
+          .split(RegExp(r'[\\/]'))
+          .last
+          .split('.')
+          .first
+          .toLowerCase();
+      final lowerName = appName.toLowerCase();
+      return lowerName == exeName || lowerName == 'pod';
+    } catch (_) {
+      return appName.toLowerCase() == 'pod';
+    }
+  }
+
   void _startClipboardMonitoring() {
     _clipboardTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (_isCheckingClipboard) return;
@@ -1211,11 +1227,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   debugPrint('Failed to get clipboard owner info: $e');
                 }
               }
-              await addClipboardItem(
-                text,
-                appName: appName,
-                appIconPath: appIconPath,
-              );
+
+              // 如果是本应用复制的，则忽略，不计入历史记录
+              if (!_isOwnApp(appName)) {
+                await addClipboardItem(
+                  text,
+                  appName: appName,
+                  appIconPath: appIconPath,
+                );
+              }
             }
           }
         } else {
@@ -1245,11 +1265,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   }
                 }
                 
-                await addClipboardImageItem(
-                  imageBytes,
-                  appName: appName,
-                  appIconPath: appIconPath,
-                );
+                // 如果是本应用复制的，则忽略，不计入历史记录
+                if (!_isOwnApp(appName)) {
+                  await addClipboardImageItem(
+                    imageBytes,
+                    appName: appName,
+                    appIconPath: appIconPath,
+                  );
+                } else {
+                  // 同步当前图片的签名，以防 owner 再次判定异常
+                  _lastAppCopiedImageSignature = imageSignature;
+                  _lastSystemClipImageSignature = imageSignature;
+                }
               }
             }
           }
@@ -1373,6 +1400,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           _lastSystemClipText = ''; // Clear text clip state
           _lastAppCopiedText = ''; // Clear text clip state
           await Pasteboard.writeImage(bytes);
+          
+          // 立即读回系统剪贴板中的图片以获取系统编码后的图片字节签名，彻底防止因格式转换导致签名不一致的问题
+          try {
+            final writtenBytes = await Pasteboard.image;
+            if (writtenBytes != null && writtenBytes.isNotEmpty) {
+              final clipboardSignature = _imageSignature(writtenBytes);
+              _lastAppCopiedImageSignature = clipboardSignature;
+              _lastSystemClipImageSignature = clipboardSignature;
+            }
+          } catch (e) {
+            debugPrint('Failed to sync written image signature: $e');
+          }
         } catch (e) {
           debugPrint('Failed to write image to pasteboard: $e');
         }
