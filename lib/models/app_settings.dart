@@ -23,6 +23,7 @@ class AppSettings {
   /// Seconds to wait after mouse leaves before auto-collapsing. 0 = disabled.
   final int autoCollapseDelay;
   final String? customFilesPath;
+  final String? dataDirectory; // Unified data storage location
   final ThemeStyle themeStyle;
   final double backdropOpacity;
 
@@ -41,6 +42,7 @@ class AppSettings {
     bool? closeOnBlur = false,
     this.autoCollapseDelay = 3,
     this.customFilesPath,
+    this.dataDirectory,
     this.themeStyle = ThemeStyle.compact,
     this.backdropOpacity = 0.92,
   })  : _themeColorName = themeColorName,
@@ -58,6 +60,7 @@ class AppSettings {
     bool? closeOnBlur,
     int? autoCollapseDelay,
     String? customFilesPath,
+    String? dataDirectory,
     ThemeStyle? themeStyle,
     double? backdropOpacity,
   }) {
@@ -73,6 +76,7 @@ class AppSettings {
       closeOnBlur: closeOnBlur ?? this.closeOnBlur,
       autoCollapseDelay: autoCollapseDelay ?? this.autoCollapseDelay,
       customFilesPath: customFilesPath ?? this.customFilesPath,
+      dataDirectory: dataDirectory ?? this.dataDirectory,
       themeStyle: themeStyle ?? this.themeStyle,
       backdropOpacity: backdropOpacity ?? this.backdropOpacity,
     );
@@ -91,6 +95,7 @@ class AppSettings {
       'closeOnBlur': closeOnBlur,
       'autoCollapseDelay': autoCollapseDelay,
       'customFilesPath': customFilesPath,
+      'dataDirectory': dataDirectory,
       'themeStyle': themeStyle.name,
       'backdropOpacity': backdropOpacity,
     };
@@ -121,6 +126,7 @@ class AppSettings {
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
       autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 3,
       customFilesPath: json['customFilesPath'] as String?,
+      dataDirectory: json['dataDirectory'] as String?,
       themeStyle: parseThemeStyle(json['themeStyle'] as String?),
       backdropOpacity: (json['backdropOpacity'] as num?)?.toDouble() ?? 0.92,
     );

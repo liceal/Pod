@@ -277,11 +277,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // --- Initializer ---
   Future<void> initialize() async {
     _prefs = await SharedPreferences.getInstance();
+    final appSupport = await getApplicationSupportDirectory();
+    _defaultDataDirSync = '${appSupport.path}/data'.replaceAll('\\', '/');
+
     windowManager.addListener(this);
     trayManager.addListener(this);
 
     // Load Local Data
     _loadSettings();
+    await _migrateLegacyDirectories();
     await _loadClipboardHistory();
     await _loadNotes();
     await _scanStoredFiles();
@@ -800,10 +804,378 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  String _defaultDataDirSync = '';
+  String get defaultDataDirectoryPath => _defaultDataDirSync;
+
+  String getDataDirectoryPathSync() {
+    if (settings.dataDirectory != null && settings.dataDirectory!.trim().isNotEmpty) {
+      return settings.dataDirectory!.trim().replaceAll('\\', '/');
+    }
+    return _defaultDataDirSync;
+  }
+
+  Future<String> getDataDirectoryPath() async {
+    return getDataDirectoryPathSync();
+  }
+
+  Future<String> _getDefaultDataDirectoryPath() async {
+    final appSupport = await getApplicationSupportDirectory();
+    return '${appSupport.path}/data'.replaceAll('\\', '/');
+  }
+
+  String getImagePath(ClipboardItem item) {
+    if (item.imagePath == null) return '';
+    final path = item.imagePath!;
+    if (path.contains(':/') || path.contains(':\\') || path.startsWith('/')) {
+      final normalized = path.replaceAll('\\', '/');
+      if (normalized.contains('/clipboard_images/')) {
+        final filename = normalized.split('/clipboard_images/').last;
+        return '${getDataDirectoryPathSync()}/clipboard_images/$filename';
+      }
+      return path;
+    }
+    return '${getDataDirectoryPathSync()}/$path';
+  }
+
+  Future<void> _migrateLegacyDirectories() async {
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final appSupport = await getApplicationSupportDirectory();
+
+      // Ensure data directory exists
+      final dataDirObj = Directory(dataDir);
+      if (!dataDirObj.existsSync()) {
+        dataDirObj.createSync(recursive: true);
+      }
+
+      // 1. Migrate clipboard images if old dir exists and new dir doesn't exist
+      final oldImagesDir = Directory('${appSupport.path}/clipboard_images');
+      final newImagesDir = Directory('$dataDir/clipboard_images');
+      if (oldImagesDir.existsSync() && !newImagesDir.existsSync() && oldImagesDir.path != newImagesDir.path) {
+        newImagesDir.createSync(recursive: true);
+        for (final entity in oldImagesDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final newPath = '${newImagesDir.path}/$name';
+            entity.copySync(newPath);
+          }
+        }
+        try {
+          oldImagesDir.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+
+      // 2. Migrate files if old default files dir exists and new files dir doesn't exist
+      final oldDefaultFilesPath = _getOldDefaultFilesPath();
+      final oldFilesDir = oldDefaultFilesPath.isNotEmpty ? Directory(oldDefaultFilesPath) : null;
+      final newFilesDir = Directory('$dataDir/files');
+      if (oldFilesDir != null && oldFilesDir.existsSync() && !newFilesDir.existsSync() && oldFilesDir.path != newFilesDir.path) {
+        newFilesDir.createSync(recursive: true);
+        await _copyDirectory(oldFilesDir, newFilesDir);
+        try {
+          oldFilesDir.deleteSync(recursive: true);
+        } catch (_) {}
+      }
+
+      // 3. Migrate custom files path if set in AppSettings
+      if (settings.customFilesPath != null && settings.customFilesPath!.trim().isNotEmpty) {
+        final oldCustomDir = Directory(settings.customFilesPath!.trim());
+        if (oldCustomDir.existsSync() && oldCustomDir.path != newFilesDir.path) {
+          newFilesDir.createSync(recursive: true);
+          await _copyDirectory(oldCustomDir, newFilesDir);
+          final updated = settings.copyWith(customFilesPath: '');
+          await updateSettings(updated);
+          try {
+            oldCustomDir.deleteSync(recursive: true);
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to run legacy directories migration: $e');
+    }
+  }
+
+  String _getOldDefaultFilesPath() {
+    late String basePath;
+    if (Platform.isWindows) {
+      basePath = Platform.environment['USERPROFILE'] ?? '';
+      basePath = '$basePath\\Documents\\Pod暂存';
+    } else if (Platform.isMacOS) {
+      basePath = Platform.environment['HOME'] ?? '';
+      basePath = '$basePath/Documents/Pod暂存';
+    } else {
+      basePath = '';
+    }
+    return basePath;
+  }
+
+  Future<void> _copyDirectory(Directory source, Directory destination) async {
+    if (!destination.existsSync()) {
+      destination.createSync(recursive: true);
+    }
+    await for (var entity in source.list(recursive: false)) {
+      final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+      if (entity is Directory) {
+        final newDirectory = Directory('${destination.path}/$name');
+        newDirectory.createSync(recursive: true);
+        await _copyDirectory(entity, newDirectory);
+      } else if (entity is File) {
+        entity.copySync('${destination.path}/$name');
+      }
+    }
+  }
+
+  Future<bool> changeDataDirectory(String newPath) async {
+    final cleanNewPath = newPath.trim().replaceAll('\\', '/');
+    final currentPath = getDataDirectoryPathSync();
+    if (cleanNewPath.toLowerCase() == currentPath.toLowerCase()) {
+      return true;
+    }
+
+    final targetDir = Directory(cleanNewPath);
+    if (!targetDir.existsSync()) {
+      try {
+        targetDir.createSync(recursive: true);
+      } catch (e) {
+        debugPrint('Failed to create target directory: $e');
+        return false;
+      }
+    }
+
+    final sourceDir = Directory(currentPath);
+
+    // 1. Copy data files
+    try {
+      final filesToMove = ['notes.json', 'clipboard_history.json', 'clipboard_favorites.json'];
+      for (final fileName in filesToMove) {
+        final oldFile = File('${sourceDir.path}/$fileName');
+        if (oldFile.existsSync()) {
+          final newFile = File('${targetDir.path}/$fileName');
+          oldFile.copySync(newFile.path);
+        }
+      }
+
+      // 2. Copy clipboard_images directory
+      final oldImagesDir = Directory('${sourceDir.path}/clipboard_images');
+      if (oldImagesDir.existsSync()) {
+        final newImagesDir = Directory('${targetDir.path}/clipboard_images');
+        if (!newImagesDir.existsSync()) {
+          newImagesDir.createSync(recursive: true);
+        }
+        for (final entity in oldImagesDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final newFilePath = '${newImagesDir.path}/$name';
+            entity.copySync(newFilePath);
+          }
+        }
+      }
+
+      // 3. Copy files directory
+      final oldFilesDir = Directory('${sourceDir.path}/files');
+      if (oldFilesDir.existsSync()) {
+        final newFilesDir = Directory('${targetDir.path}/files');
+        if (!newFilesDir.existsSync()) {
+          newFilesDir.createSync(recursive: true);
+        }
+        await _copyDirectory(oldFilesDir, newFilesDir);
+      }
+    } catch (e) {
+      debugPrint('Migration copying failed: $e');
+      return false;
+    }
+
+    // 4. Update AppSettings
+    final updatedSettings = settings.copyWith(dataDirectory: cleanNewPath);
+    await updateSettings(updatedSettings);
+
+    // 5. Cleanup old files (non-critical)
+    try {
+      final filesToDelete = ['notes.json', 'clipboard_history.json', 'clipboard_favorites.json'];
+      for (final fileName in filesToDelete) {
+        final oldFile = File('${sourceDir.path}/$fileName');
+        if (oldFile.existsSync()) {
+          oldFile.deleteSync();
+        }
+      }
+
+      final oldImagesDir = Directory('${sourceDir.path}/clipboard_images');
+      if (oldImagesDir.existsSync()) {
+        oldImagesDir.deleteSync(recursive: true);
+      }
+
+      final oldFilesDir = Directory('${sourceDir.path}/files');
+      if (oldFilesDir.existsSync()) {
+        oldFilesDir.deleteSync(recursive: true);
+      }
+    } catch (e) {
+      debugPrint('Migration cleanup failed (non-critical): $e');
+    }
+
+    // 6. Reload local data inside new directory
+    await _loadNotes();
+    await _loadClipboardHistory();
+    await _scanStoredFiles();
+
+    notifyListeners();
+    return true;
+  }
+
+  Future<bool> syncDataFromDirectory(String sourcePath) async {
+    final cleanSourcePath = sourcePath.trim().replaceAll('\\', '/');
+    final currentPath = getDataDirectoryPathSync();
+    if (cleanSourcePath.toLowerCase() == currentPath.toLowerCase()) {
+      return true; // Same directory, nothing to sync
+    }
+
+    final sourceDir = Directory(cleanSourcePath);
+    if (!sourceDir.existsSync()) {
+      return false;
+    }
+
+    final targetDir = Directory(currentPath);
+    if (!targetDir.existsSync()) {
+      targetDir.createSync(recursive: true);
+    }
+
+    try {
+      // 1. Sync notes.json (Merge)
+      final sourceNotesFile = File('${sourceDir.path}/notes.json');
+      if (sourceNotesFile.existsSync()) {
+        final targetNotesFile = File('${targetDir.path}/notes.json');
+        List<dynamic> mergedNotesJson = [];
+        
+        List<dynamic> sourceNotes = [];
+        try {
+          sourceNotes = jsonDecode(sourceNotesFile.readAsStringSync()) as List;
+        } catch (_) {}
+
+        if (targetNotesFile.existsSync()) {
+          List<dynamic> targetNotes = [];
+          try {
+            targetNotes = jsonDecode(targetNotesFile.readAsStringSync()) as List;
+          } catch (_) {}
+
+          final targetIds = targetNotes.map((n) => n['id']).toSet();
+          mergedNotesJson.addAll(targetNotes);
+          for (final note in sourceNotes) {
+            if (!targetIds.contains(note['id'])) {
+              mergedNotesJson.add(note);
+            }
+          }
+        } else {
+          mergedNotesJson = sourceNotes;
+        }
+        targetNotesFile.writeAsStringSync(jsonEncode(mergedNotesJson));
+      }
+
+      // 2. Sync clipboard_history.json (Merge)
+      final sourceHistoryFile = File('${sourceDir.path}/clipboard_history.json');
+      if (sourceHistoryFile.existsSync()) {
+        final targetHistoryFile = File('${targetDir.path}/clipboard_history.json');
+        List<dynamic> mergedHistoryJson = [];
+
+        List<dynamic> sourceHistory = [];
+        try {
+          sourceHistory = jsonDecode(sourceHistoryFile.readAsStringSync()) as List;
+        } catch (_) {}
+
+        if (targetHistoryFile.existsSync()) {
+          List<dynamic> targetHistory = [];
+          try {
+            targetHistory = jsonDecode(targetHistoryFile.readAsStringSync()) as List;
+          } catch (_) {}
+
+          final targetIds = targetHistory.map((x) => x['id']).toSet();
+          mergedHistoryJson.addAll(targetHistory);
+          for (final item in sourceHistory) {
+            if (!targetIds.contains(item['id'])) {
+              mergedHistoryJson.add(item);
+            }
+          }
+        } else {
+          mergedHistoryJson = sourceHistory;
+        }
+        targetHistoryFile.writeAsStringSync(jsonEncode(mergedHistoryJson));
+      }
+
+      // 3. Sync clipboard_favorites.json (Merge)
+      final sourceFavoritesFile = File('${sourceDir.path}/clipboard_favorites.json');
+      if (sourceFavoritesFile.existsSync()) {
+        final targetFavoritesFile = File('${targetDir.path}/clipboard_favorites.json');
+        List<dynamic> mergedFavoritesJson = [];
+
+        List<dynamic> sourceFavorites = [];
+        try {
+          sourceFavorites = jsonDecode(sourceFavoritesFile.readAsStringSync()) as List;
+        } catch (_) {}
+
+        if (targetFavoritesFile.existsSync()) {
+          List<dynamic> targetFavorites = [];
+          try {
+            targetFavorites = jsonDecode(targetFavoritesFile.readAsStringSync()) as List;
+          } catch (_) {}
+
+          final targetIds = targetFavorites.map((x) => x['id']).toSet();
+          mergedFavoritesJson.addAll(targetFavorites);
+          for (final item in sourceFavorites) {
+            if (!targetIds.contains(item['id'])) {
+              mergedFavoritesJson.add(item);
+            }
+          }
+        } else {
+          mergedFavoritesJson = sourceFavorites;
+        }
+        targetFavoritesFile.writeAsStringSync(jsonEncode(mergedFavoritesJson));
+      }
+
+      // 4. Sync clipboard_images (Copy missing)
+      final sourceImagesDir = Directory('${sourceDir.path}/clipboard_images');
+      if (sourceImagesDir.existsSync()) {
+        final targetImagesDir = Directory('${targetDir.path}/clipboard_images');
+        if (!targetImagesDir.existsSync()) {
+          targetImagesDir.createSync(recursive: true);
+        }
+        for (final entity in sourceImagesDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final targetFilePath = '${targetImagesDir.path}/$name';
+            if (!File(targetFilePath).existsSync()) {
+              entity.copySync(targetFilePath);
+            }
+          }
+        }
+      }
+
+      // 5. Sync files (Copy missing)
+      final sourceFilesDir = Directory('${sourceDir.path}/files');
+      if (sourceFilesDir.existsSync()) {
+        final targetFilesDir = Directory('${targetDir.path}/files');
+        if (!targetFilesDir.existsSync()) {
+          targetFilesDir.createSync(recursive: true);
+        }
+        await _copyDirectory(sourceFilesDir, targetFilesDir);
+      }
+
+      await reloadAllData();
+      return true;
+    } catch (e) {
+      debugPrint('Manual sync failed: $e');
+      return false;
+    }
+  }
+
+  Future<void> reloadAllData() async {
+    await _loadNotes();
+    await _loadClipboardHistory();
+    await _scanStoredFiles();
+    notifyListeners();
+  }
+
   // --- Clipboard History ---
   Future<String> _getImagesDirectoryPath() async {
-    final appSupport = await getApplicationSupportDirectory();
-    final imagesDir = Directory('${appSupport.path}/clipboard_images');
+    final dataDir = getDataDirectoryPathSync();
+    final imagesDir = Directory('$dataDir/clipboard_images');
     if (!imagesDir.existsSync()) {
       imagesDir.createSync(recursive: true);
     }
@@ -913,7 +1285,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final removed = clipboardHistory.removeLast();
       if (removed.imagePath != null) {
         try {
-          final f = File(removed.imagePath!);
+          final f = File(getImagePath(removed));
           if (f.existsSync()) f.deleteSync();
         } catch (_) {}
       }
@@ -940,7 +1312,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final itemsToRemove = <ClipboardItem>[];
       for (final item in clipboardHistory.take(10)) {
         if (item.imagePath != null) {
-          final oldFile = File(item.imagePath!);
+          final oldFile = File(getImagePath(item));
           if (oldFile.existsSync()) {
             try {
               if (oldFile.lengthSync() != imageBytes.length) continue;
@@ -955,7 +1327,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       for (final item in itemsToRemove) {
         clipboardHistory.removeWhere((x) => x.id == item.id);
         try {
-          final f = File(item.imagePath!);
+          final f = File(getImagePath(item));
           if (f.existsSync()) f.deleteSync();
         } catch (_) {}
       }
@@ -966,7 +1338,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         timestamp: DateTime.now(),
         appName: appName,
         appIconPath: appIconPath,
-        imagePath: filePath,
+        imagePath: 'clipboard_images/$id.png',
       );
 
       clipboardHistory.insert(0, newItem);
@@ -976,7 +1348,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final removed = clipboardHistory.removeLast();
         if (removed.imagePath != null) {
           try {
-            final f = File(removed.imagePath!);
+            final f = File(getImagePath(removed));
             if (f.existsSync()) f.deleteSync();
           } catch (_) {}
         }
@@ -991,7 +1363,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> copyToClipboard(ClipboardItem item) async {
     if (item.imagePath != null) {
-      final file = File(item.imagePath!);
+      final file = File(getImagePath(item));
       if (file.existsSync()) {
         try {
           final bytes = await file.readAsBytes();
@@ -1033,9 +1405,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     clipboardFavorites.removeWhere((item) => item.id == id);
 
     if (itemToDelete != null && itemToDelete.imagePath != null) {
-      final path = itemToDelete.imagePath!;
-      final stillHasReference = clipboardHistory.any((x) => x.imagePath == path) ||
-          clipboardFavorites.any((x) => x.imagePath == path);
+      final path = getImagePath(itemToDelete);
+      final stillHasReference = clipboardHistory.any((x) => getImagePath(x) == path) ||
+          clipboardFavorites.any((x) => getImagePath(x) == path);
       if (!stillHasReference) {
         try {
           final file = File(path);
@@ -1073,8 +1445,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _itemTypeCache.clear();
     for (final item in clipboardHistory) {
       if (item.imagePath != null) {
-        final path = item.imagePath!;
-        final inFavorites = clipboardFavorites.any((x) => x.imagePath == path);
+        final path = getImagePath(item);
+        final inFavorites = clipboardFavorites.any((x) => getImagePath(x) == path);
         if (!inFavorites) {
           try {
             final file = File(path);
@@ -1102,12 +1474,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final usedPaths = <String>{};
       for (final item in clipboardHistory) {
         if (item.imagePath != null) {
-          usedPaths.add(item.imagePath!.replaceAll('\\', '/').toLowerCase());
+          usedPaths.add(getImagePath(item).replaceAll('\\', '/').toLowerCase());
         }
       }
       for (final item in clipboardFavorites) {
         if (item.imagePath != null) {
-          usedPaths.add(item.imagePath!.replaceAll('\\', '/').toLowerCase());
+          usedPaths.add(getImagePath(item).replaceAll('\\', '/').toLowerCase());
         }
       }
 
@@ -1126,7 +1498,33 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> _loadClipboardHistory() async {
-    final listJson = _prefs.getString('clipboard_history');
+    final dataDir = getDataDirectoryPathSync();
+
+    // 1. History
+    final historyFile = File('$dataDir/clipboard_history.json');
+    String? listJson;
+    if (historyFile.existsSync()) {
+      try {
+        listJson = historyFile.readAsStringSync();
+      } catch (e) {
+        debugPrint('Failed to read clipboard history file: $e');
+      }
+    } else {
+      // Legacy migration from SharedPreferences
+      listJson = _prefs.getString('clipboard_history');
+      if (listJson != null) {
+        try {
+          if (!historyFile.parent.existsSync()) {
+            historyFile.parent.createSync(recursive: true);
+          }
+          historyFile.writeAsStringSync(listJson);
+          await _prefs.remove('clipboard_history');
+        } catch (e) {
+          debugPrint('Failed to migrate clipboard history from SharedPreferences: $e');
+        }
+      }
+    }
+
     if (listJson != null) {
       try {
         final decoded = jsonDecode(listJson) as List;
@@ -1137,7 +1535,32 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         clipboardHistory = [];
       }
     }
-    final favJson = _prefs.getString('clipboard_favorites');
+
+    // 2. Favorites
+    final favoritesFile = File('$dataDir/clipboard_favorites.json');
+    String? favJson;
+    if (favoritesFile.existsSync()) {
+      try {
+        favJson = favoritesFile.readAsStringSync();
+      } catch (e) {
+        debugPrint('Failed to read clipboard favorites file: $e');
+      }
+    } else {
+      // Legacy migration from SharedPreferences
+      favJson = _prefs.getString('clipboard_favorites');
+      if (favJson != null) {
+        try {
+          if (!favoritesFile.parent.existsSync()) {
+            favoritesFile.parent.createSync(recursive: true);
+          }
+          favoritesFile.writeAsStringSync(favJson);
+          await _prefs.remove('clipboard_favorites');
+        } catch (e) {
+          debugPrint('Failed to migrate clipboard favorites from SharedPreferences: $e');
+        }
+      }
+    }
+
     if (favJson != null) {
       try {
         final decoded = jsonDecode(favJson) as List;
@@ -1151,17 +1574,35 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> _saveClipboardHistory() async {
-    final encoded = jsonEncode(
-      clipboardHistory.map((item) => item.toJson()).toList(),
-    );
-    await _prefs.setString('clipboard_history', encoded);
+    final dataDir = getDataDirectoryPathSync();
+    final historyFile = File('$dataDir/clipboard_history.json');
+    try {
+      if (!historyFile.parent.existsSync()) {
+        historyFile.parent.createSync(recursive: true);
+      }
+      final encoded = jsonEncode(
+        clipboardHistory.map((item) => item.toJson()).toList(),
+      );
+      historyFile.writeAsStringSync(encoded);
+    } catch (e) {
+      debugPrint('Failed to save clipboard history file: $e');
+    }
   }
 
   Future<void> _saveClipboardFavorites() async {
-    final encoded = jsonEncode(
-      clipboardFavorites.map((item) => item.toJson()).toList(),
-    );
-    await _prefs.setString('clipboard_favorites', encoded);
+    final dataDir = getDataDirectoryPathSync();
+    final favoritesFile = File('$dataDir/clipboard_favorites.json');
+    try {
+      if (!favoritesFile.parent.existsSync()) {
+        favoritesFile.parent.createSync(recursive: true);
+      }
+      final encoded = jsonEncode(
+        clipboardFavorites.map((item) => item.toJson()).toList(),
+      );
+      favoritesFile.writeAsStringSync(encoded);
+    } catch (e) {
+      debugPrint('Failed to save clipboard favorites file: $e');
+    }
   }
 
   // --- Files Storage ---
@@ -1183,20 +1624,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
     }
 
-    // 使用用户文档目录下的明显文件夹，方便用户找到
-    late String basePath;
-    if (Platform.isWindows) {
-      // Windows: C:\Users\<用户名>\Documents\Pod暂存
-      basePath = Platform.environment['USERPROFILE'] ?? '';
-      basePath = '$basePath\\Documents\\Pod暂存';
-    } else if (Platform.isMacOS) {
-      basePath = Platform.environment['HOME'] ?? '';
-      basePath = '$basePath/Documents/Pod暂存';
-    } else {
-      final appSupport = await getApplicationSupportDirectory();
-      basePath = '${appSupport.path}/files';
-    }
-    final filesDir = Directory(basePath);
+    final dataDir = getDataDirectoryPathSync();
+    final filesDir = Directory('$dataDir/files');
     if (!filesDir.existsSync()) {
       filesDir.createSync(recursive: true);
     }
@@ -1352,7 +1781,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } else {
         // Fallback using process execution
         if (Platform.isWindows) {
-          await Process.run('explorer.exe', [entity.path]);
+          final winPath = entity.path.replaceAll('/', '\\');
+          await Process.run('explorer.exe', [winPath]);
         } else if (Platform.isMacOS) {
           await Process.run('open', [entity.path]);
         }
@@ -1361,6 +1791,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       debugPrint('Failed to open file: $e');
     }
   }
+
+
 
   Future<void> createNewFile(String name) async {
     try {
@@ -1449,12 +1881,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> openDirectoryPath(String path) async {
     try {
-      final uri = Uri.directory(path);
       if (Platform.isWindows) {
-        await Process.run('explorer.exe', [path]);
+        final winPath = path.replaceAll('/', '\\');
+        await Process.run('explorer.exe', [winPath]);
       } else if (Platform.isMacOS) {
         await Process.run('open', [path]);
       } else {
+        final uri = Uri.directory(path);
         await launchUrl(uri);
       }
     } catch (e) {
@@ -1462,9 +1895,33 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  // --- Quick Notes ---
   Future<void> _loadNotes() async {
-    final notesJson = _prefs.getString('notes');
+    final dataDir = getDataDirectoryPathSync();
+    final notesFile = File('$dataDir/notes.json');
+    String? notesJson;
+
+    if (notesFile.existsSync()) {
+      try {
+        notesJson = notesFile.readAsStringSync();
+      } catch (e) {
+        debugPrint('Failed to read notes file: $e');
+      }
+    } else {
+      // Legacy migration from SharedPreferences
+      notesJson = _prefs.getString('notes');
+      if (notesJson != null) {
+        try {
+          if (!notesFile.parent.existsSync()) {
+            notesFile.parent.createSync(recursive: true);
+          }
+          notesFile.writeAsStringSync(notesJson);
+          await _prefs.remove('notes');
+        } catch (e) {
+          debugPrint('Failed to migrate notes from SharedPreferences: $e');
+        }
+      }
+    }
+
     if (notesJson != null) {
       try {
         final decoded = jsonDecode(notesJson) as List;
@@ -1494,8 +1951,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> _saveNotes() async {
-    final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
-    await _prefs.setString('notes', encoded);
+    final dataDir = getDataDirectoryPathSync();
+    final notesFile = File('$dataDir/notes.json');
+    try {
+      if (!notesFile.parent.existsSync()) {
+        notesFile.parent.createSync(recursive: true);
+      }
+      final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
+      notesFile.writeAsStringSync(encoded);
+    } catch (e) {
+      debugPrint('Failed to save notes: $e');
+    }
   }
 
   Future<void> createNote() async {

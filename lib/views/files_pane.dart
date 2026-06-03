@@ -152,16 +152,17 @@ class _FilesPaneState extends State<FilesPane> {
       color: isDark ? const Color(0xFF262626) : Colors.white,
     );
     widget.state.setDialogOpen(false);
-
+ 
     if (result == null) return;
-
+ 
     switch (result) {
       case 'open':
         widget.state.openFile(file);
         break;
       case 'show_in_explorer':
         if (Platform.isWindows) {
-          Process.run('explorer.exe', ['/select,', file.path]);
+          final winPath = file.path.replaceAll('/', '\\');
+          Process.run('explorer.exe', ['/select,', winPath]);
         } else if (Platform.isMacOS) {
           Process.run('open', ['-R', file.path]);
         }
@@ -592,6 +593,18 @@ class _FilesPaneState extends State<FilesPane> {
           decoration: InputDecoration(
             hintText: isFolder ? '请输入文件夹名称' : '请输入文件名称',
           ),
+          onSubmitted: (val) async {
+            final name = val.trim();
+            if (name.isNotEmpty) {
+              Navigator.of(ctx).pop();
+              if (isFolder) {
+                await widget.state.createNewDirectory(name);
+              } else {
+                await widget.state.createNewFile(name);
+              }
+              setState(() {});
+            }
+          },
         ),
         actions: [
           TextButton(
@@ -601,14 +614,16 @@ class _FilesPaneState extends State<FilesPane> {
           TextButton(
             child: const Text('创建'),
             onPressed: () async {
-              final name = textController.text;
-              Navigator.of(ctx).pop();
-              if (isFolder) {
-                await widget.state.createNewDirectory(name);
-              } else {
-                await widget.state.createNewFile(name);
+              final name = textController.text.trim();
+              if (name.isNotEmpty) {
+                Navigator.of(ctx).pop();
+                if (isFolder) {
+                  await widget.state.createNewDirectory(name);
+                } else {
+                  await widget.state.createNewFile(name);
+                }
+                setState(() {});
               }
-              setState(() {});
             },
           ),
         ],

@@ -350,7 +350,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
   Widget _buildThumbnail(bool isCompact) {
     final width = isCompact ? 44.0 : 60.0;
     final height = isCompact ? 22.0 : 36.0;
-    final imagePath = widget.item.imagePath!;
+    final imagePath = AppState().getImagePath(widget.item);
     final file = File(imagePath);
     if (file.existsSync()) {
       return Container(
@@ -1393,7 +1393,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   void _loadFileStats() {
     try {
-      final file = File(widget.item.imagePath!);
+      final file = File(AppState().getImagePath(widget.item));
       if (file.existsSync()) {
         final bytes = file.lengthSync();
         if (bytes > 1024 * 1024) {
@@ -1407,7 +1407,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   void _resolveImageSize() {
     try {
-      final provider = FileImage(File(widget.item.imagePath!));
+      final provider = FileImage(File(AppState().getImagePath(widget.item)));
       final stream = provider.resolve(const ImageConfiguration());
       ImageStreamListener? listener;
       bool callbackCalled = false;
@@ -1636,7 +1636,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                       // Save image button
                       if (isImage) ...[
                         _HeaderSaveImageButton(
-                          imagePath: widget.item.imagePath!,
+                          imagePath: AppState().getImagePath(widget.item),
                           isDark: widget.isDark,
                         ),
                         const SizedBox(width: 4),
@@ -1708,7 +1708,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                                       height: double.infinity,
                                       child: Center(
                                         child: Image.file(
-                                          File(widget.item.imagePath!),
+                                          File(AppState().getImagePath(widget.item)),
                                           fit: BoxFit.contain,
                                         ),
                                       ),
