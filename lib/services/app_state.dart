@@ -12,6 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:uuid/uuid.dart';
 import 'package:pasteboard/pasteboard.dart';
+import 'package:dart_style/dart_style.dart';
 
 import '../models/clipboard_item.dart';
 import '../models/note.dart';
@@ -32,6 +33,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   AppState._internal();
 
   final _uuid = const Uuid();
+  final navigatorKey = GlobalKey<NavigatorState>();
   late SharedPreferences _prefs;
 
   // State Variables
@@ -123,8 +125,46 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return '${bytes.length}:$hash';
   }
 
+  String _stripMarkdownBlock(String text) {
+    var trimmed = text.trim();
+    final regExp = RegExp(r'^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$', multiLine: true);
+    final match = regExp.firstMatch(trimmed);
+    if (match != null) {
+      return match.group(1)?.trim() ?? trimmed;
+    }
+    return trimmed;
+  }
+
+  dynamic _decodeLooseJson(String jsonStr) {
+    var s = jsonStr.trim();
+    // 1. Replace single quotes wrapping keys/values with double quotes
+    s = s.replaceAllMapped(RegExp(r"'([^'\\]*(?:\\.[^'\\]*)*)'"), (match) {
+      final content = match.group(1) ?? '';
+      final safeContent = content.replaceAll('"', '\\"');
+      return '"$safeContent"';
+    });
+    // 2. Add double quotes to unquoted keys, e.g. {a: 1} -> {"a": 1}
+    s = s.replaceAllMapped(RegExp(r'([{\s,])([a-zA-Z_$.][a-zA-Z0-9_$.]*)\s*:'), (match) {
+      final prefix = match.group(1) ?? '';
+      final key = match.group(2) ?? '';
+      return '$prefix"$key":';
+    });
+    // 3. Remove trailing commas, e.g. {"a": 1,} -> {"a": 1}
+    s = s.replaceAll(RegExp(r',\s*}'), '}');
+    s = s.replaceAll(RegExp(r',\s*]'), ']');
+    try {
+      return jsonDecode(s);
+    } catch (_) {
+      return null;
+    }
+  }
+
   String? tryFormatJson(String text) {
-    final trimmed = text.trim();
+    var trimmed = text.trim();
+    trimmed = _stripMarkdownBlock(trimmed);
+    if (trimmed.endsWith(';')) {
+      trimmed = trimmed.substring(0, trimmed.length - 1).trim();
+    }
     if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
         (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
       try {
@@ -132,21 +172,111 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final encoder = const JsonEncoder.withIndent('  ');
         return encoder.convert(parsed);
       } catch (_) {
-        return null;
+        // Fallback to loose decode for standard-wrapped text
+      }
+    }
+
+    // Attempt to extract the JSON payload, e.g. "const data = { ... };"
+    int firstBrace = trimmed.indexOf('{');
+    int firstBracket = trimmed.indexOf('[');
+    int startIdx = -1;
+    int endIdx = -1;
+    if (firstBrace != -1 && (firstBracket == -1 || firstBrace < firstBracket)) {
+      startIdx = firstBrace;
+      endIdx = trimmed.lastIndexOf('}');
+    } else if (firstBracket != -1) {
+      startIdx = firstBracket;
+      endIdx = trimmed.lastIndexOf(']');
+    }
+
+    if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
+      final substring = trimmed.substring(startIdx, endIdx + 1);
+      try {
+        final parsed = jsonDecode(substring);
+        final encoder = const JsonEncoder.withIndent('  ');
+        return encoder.convert(parsed);
+      } catch (_) {
+        try {
+          final looseDecoded = _decodeLooseJson(substring);
+          if (looseDecoded != null) {
+            final encoder = const JsonEncoder.withIndent('  ');
+            return encoder.convert(looseDecoded);
+          }
+        } catch (_) {}
       }
     }
     return null;
   }
 
   String? tryFormatXml(String text) {
-    final trimmed = text.trim();
-    if (!trimmed.startsWith('<') || !trimmed.endsWith('>')) return null;
-    if (!trimmed.contains('</') && !trimmed.contains('/>')) return null;
-    try {
-      return _formatXmlString(trimmed);
-    } catch (_) {
-      return null;
+    var trimmed = text.trim();
+    trimmed = _stripMarkdownBlock(trimmed);
+    int firstAngle = trimmed.indexOf('<');
+    int lastAngle = trimmed.lastIndexOf('>');
+    if (firstAngle != -1 && lastAngle != -1 && lastAngle > firstAngle) {
+      final substring = trimmed.substring(firstAngle, lastAngle + 1);
+      if (!substring.contains('</') && !substring.contains('/>')) return null;
+      try {
+        return _formatXmlString(substring);
+      } catch (_) {
+        return null;
+      }
     }
+    return null;
+  }
+
+  String? tryFormatCode(String text) {
+    var trimmed = text.trim();
+    trimmed = _stripMarkdownBlock(trimmed);
+    
+    final openBraceCount = '{'.allMatches(trimmed).length;
+    final closeBraceCount = '}'.allMatches(trimmed).length;
+    
+    // Check if braces are balanced and there are multiple lines with code traits
+    if (openBraceCount >= 1 && openBraceCount == closeBraceCount && '\n'.allMatches(trimmed).length >= 1) {
+      final codeKeywords = RegExp(
+        r'\b(class|void|import|final|const|var|return|public|private|function|def|if|for|while|static|fn|let|package|using|namespace)\b|=>|;',
+      );
+      if (codeKeywords.hasMatch(trimmed)) {
+        return _formatCurlyBraceCode(trimmed);
+      }
+    }
+    return null;
+  }
+
+  String _formatCurlyBraceCode(String code) {
+    final lines = code.split('\n');
+    final sb = StringBuffer();
+    int indent = 0;
+    
+    for (var line in lines) {
+      var cleanLine = line.trim();
+      if (cleanLine.isEmpty) {
+        sb.writeln();
+        continue;
+      }
+
+      // Beautify spaces around common symbols (VS Code style cleanup)
+      cleanLine = cleanLine.replaceAll(RegExp(r',(?!\s)'), ', ');
+      cleanLine = cleanLine.replaceAllMapped(RegExp(r':(?!\s)(?!//)'), (m) => ': ');
+      cleanLine = cleanLine.replaceAll(RegExp(r'(?<!\s){'), ' {');
+      
+      // Align lines starting with closing brackets or control blocks (else/catch/finally)
+      final regex = RegExp(r'^([\}\]]|else\b|catch\b|finally\b)');
+      bool isClosingOrControl = regex.hasMatch(cleanLine);
+      int printIndent = isClosingOrControl ? (indent - 1).clamp(0, 100) : indent;
+      
+      sb.write('  ' * printIndent);
+      sb.writeln(cleanLine);
+      
+      // Update persistent indentation
+      int opens = '{'.allMatches(cleanLine).length;
+      int closes = '}'.allMatches(cleanLine).length;
+      indent += (opens - closes);
+      if (indent < 0) indent = 0;
+    }
+    
+    return sb.toString().trim();
   }
 
   String _formatXmlString(String xml) {
@@ -209,6 +339,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         type = 'JSON';
       } else if (tryFormatXml(text) != null) {
         type = 'XML';
+      } else if (tryFormatCode(text) != null) {
+        type = 'CODE';
       }
     }
     _itemTypeCache[item.id] = type;
@@ -556,6 +688,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _autoCollapseTimer?.cancel();
     isAnimating = true;
     isExpanded = false;
+
+    if (isDialogOpen) {
+      try {
+        final context = navigatorKey.currentContext;
+        if (context != null) {
+          Navigator.of(context).popUntil((route) => route.isFirst);
+        }
+      } catch (e) {
+        debugPrint('Failed to auto-close dialogs on collapse: $e');
+      }
+      isDialogOpen = false;
+    }
 
     if (_didGrabFocus) {
       if (Platform.isMacOS) {

@@ -69,6 +69,9 @@ dependencies:
   # File picker for folder selection
   file_picker: ^8.1.3
 
+  # Official Dart code formatter
+  dart_style: ^3.0.1
+
 
 dev_dependencies:
   flutter_test:

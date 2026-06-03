@@ -1314,6 +1314,86 @@ TextSpan _highlightXml(String text, bool isDark) {
   return TextSpan(children: spans);
 }
 
+TextSpan _highlightCode(String text, bool isDark) {
+  final commentColor = isDark ? const Color(0xFF6A9955) : const Color(0xFF008000);
+  final stringColor = isDark ? const Color(0xFFCE9178) : const Color(0xFFA31515);
+  final keywordColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF0000FF);
+  final typeColor = isDark ? const Color(0xFF4EC9B0) : const Color(0xFF267F99);
+  final numberColor = isDark ? const Color(0xFFB5CEA8) : const Color(0xFF098658);
+  final functionColor = isDark ? const Color(0xFFDCDCAA) : const Color(0xFF795E26);
+  final defaultColor = isDark ? Colors.white70 : Colors.black87;
+
+  final List<TextSpan> spans = [];
+  final regExp = RegExp(
+    r'(\/\/.*)|'
+    r'("(?:[^"\\]|\\.)*")|'
+    r"('(?:[^'\\]|\\.)*')|"
+    r'\b(class|void|import|final|const|var|return|public|private|function|def|if|for|while|static|fn|let|package|using|namespace|override|dynamic|extends|implements|with|async|await|yield|as|in|is|new|this|super|try|catch|finally|throw|switch|case|default|break|continue)\b|'
+    r'\b(int|double|bool|num|dynamic|void|var|[A-Z][a-zA-Z0-9_]*)\b|'
+    r'\b(\d+(?:\.\d+)?)\b|'
+    r'\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*\()',
+    multiLine: true,
+  );
+
+  int lastIndex = 0;
+  for (final match in regExp.allMatches(text)) {
+    if (match.start > lastIndex) {
+      spans.add(TextSpan(
+        text: text.substring(lastIndex, match.start),
+        style: TextStyle(color: defaultColor),
+      ));
+    }
+
+    if (match.group(1) != null) {
+      spans.add(TextSpan(
+        text: match.group(1),
+        style: TextStyle(color: commentColor, fontStyle: FontStyle.italic),
+      ));
+    } else if (match.group(2) != null) {
+      spans.add(TextSpan(
+        text: match.group(2),
+        style: TextStyle(color: stringColor),
+      ));
+    } else if (match.group(3) != null) {
+      spans.add(TextSpan(
+        text: match.group(3),
+        style: TextStyle(color: stringColor),
+      ));
+    } else if (match.group(4) != null) {
+      spans.add(TextSpan(
+        text: match.group(4),
+        style: TextStyle(color: keywordColor, fontWeight: FontWeight.bold),
+      ));
+    } else if (match.group(5) != null) {
+      spans.add(TextSpan(
+        text: match.group(5),
+        style: TextStyle(color: typeColor),
+      ));
+    } else if (match.group(6) != null) {
+      spans.add(TextSpan(
+        text: match.group(6),
+        style: TextStyle(color: numberColor),
+      ));
+    } else if (match.group(7) != null) {
+      spans.add(TextSpan(
+        text: match.group(7),
+        style: TextStyle(color: functionColor),
+      ));
+    }
+
+    lastIndex = match.end;
+  }
+
+  if (lastIndex < text.length) {
+    spans.add(TextSpan(
+      text: text.substring(lastIndex),
+      style: TextStyle(color: defaultColor),
+    ));
+  }
+
+  return TextSpan(children: spans);
+}
+
 // ══════════════════════════════════════════════════
 // High-Performance Code/Text Dialog Content Component
 // ══════════════════════════════════════════════════
@@ -1373,6 +1453,12 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         }
       } else if (itemType == 'XML') {
         final fmt = AppState().tryFormatXml(widget.item.content);
+        if (fmt != null) {
+          pretty = fmt;
+          _isFormatAvailable = true;
+        }
+      } else if (itemType == 'CODE') {
+        final fmt = AppState().tryFormatCode(widget.item.content);
         if (fmt != null) {
           pretty = fmt;
           _isFormatAvailable = true;
@@ -1440,7 +1526,11 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
             : line;
         _prettyHighlightedSpans![index] = itemType == 'JSON'
             ? _highlightJson(truncatedLine, isDark)
-            : (itemType == 'XML' ? _highlightXml(truncatedLine, isDark) : TextSpan(text: truncatedLine));
+            : (itemType == 'XML'
+                ? _highlightXml(truncatedLine, isDark)
+                : (itemType == 'CODE'
+                    ? _highlightCode(truncatedLine, isDark)
+                    : TextSpan(text: truncatedLine)));
       }
       return _prettyHighlightedSpans![index]!;
     } else {

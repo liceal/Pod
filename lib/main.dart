@@ -15,6 +15,7 @@ void main() async {
 
   runApp(
     MaterialApp(
+      navigatorKey: appState.navigatorKey,
       title: 'Pod',
       debugShowCheckedModeBanner: false,
       color: Colors.transparent,
