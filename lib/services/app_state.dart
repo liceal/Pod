@@ -64,6 +64,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   String _trayIconPath = '';
   StreamSubscription<FileSystemEvent>? _dirWatcher;
+  StreamSubscription<FileSystemEvent>? _imagesDirWatcher;
 
   bool _didGrabFocus = false;
   Display? _currentDisplay;
@@ -294,6 +295,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _setupTray();
     await _setupHotkeys();
     _startClipboardMonitoring();
+    await _startWatchingImagesDirectory();
 
     // Background cleanup of orphaned images
     _cleanupUnusedClipboardImages();
@@ -331,6 +333,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _autoCollapseTimer?.cancel();
     _fileWatchDebounce?.cancel();
     _dirWatcher?.cancel();
+    _imagesDirWatcher?.cancel();
     hotKeyManager.unregisterAll();
     super.dispose();
   }
@@ -1016,6 +1019,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _loadNotes();
     await _loadClipboardHistory();
     await _scanStoredFiles();
+    await _startWatchingImagesDirectory();
 
     notifyListeners();
     return true;
@@ -1211,44 +1215,61 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             _lastSystemClipText = text;
             _lastSystemClipImageSignature = null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
             
-            if (text != _lastAppCopiedText) {
-              String? appName;
-              String? appIconPath;
-              if (Platform.isWindows || Platform.isMacOS) {
-                try {
-                  final result = await _clipboardOwnerChannel.invokeMethod(
-                    'getClipboardOwner',
-                  );
-                  if (result is Map) {
-                    appName = result['name'] as String?;
-                    appIconPath = result['iconPath'] as String?;
-                  }
-                } catch (e) {
-                  debugPrint('Failed to get clipboard owner info: $e');
-                }
-              }
-
-              // 如果是本应用复制的，则忽略，不计入历史记录
-              if (!_isOwnApp(appName)) {
-                await addClipboardItem(
-                  text,
-                  appName: appName,
-                  appIconPath: appIconPath,
+            String? appName;
+            String? appIconPath;
+            if (Platform.isWindows || Platform.isMacOS) {
+              try {
+                final result = await _clipboardOwnerChannel.invokeMethod(
+                  'getClipboardOwner',
                 );
+                if (result is Map) {
+                  appName = result['name'] as String?;
+                  appIconPath = result['iconPath'] as String?;
+                }
+              } catch (e) {
+                debugPrint('Failed to get clipboard owner info: $e');
               }
+            }
+
+            final isOwn = _isOwnApp(appName);
+            final isInternalCopy = isOwn && (text == _lastAppCopiedText);
+
+            if (!isInternalCopy) {
+              await addClipboardItem(
+                text,
+                appName: appName,
+                appIconPath: appIconPath,
+              );
             }
           }
         } else {
-          // 2. 文本为空或没有文本时，才去检查图片（避免在有文本的情况下每秒都获取图片，极大降低 CPU 消耗）
-          final imageBytes = await Pasteboard.image;
-          if (imageBytes != null && imageBytes.isNotEmpty) {
-            final imageSignature = _imageSignature(imageBytes);
-            if (imageSignature != _lastSystemClipImageSignature) {
-              _lastSystemClipImageSignature = imageSignature;
-              _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
-              
-              // 如果不是本应用复制的，则添加
-              if (imageSignature != _lastAppCopiedImageSignature) {
+          // 2. 文本为空或没有文本时，才去检查图片
+          // 首先判断剪贴板里是否是文件，如果是文件，且全是非图片文件，则忽略其图片数据（那是文件图标）
+          bool isFileIcon = false;
+          try {
+            final files = await Pasteboard.files();
+            if (files.isNotEmpty) {
+              final imageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'tif', 'heic', 'heif'};
+              final hasImageFile = files.any((path) {
+                final ext = path.split('.').last.toLowerCase();
+                return imageExtensions.contains(ext);
+              });
+              if (!hasImageFile) {
+                isFileIcon = true;
+              }
+            }
+          } catch (e) {
+            debugPrint('Failed to check pasteboard files: $e');
+          }
+
+          if (!isFileIcon) {
+            final imageBytes = await Pasteboard.image;
+            if (imageBytes != null && imageBytes.isNotEmpty) {
+              final imageSignature = _imageSignature(imageBytes);
+              if (imageSignature != _lastSystemClipImageSignature) {
+                _lastSystemClipImageSignature = imageSignature;
+                _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
+                
                 String? appName;
                 String? appIconPath;
                 if (Platform.isWindows || Platform.isMacOS) {
@@ -1265,12 +1286,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   }
                 }
                 
-                // 如果是本应用复制的，则忽略，不计入历史记录
-                if (!_isOwnApp(appName)) {
+                final isOwn = _isOwnApp(appName);
+                final isInternalCopy = isOwn && (imageSignature == _lastAppCopiedImageSignature);
+
+                if (!isInternalCopy) {
                   await addClipboardImageItem(
                     imageBytes,
                     appName: appName,
                     appIconPath: appIconPath,
+                    imageSignature: imageSignature,
                   );
                 } else {
                   // 同步当前图片的签名，以防 owner 再次判定异常
@@ -1326,6 +1350,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     Uint8List imageBytes, {
     String? appName,
     String? appIconPath,
+    String? imageSignature,
   }) async {
     try {
       final dirPath = await _getImagesDirectoryPath();
@@ -1334,20 +1359,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final file = File(filePath);
       await file.writeAsBytes(imageBytes);
 
-      // 去重近期图片内容（比对前10项的字节）
-      final imageSignature = _imageSignature(imageBytes);
+      // 去重近期图片内容（内存去重，并且可以比对全部项，不再局限于前10项）
+      final currentSignature = imageSignature ?? _imageSignature(imageBytes);
       final itemsToRemove = <ClipboardItem>[];
-      for (final item in clipboardHistory.take(10)) {
+      for (final item in clipboardHistory) {
         if (item.imagePath != null) {
-          final oldFile = File(getImagePath(item));
-          if (oldFile.existsSync()) {
-            try {
-              if (oldFile.lengthSync() != imageBytes.length) continue;
-              final oldBytes = await oldFile.readAsBytes();
-              if (_imageSignature(oldBytes) == imageSignature) {
-                itemsToRemove.add(item);
-              }
-            } catch (_) {}
+          if (item.imageSignature != null) {
+            if (item.imageSignature == currentSignature) {
+              itemsToRemove.add(item);
+            }
+          } else {
+            // 老版本老数据没有 signature，用原本的 legacy I/O 检查
+            final oldFile = File(getImagePath(item));
+            if (oldFile.existsSync()) {
+              try {
+                if (oldFile.lengthSync() == imageBytes.length) {
+                  final oldBytes = await oldFile.readAsBytes();
+                  if (_imageSignature(oldBytes) == currentSignature) {
+                    itemsToRemove.add(item);
+                  }
+                }
+              } catch (_) {}
+            }
           }
         }
       }
@@ -1366,6 +1399,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         appName: appName,
         appIconPath: appIconPath,
         imagePath: 'clipboard_images/$id.png',
+        imageSignature: currentSignature,
       );
 
       clipboardHistory.insert(0, newItem);
@@ -1610,6 +1644,39 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         clipboardFavorites = [];
       }
     }
+
+    bool needsSaveHistory = false;
+    final originalHistoryCount = clipboardHistory.length;
+    clipboardHistory = clipboardHistory.where((item) {
+      if (item.imagePath != null) {
+        final file = File(getImagePath(item));
+        return file.existsSync();
+      }
+      return true;
+    }).toList();
+    if (clipboardHistory.length != originalHistoryCount) {
+      needsSaveHistory = true;
+    }
+
+    bool needsSaveFavorites = false;
+    final originalFavCount = clipboardFavorites.length;
+    clipboardFavorites = clipboardFavorites.where((item) {
+      if (item.imagePath != null) {
+        final file = File(getImagePath(item));
+        return file.existsSync();
+      }
+      return true;
+    }).toList();
+    if (clipboardFavorites.length != originalFavCount) {
+      needsSaveFavorites = true;
+    }
+
+    if (needsSaveHistory) {
+      _saveClipboardHistory();
+    }
+    if (needsSaveFavorites) {
+      _saveClipboardFavorites();
+    }
   }
 
   Future<void> _saveClipboardHistory() async {
@@ -1701,6 +1768,52 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       await _startWatchingFilesDirectory(path);
     } catch (e) {
       debugPrint('Error scanning files: $e');
+    }
+  }
+
+  void _handleImageFileDeleted(String fileName) {
+    bool changed = false;
+    final targetPathPart = 'clipboard_images/$fileName';
+    
+    // 检查历史记录
+    final historyLen = clipboardHistory.length;
+    clipboardHistory.removeWhere((item) => item.imagePath != null && item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart));
+    if (clipboardHistory.length != historyLen) {
+      changed = true;
+    }
+    
+    // 检查收藏记录
+    final favLen = clipboardFavorites.length;
+    clipboardFavorites.removeWhere((item) => item.imagePath != null && item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart));
+    if (clipboardFavorites.length != favLen) {
+      changed = true;
+    }
+    
+    if (changed) {
+      _saveClipboardHistory();
+      _saveClipboardFavorites();
+      notifyListeners();
+    }
+  }
+
+  Future<void> _startWatchingImagesDirectory() async {
+    await _imagesDirWatcher?.cancel();
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final imagesDirPath = '$dataDir/clipboard_images';
+      final dir = Directory(imagesDirPath);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      _imagesDirWatcher = dir.watch(events: FileSystemEvent.all).listen((event) {
+        if (event is FileSystemDeleteEvent) {
+          final path = event.path.replaceAll('\\', '/');
+          final fileName = path.split('/').last;
+          _handleImageFileDeleted(fileName);
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to watch images directory: $e');
     }
   }
 

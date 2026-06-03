@@ -168,7 +168,7 @@ class _FilesPaneState extends State<FilesPane> {
         }
         break;
       case 'copy_path':
-        Clipboard.setData(ClipboardData(text: file.path));
+        widget.state.copyTextToClipboard(file.path);
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(

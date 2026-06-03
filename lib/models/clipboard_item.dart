@@ -6,6 +6,7 @@ class ClipboardItem {
   final String? appName;
   final String? appIconPath;
   final String? imagePath;
+  final String? imageSignature;
 
   ClipboardItem({
     required this.id,
@@ -15,6 +16,7 @@ class ClipboardItem {
     this.appName,
     this.appIconPath,
     this.imagePath,
+    this.imageSignature,
   });
 
   ClipboardItem copyWith({
@@ -24,6 +26,7 @@ class ClipboardItem {
     String? appName,
     String? appIconPath,
     String? imagePath,
+    String? imageSignature,
   }) {
     return ClipboardItem(
       id: id,
@@ -33,6 +36,7 @@ class ClipboardItem {
       appName: appName ?? this.appName,
       appIconPath: appIconPath ?? this.appIconPath,
       imagePath: imagePath ?? this.imagePath,
+      imageSignature: imageSignature ?? this.imageSignature,
     );
   }
 
@@ -45,6 +49,7 @@ class ClipboardItem {
       'appName': appName,
       'appIconPath': appIconPath,
       'imagePath': imagePath,
+      'imageSignature': imageSignature,
     };
   }
 
@@ -57,6 +62,7 @@ class ClipboardItem {
       appName: json['appName'] as String?,
       appIconPath: json['appIconPath'] as String?,
       imagePath: json['imagePath'] as String?,
+      imageSignature: json['imageSignature'] as String?,
     );
   }
 }
