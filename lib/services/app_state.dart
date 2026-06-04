@@ -67,6 +67,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String _trayIconPath = '';
   StreamSubscription<FileSystemEvent>? _dirWatcher;
   StreamSubscription<FileSystemEvent>? _imagesDirWatcher;
+  StreamSubscription<FileSystemEvent>? _dataDirWatcher;
+  String? _lastNotesJsonCache;
+  String? _lastHistoryJsonCache;
+  String? _lastFavoritesJsonCache;
+  Timer? _reloadNotesDebounce;
+  Timer? _reloadHistoryDebounce;
 
   bool _didGrabFocus = false;
   Display? _currentDisplay;
@@ -428,6 +434,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _setupHotkeys();
     _startClipboardMonitoring();
     await _startWatchingImagesDirectory();
+    await _startWatchingDataDirectory();
 
     // Background cleanup of orphaned images
     _cleanupUnusedClipboardImages();
@@ -970,6 +977,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return '${appSupport.path}/data'.replaceAll('\\', '/');
   }
 
+  String _getCleanDeviceName() {
+    try {
+      final rawName = Platform.localHostname;
+      return rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
+    } catch (_) {
+      return 'default';
+    }
+  }
+
+  String _getClipboardHistoryFilename() {
+    return 'clipboard_history-${_getCleanDeviceName()}.json';
+  }
+
   String getImagePath(ClipboardItem item) {
     if (item.imagePath == null) return '';
     final path = item.imagePath!;
@@ -1093,12 +1113,26 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // 1. Copy data files
     try {
-      final filesToMove = ['notes.json', 'clipboard_history.json', 'clipboard_favorites.json'];
+      // Copy general data files
+      final filesToMove = ['notes.json', 'clipboard_favorites.json'];
       for (final fileName in filesToMove) {
         final oldFile = File('${sourceDir.path}/$fileName');
         if (oldFile.existsSync()) {
           final newFile = File('${targetDir.path}/$fileName');
           oldFile.copySync(newFile.path);
+        }
+      }
+
+      // Copy all clipboard history files (including device-specific ones and legacy history)
+      if (sourceDir.existsSync()) {
+        for (final entity in sourceDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').last;
+            if (name == 'clipboard_history.json' ||
+                (name.startsWith('clipboard_history-') && name.endsWith('.json'))) {
+              entity.copySync('${targetDir.path}/$name');
+            }
+          }
         }
       }
 
@@ -1138,11 +1172,26 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // 5. Cleanup old files (non-critical)
     try {
-      final filesToDelete = ['notes.json', 'clipboard_history.json', 'clipboard_favorites.json'];
+      final filesToDelete = ['notes.json', 'clipboard_favorites.json'];
       for (final fileName in filesToDelete) {
         final oldFile = File('${sourceDir.path}/$fileName');
         if (oldFile.existsSync()) {
           oldFile.deleteSync();
+        }
+      }
+
+      // Delete all clipboard history files (including device-specific ones and legacy history)
+      if (sourceDir.existsSync()) {
+        for (final entity in sourceDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').last;
+            if (name == 'clipboard_history.json' ||
+                (name.startsWith('clipboard_history-') && name.endsWith('.json'))) {
+              try {
+                entity.deleteSync();
+              } catch (_) {}
+            }
+          }
         }
       }
 
@@ -1164,6 +1213,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _loadClipboardHistory();
     await _scanStoredFiles();
     await _startWatchingImagesDirectory();
+    await _startWatchingDataDirectory();
 
     notifyListeners();
     return true;
@@ -1217,10 +1267,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         targetNotesFile.writeAsStringSync(jsonEncode(mergedNotesJson));
       }
 
-      // 2. Sync clipboard_history.json (Merge)
-      final sourceHistoryFile = File('${sourceDir.path}/clipboard_history.json');
+      // 2. Sync clipboard_history-[deviceName].json (Merge)
+      final historyFilename = _getClipboardHistoryFilename();
+      final sourceHistoryFile = File('${sourceDir.path}/$historyFilename');
       if (sourceHistoryFile.existsSync()) {
-        final targetHistoryFile = File('${targetDir.path}/clipboard_history.json');
+        final targetHistoryFile = File('${targetDir.path}/$historyFilename');
         List<dynamic> mergedHistoryJson = [];
 
         List<dynamic> sourceHistory = [];
@@ -1718,7 +1769,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     final dataDir = getDataDirectoryPathSync();
 
     // 1. History
-    final historyFile = File('$dataDir/clipboard_history.json');
+    final historyFilename = _getClipboardHistoryFilename();
+    final historyFile = File('$dataDir/$historyFilename');
     String? listJson;
     if (historyFile.existsSync()) {
       try {
@@ -1727,22 +1779,33 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         debugPrint('Failed to read clipboard history file: $e');
       }
     } else {
-      // Legacy migration from SharedPreferences
-      listJson = _prefs.getString('clipboard_history');
-      if (listJson != null) {
+      // Check if legacy device-agnostic history file exists to migrate
+      final legacyFile = File('$dataDir/clipboard_history.json');
+      if (legacyFile.existsSync()) {
         try {
-          if (!historyFile.parent.existsSync()) {
-            historyFile.parent.createSync(recursive: true);
-          }
+          listJson = legacyFile.readAsStringSync();
+          // Write it to device-specific file so we don't lose history on this machine
           historyFile.writeAsStringSync(listJson);
-          await _prefs.remove('clipboard_history');
-        } catch (e) {
-          debugPrint('Failed to migrate clipboard history from SharedPreferences: $e');
+        } catch (_) {}
+      } else {
+        // Legacy migration from SharedPreferences
+        listJson = _prefs.getString('clipboard_history');
+        if (listJson != null) {
+          try {
+            if (!historyFile.parent.existsSync()) {
+              historyFile.parent.createSync(recursive: true);
+            }
+            historyFile.writeAsStringSync(listJson);
+            await _prefs.remove('clipboard_history');
+          } catch (e) {
+            debugPrint('Failed to migrate clipboard history from SharedPreferences: $e');
+          }
         }
       }
     }
 
     if (listJson != null) {
+      _lastHistoryJsonCache = listJson;
       try {
         final decoded = jsonDecode(listJson) as List;
         clipboardHistory = decoded
@@ -1751,6 +1814,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } catch (e) {
         clipboardHistory = [];
       }
+    } else {
+      clipboardHistory = [];
+      _lastHistoryJsonCache = null;
     }
 
     // 2. Favorites
@@ -1779,6 +1845,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     if (favJson != null) {
+      _lastFavoritesJsonCache = favJson;
       try {
         final decoded = jsonDecode(favJson) as List;
         clipboardFavorites = decoded
@@ -1787,6 +1854,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } catch (e) {
         clipboardFavorites = [];
       }
+    } else {
+      clipboardFavorites = [];
+      _lastFavoritesJsonCache = null;
     }
 
     bool needsSaveHistory = false;
@@ -1825,7 +1895,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> _saveClipboardHistory() async {
     final dataDir = getDataDirectoryPathSync();
-    final historyFile = File('$dataDir/clipboard_history.json');
+    final historyFilename = _getClipboardHistoryFilename();
+    final historyFile = File('$dataDir/$historyFilename');
     try {
       if (!historyFile.parent.existsSync()) {
         historyFile.parent.createSync(recursive: true);
@@ -1833,6 +1904,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final encoded = jsonEncode(
         clipboardHistory.map((item) => item.toJson()).toList(),
       );
+      _lastHistoryJsonCache = encoded;
       historyFile.writeAsStringSync(encoded);
     } catch (e) {
       debugPrint('Failed to save clipboard history file: $e');
@@ -1849,6 +1921,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final encoded = jsonEncode(
         clipboardFavorites.map((item) => item.toJson()).toList(),
       );
+      _lastFavoritesJsonCache = encoded;
       favoritesFile.writeAsStringSync(encoded);
     } catch (e) {
       debugPrint('Failed to save clipboard favorites file: $e');
@@ -1958,6 +2031,117 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       });
     } catch (e) {
       debugPrint('Failed to watch images directory: $e');
+    }
+  }
+
+  Future<void> _startWatchingDataDirectory() async {
+    await _dataDirWatcher?.cancel();
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final dir = Directory(dataDir);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      _dataDirWatcher = dir.watch(events: FileSystemEvent.all).listen((event) {
+        if (event is FileSystemModifyEvent || event is FileSystemCreateEvent) {
+          final path = event.path.replaceAll('\\', '/');
+          final fileName = path.split('/').last;
+          final historyFilename = _getClipboardHistoryFilename();
+          if (fileName == 'notes.json') {
+            _reloadNotesDebounce?.cancel();
+            _reloadNotesDebounce = Timer(
+              const Duration(milliseconds: 200),
+              _reloadNotesFromFile,
+            );
+          } else if (fileName == historyFilename || fileName == 'clipboard_favorites.json') {
+            _reloadHistoryDebounce?.cancel();
+            _reloadHistoryDebounce = Timer(
+              const Duration(milliseconds: 200),
+              _reloadHistoryFromFile,
+            );
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to watch data directory: $e');
+    }
+  }
+
+  Future<void> _reloadNotesFromFile() async {
+    final dataDir = getDataDirectoryPathSync();
+    final notesFile = File('$dataDir/notes.json');
+    if (!notesFile.existsSync()) return;
+    try {
+      final content = await notesFile.readAsString();
+      if (content == _lastNotesJsonCache) return; // Ignore if identical (self-write)
+      _lastNotesJsonCache = content;
+
+      final decoded = jsonDecode(content) as List;
+      notes = decoded
+          .map((item) => Note.fromJson(item as Map<String, dynamic>))
+          .toList();
+
+      // Keep activeNote synced
+      if (activeNote != null) {
+        final matching = notes.where((n) => n.id == activeNote!.id).toList();
+        if (matching.isNotEmpty) {
+          activeNote = matching.first;
+        } else {
+          activeNote = notes.isNotEmpty ? notes.first : null;
+        }
+      } else {
+        activeNote = notes.isNotEmpty ? notes.first : null;
+      }
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to auto-reload notes: $e');
+    }
+  }
+
+  Future<void> _reloadHistoryFromFile() async {
+    final dataDir = getDataDirectoryPathSync();
+    
+    // 1. History
+    final historyFilename = _getClipboardHistoryFilename();
+    final historyFile = File('$dataDir/$historyFilename');
+    bool historyChanged = false;
+    if (historyFile.existsSync()) {
+      try {
+        final content = await historyFile.readAsString();
+        if (content != _lastHistoryJsonCache) {
+          _lastHistoryJsonCache = content;
+          final decoded = jsonDecode(content) as List;
+          clipboardHistory = decoded
+              .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
+              .toList();
+          historyChanged = true;
+        }
+      } catch (e) {
+        debugPrint('Failed to auto-reload clipboard history: $e');
+      }
+    }
+
+    // 2. Favorites
+    final favoritesFile = File('$dataDir/clipboard_favorites.json');
+    bool favoritesChanged = false;
+    if (favoritesFile.existsSync()) {
+      try {
+        final content = await favoritesFile.readAsString();
+        if (content != _lastFavoritesJsonCache) {
+          _lastFavoritesJsonCache = content;
+          final decoded = jsonDecode(content) as List;
+          clipboardFavorites = decoded
+              .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
+              .toList();
+          favoritesChanged = true;
+        }
+      } catch (e) {
+        debugPrint('Failed to auto-reload clipboard favorites: $e');
+      }
+    }
+
+    if (historyChanged || favoritesChanged) {
+      notifyListeners();
     }
   }
 
@@ -2219,6 +2403,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     if (notesJson != null) {
+      _lastNotesJsonCache = notesJson; // Populate cache on load
       try {
         final decoded = jsonDecode(notesJson) as List;
         notes = decoded
@@ -2227,6 +2412,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } catch (e) {
         notes = [];
       }
+    } else {
+      notes = [];
+      _lastNotesJsonCache = null;
     }
 
     // Add default note if empty
@@ -2243,7 +2431,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     // Select first note
-    activeNote = notes.first;
+    activeNote = notes.isNotEmpty ? notes.first : null;
   }
 
   Future<void> _saveNotes() async {
@@ -2254,6 +2442,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         notesFile.parent.createSync(recursive: true);
       }
       final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
+      _lastNotesJsonCache = encoded; // Populate cache on save
       notesFile.writeAsStringSync(encoded);
     } catch (e) {
       debugPrint('Failed to save notes: $e');

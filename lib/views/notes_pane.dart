@@ -57,7 +57,7 @@ class _NotesPaneState extends State<NotesPane> {
   void _syncActiveNote() {
     final active = widget.state.activeNote;
     if (active != null) {
-      if (_activeNoteId != active.id) {
+      if (_activeNoteId != active.id || _editorController.text != active.content) {
         _activeNoteId = active.id;
         _editorController.text = active.content;
       }
