@@ -48,6 +48,7 @@ private func silenceInputMethodLogs() {
 @main
 class AppDelegate: FlutterAppDelegate {
   override func applicationDidFinishLaunching(_ notification: Notification) {
+    NSApp.setActivationPolicy(.accessory)
     silenceInputMethodLogs()
   }
 

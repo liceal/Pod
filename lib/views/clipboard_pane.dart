@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/clipboard_item.dart';
 import '../models/app_settings.dart';
@@ -21,7 +22,11 @@ class ClipboardPane extends StatefulWidget {
 class _ClipboardPaneState extends State<ClipboardPane> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final Map<String, Matrix4> _imageDetailTransforms = {};
+  int _detailOpenVersion = 0;
   bool _showFavoritesOnly = false;
+  bool _detailWrapCodeLines = true;
+  ClipboardItem? _detailItem;
 
   @override
   void initState() {
@@ -39,6 +44,23 @@ class _ClipboardPaneState extends State<ClipboardPane> {
     super.dispose();
   }
 
+  void _openDetail(ClipboardItem item) {
+    setState(() {
+      _detailOpenVersion++;
+      _detailItem = item;
+    });
+  }
+
+  void _closeDetail() {
+    setState(() {
+      final item = _detailItem;
+      if (item != null) {
+        _imageDetailTransforms.remove(item.id);
+      }
+      _detailItem = null;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final items = _showFavoritesOnly
@@ -50,242 +72,266 @@ class _ClipboardPaneState extends State<ClipboardPane> {
     );
 
     final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
+    final detailItem = _detailItem;
+    final detailItemType = detailItem == null
+        ? null
+        : widget.state.getClipboardItemType(detailItem);
+    final detailKeyVersion = detailItemType == 'IMAGE'
+        ? widget.state.panelActivationVersion
+        : 0;
+    final listContent = items.isEmpty
+        ? Center(
+            child: Text(
+              _showFavoritesOnly
+                  ? (_searchController.text.isNotEmpty
+                        ? '没有找到匹配的收藏项'
+                        : '没有收藏的记录')
+                  : (_searchController.text.isNotEmpty ? '没有找到匹配项' : '剪贴板历史为空'),
+              style: TextStyle(
+                fontSize: 12,
+                color: widget.isDark
+                    ? Colors.white30
+                    : Colors.black.withOpacity(0.3),
+              ),
+            ),
+          )
+        : ListView.builder(
+            key: PageStorageKey<String>(
+              _showFavoritesOnly ? 'favs_list' : 'all_list',
+            ),
+            controller: _scrollController,
+            itemCount: items.length,
+            physics: const BouncingScrollPhysics(),
+            itemBuilder: (context, index) {
+              final item = items[index];
+
+              return ClipboardItemCard(
+                key: ValueKey(item.id),
+                item: item,
+                isDark: widget.isDark,
+                accentColor: accentColor,
+                isFavorite: widget.state.isItemFavorite(item.content),
+                onCopy: () => widget.state.copyToClipboard(item),
+                onOpenDetail: () => _openDetail(item),
+                onFavoriteToggle: () =>
+                    widget.state.toggleFavoriteClipboardItem(item),
+                onDelete: () {
+                  if (_detailItem?.id == item.id) {
+                    _detailItem = null;
+                  }
+                  _imageDetailTransforms.remove(item.id);
+                  widget.state.deleteClipboardItem(item.id);
+                  Future.delayed(Duration.zero, () {
+                    if (mounted) setState(() {});
+                  });
+                },
+              );
+            },
+          );
     return Padding(
       padding: EdgeInsets.all(isCompact ? 2.0 : 4.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Search Field & Favorite Toggle
-          Listener(
-            onPointerSignal: (pointerSignal) {
-              if (pointerSignal is PointerScrollEvent &&
-                  pointerSignal.scrollDelta.dy < 0) {
-                widget.state.collapsePanel();
-              }
-            },
-            child: Row(
-              children: [
-                Expanded(
-                  child: Container(
-                    height: isCompact ? 26 : 32,
-                    decoration: BoxDecoration(
-                      color: widget.isDark
-                          ? Colors.white.withOpacity(0.06)
-                          : Colors.black.withOpacity(0.04),
-                      borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
-                    ),
-                    child: TextField(
-                      controller: _searchController,
-                      textAlignVertical: TextAlignVertical.center,
-                      style: TextStyle(fontSize: isCompact ? 11 : 12),
-                      decoration: InputDecoration(
-                        hintText: _showFavoritesOnly
-                            ? '搜索收藏记录...'
-                            : '搜索剪贴板记录...',
-                        hintStyle: TextStyle(
-                          fontSize: isCompact ? 11 : 12,
-                          color: widget.isDark
-                              ? Colors.white30
-                              : Colors.black.withOpacity(0.3),
-                        ),
-                        prefixIcon: Padding(
-                          padding: const EdgeInsets.only(left: 8.0, right: 6.0),
-                          child: Icon(
-                            Icons.search_rounded,
-                            size: 14,
-                            color: widget.isDark
-                                ? Colors.white.withOpacity(0.5)
-                                : Colors.black.withOpacity(0.5),
-                          ),
-                        ),
-                        prefixIconConstraints: const BoxConstraints(
-                          minWidth: 28,
-                          minHeight: 14,
-                        ),
-                        suffixIcon: _searchController.text.isNotEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.only(right: 8.0),
-                                child: MouseRegion(
-                                  cursor: SystemMouseCursors.click,
-                                  child: AnimatedPress(
-                                    onTap: () => _searchController.clear(),
-                                    child: const Icon(Icons.clear, size: 15),
-                                  ),
-                                ),
-                              )
-                            : (widget
-                                          .state
-                                          .filteredClipboardHistory
-                                          .isNotEmpty &&
-                                      !_showFavoritesOnly
-                                  ? Padding(
-                                      padding: const EdgeInsets.only(
-                                        right: 8.0,
-                                      ),
-                                      child: MouseRegion(
-                                        cursor: SystemMouseCursors.click,
-                                        child: AnimatedPress(
-                                          onTap: () async {
-                                            widget.state.setDialogOpen(true);
-                                            await showDialog(
-                                              context: context,
-                                              barrierColor: Colors.transparent,
-                                              builder: (ctx) => AlertDialog(
-                                                title: const Text('清空剪贴板历史？'),
-                                                content: const Text(
-                                                  '这将删除所有的剪贴板历史记录，此操作不可撤销。',
-                                                ),
-                                                actions: [
-                                                  TextButton(
-                                                    child: const Text('取消'),
-                                                    onPressed: () =>
-                                                        Navigator.of(ctx).pop(),
-                                                  ),
-                                                  TextButton(
-                                                    child: const Text('立即清空'),
-                                                    onPressed: () {
-                                                      widget.state
-                                                          .clearClipboardHistory();
-                                                      setState(() {});
-                                                      Navigator.of(ctx).pop();
-                                                    },
-                                                  ),
-                                                ],
-                                              ),
-                                            );
-                                            widget.state.setDialogOpen(false);
-                                          },
-                                          child: const Icon(
-                                            Icons.delete_sweep_outlined,
-                                            size: 16,
-                                          ),
-                                        ),
-                                      ),
-                                    )
-                                  : null),
-                        suffixIconConstraints: const BoxConstraints(
-                          minWidth: 26,
-                          minHeight: 16,
-                        ),
-                        isDense: true,
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                      ),
-                    ),
-                  ),
-                ),
-                SizedBox(width: isCompact ? 2 : 4),
-                Tooltip(
-                  message: _showFavoritesOnly ? '所有记录' : '收藏记录',
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: AnimatedPress(
-                      onTap: () {
-                        setState(() {
-                          _showFavoritesOnly = !_showFavoritesOnly;
-                        });
-                      },
-                      child: Container(
-                        width: isCompact ? 26 : 32,
-                        height: isCompact ? 26 : 32,
-                        decoration: BoxDecoration(
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.06)
-                              : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(
-                            isCompact ? 0 : 8,
-                          ),
-                        ),
-                        child: Icon(
-                          _showFavoritesOnly
-                              ? Icons.star_rounded
-                              : Icons.star_outline_rounded,
-                          size: 16,
-                          color: _showFavoritesOnly
-                              ? Colors.amber
-                              : (widget.isDark
-                                    ? Colors.white.withOpacity(0.6)
-                                    : Colors.black.withOpacity(0.6)),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          SizedBox(height: isCompact ? 2 : 4),
-
-          // History List with transition animation
-          Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.05, 0),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                );
+          if (detailItem == null) ...[
+            Listener(
+              onPointerSignal: (pointerSignal) {
+                if (pointerSignal is PointerScrollEvent &&
+                    pointerSignal.scrollDelta.dy < 0) {
+                  widget.state.collapsePanel();
+                }
               },
-              child: KeyedSubtree(
-                key: ValueKey<bool>(_showFavoritesOnly),
-                child: items.isEmpty
-                    ? Center(
-                        child: Text(
-                          _showFavoritesOnly
-                              ? (_searchController.text.isNotEmpty
-                                    ? '没有找到匹配的收藏项'
-                                    : '没有收藏的记录')
-                              : (_searchController.text.isNotEmpty
-                                    ? '没有找到匹配项'
-                                    : '剪贴板历史为空'),
-                          style: TextStyle(
-                            fontSize: 12,
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      height: isCompact ? 26 : 32,
+                      decoration: BoxDecoration(
+                        color: widget.isDark
+                            ? Colors.white.withOpacity(0.06)
+                            : Colors.black.withOpacity(0.04),
+                        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
+                      ),
+                      child: TextField(
+                        controller: _searchController,
+                        textAlignVertical: TextAlignVertical.center,
+                        style: TextStyle(fontSize: isCompact ? 11 : 12),
+                        decoration: InputDecoration(
+                          hintText: _showFavoritesOnly
+                              ? '搜索收藏记录...'
+                              : '搜索剪贴板记录...',
+                          hintStyle: TextStyle(
+                            fontSize: isCompact ? 11 : 12,
                             color: widget.isDark
                                 ? Colors.white30
                                 : Colors.black.withOpacity(0.3),
                           ),
-                        ),
-                      )
-                    : ListView.builder(
-                        key: PageStorageKey<String>(
-                          _showFavoritesOnly ? 'favs_list' : 'all_list',
-                        ),
-                        controller: _scrollController,
-                        itemCount: items.length,
-                        physics: const BouncingScrollPhysics(),
-                        itemBuilder: (context, index) {
-                          final item = items[index];
-
-                          return ClipboardItemCard(
-                            key: ValueKey(item.id),
-                            item: item,
-                            isDark: widget.isDark,
-                            accentColor: accentColor,
-                            isFavorite: widget.state.isItemFavorite(
-                              item.content,
+                          prefixIcon: Padding(
+                            padding: const EdgeInsets.only(
+                              left: 8.0,
+                              right: 6.0,
                             ),
-                            onCopy: () =>
-                                widget.state.copyToClipboard(item),
-                            onFavoriteToggle: () =>
-                                widget.state.toggleFavoriteClipboardItem(item),
-                            onDelete: () {
-                              widget.state.deleteClipboardItem(item.id);
-                              // Deferred rebuild — card hides instantly via its own state
-                              Future.delayed(Duration.zero, () {
-                                if (mounted) setState(() {});
-                              });
-                            },
-                          );
-                        },
+                            child: Icon(
+                              Icons.search_rounded,
+                              size: 14,
+                              color: widget.isDark
+                                  ? Colors.white.withOpacity(0.5)
+                                  : Colors.black.withOpacity(0.5),
+                            ),
+                          ),
+                          prefixIconConstraints: const BoxConstraints(
+                            minWidth: 28,
+                            minHeight: 14,
+                          ),
+                          suffixIcon: _searchController.text.isNotEmpty
+                              ? Padding(
+                                  padding: const EdgeInsets.only(right: 8.0),
+                                  child: MouseRegion(
+                                    cursor: SystemMouseCursors.click,
+                                    child: AnimatedPress(
+                                      onTap: () => _searchController.clear(),
+                                      child: const Icon(Icons.clear, size: 15),
+                                    ),
+                                  ),
+                                )
+                              : (widget
+                                            .state
+                                            .filteredClipboardHistory
+                                            .isNotEmpty &&
+                                        !_showFavoritesOnly
+                                    ? Padding(
+                                        padding: const EdgeInsets.only(
+                                          right: 8.0,
+                                        ),
+                                        child: MouseRegion(
+                                          cursor: SystemMouseCursors.click,
+                                          child: AnimatedPress(
+                                            onTap: () async {
+                                              widget.state.setDialogOpen(true);
+                                              await showDialog(
+                                                context: context,
+                                                barrierColor:
+                                                    Colors.transparent,
+                                                builder: (ctx) => AlertDialog(
+                                                  title: const Text('清空剪贴板历史？'),
+                                                  content: const Text(
+                                                    '这将删除所有的剪贴板历史记录，此操作不可撤销。',
+                                                  ),
+                                                  actions: [
+                                                    TextButton(
+                                                      child: const Text('取消'),
+                                                      onPressed: () =>
+                                                          Navigator.of(
+                                                            ctx,
+                                                          ).pop(),
+                                                    ),
+                                                    TextButton(
+                                                      child: const Text('立即清空'),
+                                                      onPressed: () {
+                                                        widget.state
+                                                            .clearClipboardHistory();
+                                                        setState(() {});
+                                                        Navigator.of(ctx).pop();
+                                                      },
+                                                    ),
+                                                  ],
+                                                ),
+                                              );
+                                              widget.state.setDialogOpen(false);
+                                            },
+                                            child: const Icon(
+                                              Icons.delete_sweep_outlined,
+                                              size: 16,
+                                            ),
+                                          ),
+                                        ),
+                                      )
+                                    : null),
+                          suffixIconConstraints: const BoxConstraints(
+                            minWidth: 26,
+                            minHeight: 16,
+                          ),
+                          isDense: true,
+                          border: InputBorder.none,
+                          contentPadding: const EdgeInsets.symmetric(
+                            vertical: 8,
+                          ),
+                        ),
                       ),
+                    ),
+                  ),
+                  SizedBox(width: isCompact ? 2 : 4),
+                  Tooltip(
+                    message: _showFavoritesOnly ? '所有记录' : '收藏记录',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: AnimatedPress(
+                        onTap: () {
+                          setState(() {
+                            _showFavoritesOnly = !_showFavoritesOnly;
+                          });
+                        },
+                        child: Container(
+                          width: isCompact ? 26 : 32,
+                          height: isCompact ? 26 : 32,
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.04),
+                            borderRadius: BorderRadius.circular(
+                              isCompact ? 0 : 8,
+                            ),
+                          ),
+                          child: Icon(
+                            _showFavoritesOnly
+                                ? Icons.star_rounded
+                                : Icons.star_outline_rounded,
+                            size: 16,
+                            color: _showFavoritesOnly
+                                ? Colors.amber
+                                : (widget.isDark
+                                      ? Colors.white.withOpacity(0.6)
+                                      : Colors.black.withOpacity(0.6)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
+            SizedBox(height: isCompact ? 2 : 4),
+          ],
+
+          // History List with transition animation
+          Expanded(
+            child: detailItem != null
+                ? _DetailDialogContent(
+                    key: ValueKey(
+                      'clipboard-detail-${detailItem.id}-$detailKeyVersion-$_detailOpenVersion',
+                    ),
+                    item: detailItem,
+                    isDark: widget.isDark,
+                    accentColor: accentColor,
+                    onCopy: () => widget.state.copyToClipboard(detailItem),
+                    embedded: true,
+                    onBack: _closeDetail,
+                    wrapCodeLines: _detailWrapCodeLines,
+                    initialImageTransform: detailItemType == 'IMAGE'
+                        ? _imageDetailTransforms[detailItem.id]
+                        : null,
+                    onImageTransformChanged: detailItemType == 'IMAGE'
+                        ? (value) {
+                            _imageDetailTransforms[detailItem.id] = value
+                                .clone();
+                          }
+                        : null,
+                    onWrapCodeLinesChanged: (value) {
+                      _detailWrapCodeLines = value;
+                    },
+                  )
+                : listContent,
           ),
         ],
       ),
@@ -299,6 +345,7 @@ class ClipboardItemCard extends StatefulWidget {
   final Color accentColor;
   final bool isFavorite;
   final VoidCallback onCopy;
+  final VoidCallback onOpenDetail;
   final VoidCallback onFavoriteToggle;
   final VoidCallback onDelete;
 
@@ -309,6 +356,7 @@ class ClipboardItemCard extends StatefulWidget {
     required this.accentColor,
     required this.isFavorite,
     required this.onCopy,
+    required this.onOpenDetail,
     required this.onFavoriteToggle,
     required this.onDelete,
   });
@@ -321,6 +369,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
   bool _isHovered = false;
   bool _isCopied = false;
   bool _isDeleted = false;
+  DateTime? _lastTapTime;
 
   Widget _buildAppIcon() {
     final iconPath = widget.item.appIconPath;
@@ -387,17 +436,16 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
   Widget _buildBadge(String type) {
     final Color color = type == 'JSON'
         ? Colors.blue
-        : (type == 'XML' ? Colors.green : (type == 'URL' ? Colors.indigo : Colors.blue));
+        : (type == 'XML'
+              ? Colors.green
+              : (type == 'URL' ? Colors.indigo : Colors.blue));
     return Container(
       margin: const EdgeInsets.only(left: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
         color: color.withOpacity(widget.isDark ? 0.15 : 0.1),
         borderRadius: BorderRadius.circular(4),
-        border: Border.all(
-          color: color.withOpacity(0.3),
-          width: 0.5,
-        ),
+        border: Border.all(color: color.withOpacity(0.3), width: 0.5),
       ),
       child: Text(
         type,
@@ -410,26 +458,15 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     );
   }
 
-  void _showAllContentDialog(BuildContext context) async {
-    AppState().setDialogOpen(true);
-    await showDialog(
-      context: context,
-      barrierColor: Colors.transparent,
-      builder: (ctx) => _DetailDialogContent(
-        item: widget.item,
-        isDark: widget.isDark,
-        accentColor: widget.accentColor,
-        onCopy: widget.onCopy,
-      ),
-    );
-    AppState().setDialogOpen(false);
-  }
-
   void _handleTap() {
-    if (_isCopied) {
-      _showAllContentDialog(context);
+    final now = DateTime.now();
+    if (_lastTapTime != null &&
+        now.difference(_lastTapTime!) < const Duration(milliseconds: 300)) {
+      _lastTapTime = null;
+      widget.onOpenDetail();
       return;
     }
+    _lastTapTime = now;
     widget.onCopy();
     setState(() => _isCopied = true);
     Future.delayed(const Duration(milliseconds: 600), () {
@@ -514,7 +551,10 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       _buildAppIcon(),
-                      if (widget.item.imagePath == null && (itemType == 'JSON' || itemType == 'XML' || itemType == 'URL'))
+                      if (widget.item.imagePath == null &&
+                          (itemType == 'JSON' ||
+                              itemType == 'XML' ||
+                              itemType == 'URL'))
                         _buildBadge(itemType),
                     ],
                   ),
@@ -537,7 +577,9 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 : FontWeight.normal,
                             color: _isCopied
                                 ? themeAccent
-                                : (widget.isDark ? Colors.white70 : Colors.black87),
+                                : (widget.isDark
+                                      ? Colors.white70
+                                      : Colors.black87),
                           ),
                           child: Text(
                             widget.item.content.trim().replaceAll('\n', ' '),
@@ -606,7 +648,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                     : Colors.black.withOpacity(0.1),
                                 visible: _isHovered,
                                 isDark: widget.isDark,
-                                onTap: () => _showAllContentDialog(context),
+                                onTap: widget.onOpenDetail,
                               ),
                               _IconActionButton(
                                 icon: widget.isFavorite
@@ -744,204 +786,6 @@ class CheckerboardPainter extends CustomPainter {
 }
 
 // ══════════════════════════════════════════════════
-// Advanced Image Detail Preview component with controller
-// ══════════════════════════════════════════════════
-class _ImageDetailPreview extends StatefulWidget {
-  final String imagePath;
-  final bool isDark;
-
-  const _ImageDetailPreview({required this.imagePath, required this.isDark});
-
-  @override
-  State<_ImageDetailPreview> createState() => _ImageDetailPreviewState();
-}
-
-class _ImageDetailPreviewState extends State<_ImageDetailPreview> {
-  final TransformationController _transformationController = TransformationController();
-  int? _width;
-  int? _height;
-  String _fileSize = '';
-  double _lastWidth = 500.0;
-  double _lastHeight = 260.0;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadImageInfo();
-  }
-
-  @override
-  void dispose() {
-    _transformationController.dispose();
-    super.dispose();
-  }
-
-  void _loadImageInfo() {
-    try {
-      final file = File(widget.imagePath);
-      if (file.existsSync()) {
-        final bytes = file.lengthSync();
-        if (bytes > 1024 * 1024) {
-          _fileSize = '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
-        } else {
-          _fileSize = '${(bytes / 1024).toStringAsFixed(1)} KB';
-        }
-
-        final provider = FileImage(file);
-        final stream = provider.resolve(const ImageConfiguration());
-        ImageStreamListener? listener;
-        bool callbackCalled = false;
-        listener = ImageStreamListener((ImageInfo info, bool _) {
-          callbackCalled = true;
-          if (listener != null) {
-            stream.removeListener(listener!);
-          }
-          if (mounted) {
-            setState(() {
-              _width = info.image.width;
-              _height = info.image.height;
-            });
-          }
-        });
-        stream.addListener(listener);
-        if (callbackCalled && listener != null) {
-          stream.removeListener(listener);
-        }
-      }
-    } catch (_) {}
-  }
-
-  void _zoom(double factor) {
-    final matrix = _transformationController.value.clone();
-    final currentScale = matrix.getMaxScaleOnAxis();
-    final targetScale = (currentScale * factor).clamp(0.5, 5.0);
-    final double actualFactor = targetScale / currentScale;
-
-    if ((actualFactor - 1.0).abs() < 0.001) return;
-
-    final double px = _lastWidth / 2;
-    final double py = _lastHeight / 2;
-
-    final translation = Matrix4.translationValues(px, py, 0.0);
-    final scale = Matrix4.identity()..scale(actualFactor, actualFactor, 1.0);
-    final invTranslation = Matrix4.translationValues(-px, -py, 0.0);
-
-    final transform = translation * scale * invTranslation;
-    _transformationController.value = transform * matrix;
-  }
-
-  void _reset() {
-    _transformationController.value = Matrix4.identity();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasDimension = _width != null && _height != null;
-    final infoText = hasDimension ? '${_width} × ${_height} ($_fileSize)' : _fileSize;
-
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(bottom: 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              if (infoText.isNotEmpty)
-                Text(
-                  infoText,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: widget.isDark ? Colors.white38 : Colors.black38,
-                  ),
-                )
-              else
-                const SizedBox(),
-              Row(
-                children: [
-                  _ToolbarButton(
-                    icon: Icons.zoom_in_rounded,
-                    tooltip: '放大',
-                    isDark: widget.isDark,
-                    onTap: () => _zoom(1.2),
-                  ),
-                  const SizedBox(width: 4),
-                  _ToolbarButton(
-                    icon: Icons.zoom_out_rounded,
-                    tooltip: '缩小',
-                    isDark: widget.isDark,
-                    onTap: () => _zoom(0.8),
-                  ),
-                  const SizedBox(width: 4),
-                  _ToolbarButton(
-                    icon: Icons.settings_backup_restore_rounded,
-                    tooltip: '重置',
-                    isDark: widget.isDark,
-                    onTap: _reset,
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-        Expanded(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              _lastWidth = constraints.maxWidth;
-              _lastHeight = constraints.maxHeight;
-
-              return Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: widget.isDark ? const Color(0xFF151515) : const Color(0xFFFAFAFA),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(
-                    color: widget.isDark ? Colors.white10 : Colors.black12,
-                  ),
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(5),
-                  child: Stack(
-                    children: [
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: CheckerboardPainter(
-                            squareSize: 8.0,
-                            lightColor: widget.isDark ? const Color(0xFF1C1C1C) : Colors.white,
-                            darkColor: widget.isDark ? const Color(0xFF141414) : const Color(0xFFF2F2F2),
-                          ),
-                        ),
-                      ),
-                      Positioned.fill(
-                        child: InteractiveViewer(
-                          transformationController: _transformationController,
-                          maxScale: 5.0,
-                          minScale: 0.5,
-                          boundaryMargin: const EdgeInsets.all(240.0),
-                          child: SizedBox(
-                            width: double.infinity,
-                            height: double.infinity,
-                            child: Center(
-                              child: Image.file(
-                                File(widget.imagePath),
-                                fit: BoxFit.contain,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════
 // Toolbar Button Component with Hover State
 // ══════════════════════════════════════════════════
 class _ToolbarButton extends StatefulWidget {
@@ -978,7 +822,9 @@ class _ToolbarButtonState extends State<_ToolbarButton> {
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: _isHovered
-                  ? (widget.isDark ? Colors.white12 : Colors.black.withOpacity(0.06))
+                  ? (widget.isDark
+                        ? Colors.white12
+                        : Colors.black.withOpacity(0.06))
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
             ),
@@ -1054,8 +900,10 @@ class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
               color: _saved
                   ? Colors.green.withOpacity(0.2)
                   : (_hovered
-                      ? (widget.isDark ? Colors.white12 : Colors.black.withOpacity(0.06))
-                      : Colors.transparent),
+                        ? (widget.isDark
+                              ? Colors.white12
+                              : Colors.black.withOpacity(0.06))
+                        : Colors.transparent),
               borderRadius: BorderRadius.circular(4),
             ),
             child: Icon(
@@ -1161,7 +1009,9 @@ class _HeaderCopyButtonState extends State<_HeaderCopyButton> {
             padding: const EdgeInsets.all(4),
             decoration: BoxDecoration(
               color: _hovered
-                  ? (widget.isDark ? Colors.white12 : Colors.black.withOpacity(0.06))
+                  ? (widget.isDark
+                        ? Colors.white12
+                        : Colors.black.withOpacity(0.06))
                   : Colors.transparent,
               borderRadius: BorderRadius.circular(4),
             ),
@@ -1178,236 +1028,188 @@ class _HeaderCopyButtonState extends State<_HeaderCopyButton> {
 }
 
 // ══════════════════════════════════════════════════
-// Lightweight Syntax Highlighting for JSON / XML
+// Lightweight Detail Syntax Highlighting
 // ══════════════════════════════════════════════════
-TextSpan _highlightJson(String text, bool isDark) {
-  final keyColor = isDark ? const Color(0xFFCE9178) : const Color(0xFF0451A5);
-  final stringColor = isDark ? const Color(0xFFCE9178) : const Color(0xFFA31515);
-  final numberColor = isDark ? const Color(0xFFB5CEA8) : const Color(0xFF098658);
-  final boolColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF0000FF);
-  final defaultColor = isDark ? Colors.white70 : Colors.black87;
+const int _maxDetailHighlightLength = 120000;
 
-  final List<TextSpan> spans = [];
-  final regExp = RegExp(
-    r'("[^"]*"\s*:)|("[^"]*")|(\b(?:true|false|null)\b)|(-?\d+(?:\.\d+)?)',
-    multiLine: true,
-  );
+final RegExp _detailJsonPattern = RegExp(
+  r'("(?:\\.|[^"\\])*"\s*:)|("(?:\\.|[^"\\])*")|(\b(?:true|false|null)\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)',
+  multiLine: true,
+);
 
-  int lastIndex = 0;
-  for (final match in regExp.allMatches(text)) {
+final RegExp _detailXmlPattern = RegExp(
+  r'''(<!--[\s\S]*?-->)|(<\/?[\w:.-]+)|([\w:.-]+)(?=\s*=)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\/?>)''',
+  multiLine: true,
+);
+
+final RegExp _detailCodePattern = RegExp(
+  r'(//[^\n\r]*)|(/\*[\s\S]*?\*/)|("(?:\\.|[^"\\])*")|'
+  r"('(?:\\.|[^'\\])*')|"
+  r'\b(abstract|as|assert|async|await|break|case|catch|class|const|continue|default|defer|def|do|dynamic|else|enum|export|extends|extension|external|factory|false|final|finally|for|func|function|get|if|implements|import|in|interface|is|late|let|library|mixin|namespace|new|null|operator|override|package|part|private|public|return|set|static|struct|super|switch|this|throw|true|try|typedef|using|var|void|while|with|yield)\b|'
+  r'\b(String|int|double|num|bool|List|Map|Set|Future|Stream|Widget|State|BuildContext|[A-Z][A-Za-z0-9_]*)\b|'
+  r'\b(\d+(?:\.\d+)?)\b|'
+  r'\b([A-Za-z_][A-Za-z0-9_]*)(?=\s*\()',
+  multiLine: true,
+);
+
+bool _canHighlightDetailText(String itemType, String text) {
+  return (itemType == 'JSON' || itemType == 'XML' || itemType == 'CODE') &&
+      text.length <= _maxDetailHighlightLength;
+}
+
+TextSpan _highlightMatches(
+  String text,
+  RegExp pattern,
+  TextStyle baseStyle,
+  TextStyle Function(Match match) styleFor,
+) {
+  final spans = <TextSpan>[];
+  var lastIndex = 0;
+
+  for (final match in pattern.allMatches(text)) {
     if (match.start > lastIndex) {
-      spans.add(TextSpan(
-        text: text.substring(lastIndex, match.start),
-        style: TextStyle(color: defaultColor),
-      ));
+      spans.add(TextSpan(text: text.substring(lastIndex, match.start)));
     }
-
-    if (match.group(1) != null) {
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: TextStyle(color: keyColor, fontWeight: FontWeight.w600),
-      ));
-    } else if (match.group(2) != null) {
-      spans.add(TextSpan(
-        text: match.group(2),
-        style: TextStyle(color: stringColor),
-      ));
-    } else if (match.group(3) != null) {
-      spans.add(TextSpan(
-        text: match.group(3),
-        style: TextStyle(color: boolColor, fontWeight: FontWeight.bold),
-      ));
-    } else if (match.group(4) != null) {
-      spans.add(TextSpan(
-        text: match.group(4),
-        style: TextStyle(color: numberColor),
-      ));
-    }
-
+    spans.add(TextSpan(text: match.group(0), style: styleFor(match)));
     lastIndex = match.end;
   }
 
   if (lastIndex < text.length) {
-    spans.add(TextSpan(
-      text: text.substring(lastIndex),
-      style: TextStyle(color: defaultColor),
-    ));
+    spans.add(TextSpan(text: text.substring(lastIndex)));
   }
 
-  return TextSpan(children: spans);
+  return TextSpan(style: baseStyle, children: spans);
 }
 
-TextSpan _highlightXml(String text, bool isDark) {
+TextSpan _highlightDetailJson(String text, bool isDark, TextStyle baseStyle) {
+  final keyColor = isDark ? const Color(0xFF9CDCFE) : const Color(0xFF0451A5);
+  final stringColor = isDark
+      ? const Color(0xFFCE9178)
+      : const Color(0xFFA31515);
+  final numberColor = isDark
+      ? const Color(0xFFB5CEA8)
+      : const Color(0xFF098658);
+  final boolColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF0000FF);
+
+  return _highlightMatches(text, _detailJsonPattern, baseStyle, (match) {
+    if (match.group(1) != null) {
+      return TextStyle(color: keyColor, fontWeight: FontWeight.w600);
+    }
+    if (match.group(2) != null) {
+      return TextStyle(color: stringColor);
+    }
+    if (match.group(3) != null) {
+      return TextStyle(color: boolColor, fontWeight: FontWeight.w600);
+    }
+    return TextStyle(color: numberColor);
+  });
+}
+
+TextSpan _highlightDetailXml(String text, bool isDark, TextStyle baseStyle) {
   final tagColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF800000);
   final attrColor = isDark ? const Color(0xFF9CDCFE) : const Color(0xFFFF0000);
   final valueColor = isDark ? const Color(0xFFCE9178) : const Color(0xFF0000FF);
-  final commentColor = isDark ? Colors.grey : Colors.grey;
-  final defaultColor = isDark ? Colors.white70 : Colors.black87;
+  final commentColor = isDark
+      ? Colors.white.withOpacity(0.35)
+      : Colors.black.withOpacity(0.4);
 
-  final List<TextSpan> spans = [];
-  final regExp = RegExp(
-    r'(<!--.*?-->)|(<\/?[\w:-]+)|([\w:-]+\s*=\s*"[^"]*")|(\/?>)',
-    multiLine: true,
-    dotAll: true,
-  );
-
-  int lastIndex = 0;
-  for (final match in regExp.allMatches(text)) {
-    if (match.start > lastIndex) {
-      spans.add(TextSpan(
-        text: text.substring(lastIndex, match.start),
-        style: TextStyle(color: defaultColor),
-      ));
-    }
-
+  return _highlightMatches(text, _detailXmlPattern, baseStyle, (match) {
     if (match.group(1) != null) {
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: TextStyle(color: commentColor, fontStyle: FontStyle.italic),
-      ));
-    } else if (match.group(2) != null) {
-      spans.add(TextSpan(
-        text: match.group(2),
-        style: TextStyle(color: tagColor, fontWeight: FontWeight.w600),
-      ));
-    } else if (match.group(3) != null) {
-      final pair = match.group(3)!;
-      final eqIndex = pair.indexOf('=');
-      if (eqIndex != -1) {
-        final attr = pair.substring(0, eqIndex);
-        final val = pair.substring(eqIndex);
-        spans.add(TextSpan(
-          text: attr,
-          style: TextStyle(color: attrColor),
-        ));
-        spans.add(TextSpan(
-          text: '=',
-          style: TextStyle(color: defaultColor),
-        ));
-        spans.add(TextSpan(
-          text: val,
-          style: TextStyle(color: valueColor),
-        ));
-      } else {
-        spans.add(TextSpan(
-          text: pair,
-          style: TextStyle(color: attrColor),
-        ));
-      }
-    } else if (match.group(4) != null) {
-      spans.add(TextSpan(
-        text: match.group(4),
-        style: TextStyle(color: tagColor, fontWeight: FontWeight.w600),
-      ));
+      return TextStyle(color: commentColor, fontStyle: FontStyle.italic);
     }
-
-    lastIndex = match.end;
-  }
-
-  if (lastIndex < text.length) {
-    spans.add(TextSpan(
-      text: text.substring(lastIndex),
-      style: TextStyle(color: defaultColor),
-    ));
-  }
-
-  return TextSpan(children: spans);
+    if (match.group(2) != null || match.group(5) != null) {
+      return TextStyle(color: tagColor, fontWeight: FontWeight.w600);
+    }
+    if (match.group(3) != null) {
+      return TextStyle(color: attrColor);
+    }
+    return TextStyle(color: valueColor);
+  });
 }
 
-TextSpan _highlightCode(String text, bool isDark) {
-  final commentColor = isDark ? const Color(0xFF6A9955) : const Color(0xFF008000);
-  final stringColor = isDark ? const Color(0xFFCE9178) : const Color(0xFFA31515);
-  final keywordColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF0000FF);
+TextSpan _highlightDetailCode(String text, bool isDark, TextStyle baseStyle) {
+  final commentColor = isDark
+      ? const Color(0xFF6A9955)
+      : const Color(0xFF008000);
+  final stringColor = isDark
+      ? const Color(0xFFCE9178)
+      : const Color(0xFFA31515);
+  final keywordColor = isDark
+      ? const Color(0xFF569CD6)
+      : const Color(0xFF0000FF);
   final typeColor = isDark ? const Color(0xFF4EC9B0) : const Color(0xFF267F99);
-  final numberColor = isDark ? const Color(0xFFB5CEA8) : const Color(0xFF098658);
-  final functionColor = isDark ? const Color(0xFFDCDCAA) : const Color(0xFF795E26);
-  final defaultColor = isDark ? Colors.white70 : Colors.black87;
+  final numberColor = isDark
+      ? const Color(0xFFB5CEA8)
+      : const Color(0xFF098658);
+  final functionColor = isDark
+      ? const Color(0xFFDCDCAA)
+      : const Color(0xFF795E26);
 
-  final List<TextSpan> spans = [];
-  final regExp = RegExp(
-    r'(\/\/.*)|'
-    r'("(?:[^"\\]|\\.)*")|'
-    r"('(?:[^'\\]|\\.)*')|"
-    r'\b(class|void|import|final|const|var|return|public|private|function|def|if|for|while|static|fn|let|package|using|namespace|override|dynamic|extends|implements|with|async|await|yield|as|in|is|new|this|super|try|catch|finally|throw|switch|case|default|break|continue)\b|'
-    r'\b(int|double|bool|num|dynamic|void|var|[A-Z][a-zA-Z0-9_]*)\b|'
-    r'\b(\d+(?:\.\d+)?)\b|'
-    r'\b([a-zA-Z_][a-zA-Z0-9_]*)(?=\s*\()',
-    multiLine: true,
-  );
-
-  int lastIndex = 0;
-  for (final match in regExp.allMatches(text)) {
-    if (match.start > lastIndex) {
-      spans.add(TextSpan(
-        text: text.substring(lastIndex, match.start),
-        style: TextStyle(color: defaultColor),
-      ));
+  return _highlightMatches(text, _detailCodePattern, baseStyle, (match) {
+    if (match.group(1) != null || match.group(2) != null) {
+      return TextStyle(color: commentColor, fontStyle: FontStyle.italic);
     }
-
-    if (match.group(1) != null) {
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: TextStyle(color: commentColor, fontStyle: FontStyle.italic),
-      ));
-    } else if (match.group(2) != null) {
-      spans.add(TextSpan(
-        text: match.group(2),
-        style: TextStyle(color: stringColor),
-      ));
-    } else if (match.group(3) != null) {
-      spans.add(TextSpan(
-        text: match.group(3),
-        style: TextStyle(color: stringColor),
-      ));
-    } else if (match.group(4) != null) {
-      spans.add(TextSpan(
-        text: match.group(4),
-        style: TextStyle(color: keywordColor, fontWeight: FontWeight.bold),
-      ));
-    } else if (match.group(5) != null) {
-      spans.add(TextSpan(
-        text: match.group(5),
-        style: TextStyle(color: typeColor),
-      ));
-    } else if (match.group(6) != null) {
-      spans.add(TextSpan(
-        text: match.group(6),
-        style: TextStyle(color: numberColor),
-      ));
-    } else if (match.group(7) != null) {
-      spans.add(TextSpan(
-        text: match.group(7),
-        style: TextStyle(color: functionColor),
-      ));
+    if (match.group(3) != null || match.group(4) != null) {
+      return TextStyle(color: stringColor);
     }
+    if (match.group(5) != null) {
+      return TextStyle(color: keywordColor, fontWeight: FontWeight.w600);
+    }
+    if (match.group(6) != null) {
+      return TextStyle(color: typeColor);
+    }
+    if (match.group(7) != null) {
+      return TextStyle(color: numberColor);
+    }
+    return TextStyle(color: functionColor);
+  });
+}
 
-    lastIndex = match.end;
+TextSpan _highlightDetailText(
+  String text,
+  String itemType,
+  bool isDark,
+  TextStyle baseStyle,
+) {
+  if (text.length > _maxDetailHighlightLength) {
+    return TextSpan(text: text, style: baseStyle);
   }
 
-  if (lastIndex < text.length) {
-    spans.add(TextSpan(
-      text: text.substring(lastIndex),
-      style: TextStyle(color: defaultColor),
-    ));
-  }
-
-  return TextSpan(children: spans);
+  return switch (itemType) {
+    'JSON' => _highlightDetailJson(text, isDark, baseStyle),
+    'XML' => _highlightDetailXml(text, isDark, baseStyle),
+    'CODE' => _highlightDetailCode(text, isDark, baseStyle),
+    _ => TextSpan(text: text, style: baseStyle),
+  };
 }
 
 // ══════════════════════════════════════════════════
-// High-Performance Code/Text Dialog Content Component
+// Text / Image Detail Content Component
 // ══════════════════════════════════════════════════
 class _DetailDialogContent extends StatefulWidget {
   final ClipboardItem item;
   final bool isDark;
   final Color accentColor;
   final VoidCallback onCopy;
+  final bool embedded;
+  final VoidCallback? onBack;
+  final bool wrapCodeLines;
+  final Matrix4? initialImageTransform;
+  final ValueChanged<Matrix4>? onImageTransformChanged;
+  final ValueChanged<bool>? onWrapCodeLinesChanged;
 
   const _DetailDialogContent({
+    super.key,
     required this.item,
     required this.isDark,
     required this.accentColor,
     required this.onCopy,
+    this.embedded = false,
+    this.onBack,
+    this.wrapCodeLines = true,
+    this.initialImageTransform,
+    this.onImageTransformChanged,
+    this.onWrapCodeLinesChanged,
   });
 
   @override
@@ -1417,61 +1219,53 @@ class _DetailDialogContent extends StatefulWidget {
 class _DetailDialogContentState extends State<_DetailDialogContent> {
   late final TransformationController _transformationController;
   late final ScrollController _scrollController;
+  late final ScrollController _horizontalScrollController;
 
-  bool _showFormatted = false;
-  bool _isFormatAvailable = false;
-  late final String _prettyContent;
-  late final List<String> _prettyLines;
-  late final List<String> _rawLines;
-
-  // Highlight cache fields
-  List<TextSpan?>? _rawHighlightedSpans;
-  List<TextSpan?>? _prettyHighlightedSpans;
-  bool? _lastIsDark;
+  bool _highlightEnabled = false;
+  bool _isHighlightAvailable = false;
+  bool _wrapCodeLines = true;
 
   int? _imgWidth;
   int? _imgHeight;
   String _fileSizeStr = '';
-  bool _resolved = false;
+  String? _imagePath;
+  File? _imageFile;
+  TextSpan? _cachedDetailTextSpan;
+  String? _cachedDetailText;
+  String? _cachedDetailItemType;
+  bool? _cachedDetailIsDark;
+  bool? _cachedDetailHighlightEnabled;
+  TextStyle? _cachedDetailTextStyle;
+  double _lastImageViewportWidth = 320.0;
+  double _lastImageViewportHeight = 220.0;
+  double _swipeDistance = 0;
+  bool _isImageDetail = false;
 
   @override
   void initState() {
     super.initState();
     _transformationController = TransformationController();
     _scrollController = ScrollController();
+    _horizontalScrollController = ScrollController();
+    _wrapCodeLines = widget.wrapCodeLines;
 
     final itemType = AppState().getClipboardItemType(widget.item);
-    final isLargeText = widget.item.content.length > 200000;
-
-    String pretty = widget.item.content;
-    if (!isLargeText) {
-      if (itemType == 'JSON') {
-        final fmt = AppState().tryFormatJson(widget.item.content);
-        if (fmt != null) {
-          pretty = fmt;
-          _isFormatAvailable = true;
-        }
-      } else if (itemType == 'XML') {
-        final fmt = AppState().tryFormatXml(widget.item.content);
-        if (fmt != null) {
-          pretty = fmt;
-          _isFormatAvailable = true;
-        }
-      } else if (itemType == 'CODE') {
-        final fmt = AppState().tryFormatCode(widget.item.content);
-        if (fmt != null) {
-          pretty = fmt;
-          _isFormatAvailable = true;
-        }
-      }
-    }
-    _prettyContent = pretty;
-    _showFormatted = _isFormatAvailable;
-    _prettyLines = _prettyContent.split('\n');
-    _rawLines = widget.item.content.split('\n');
+    _isHighlightAvailable = _canHighlightDetailText(
+      itemType,
+      widget.item.content,
+    );
+    _highlightEnabled = _isHighlightAvailable;
 
     final isImage = itemType == 'IMAGE';
+    _isImageDetail = isImage;
     if (isImage) {
+      _imagePath = AppState().getImagePath(widget.item);
+      _imageFile = File(_imagePath!);
+      final initialTransform = widget.initialImageTransform;
+      if (initialTransform != null) {
+        _transformationController.value = initialTransform.clone();
+      }
+      _transformationController.addListener(_handleImageTransformChanged);
       _loadFileStats();
       _resolveImageSize();
     }
@@ -1479,7 +1273,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   void _loadFileStats() {
     try {
-      final file = File(AppState().getImagePath(widget.item));
+      final file = _imageFile ?? File(AppState().getImagePath(widget.item));
       if (file.existsSync()) {
         final bytes = file.lengthSync();
         if (bytes > 1024 * 1024) {
@@ -1493,66 +1287,51 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   void _resolveImageSize() {
     try {
-      final provider = FileImage(File(AppState().getImagePath(widget.item)));
+      final provider = FileImage(
+        _imageFile ?? File(AppState().getImagePath(widget.item)),
+      );
       final stream = provider.resolve(const ImageConfiguration());
-      ImageStreamListener? listener;
-      bool callbackCalled = false;
+      late final ImageStreamListener listener;
+      var callbackCalled = false;
+      var listenerAttached = false;
       listener = ImageStreamListener((ImageInfo info, bool _) {
         callbackCalled = true;
-        if (listener != null) {
-          stream.removeListener(listener!);
+        if (listenerAttached) {
+          stream.removeListener(listener);
+          listenerAttached = false;
         }
         if (mounted) {
           setState(() {
             _imgWidth = info.image.width;
             _imgHeight = info.image.height;
-            _resolved = true;
           });
         }
       });
       stream.addListener(listener);
-      if (callbackCalled && listener != null) {
+      listenerAttached = true;
+      if (callbackCalled && listenerAttached) {
         stream.removeListener(listener);
+        listenerAttached = false;
       }
     } catch (_) {}
   }
 
-  TextSpan _getSpan(int index, String line, String itemType, bool isDark, bool formatted) {
-    if (formatted) {
-      _prettyHighlightedSpans ??= List<TextSpan?>.filled(_prettyLines.length, null);
-      if (_prettyHighlightedSpans![index] == null) {
-        final truncatedLine = line.length > 10000
-            ? '${line.substring(0, 10000)}... [该行超长已截断预览]'
-            : line;
-        _prettyHighlightedSpans![index] = itemType == 'JSON'
-            ? _highlightJson(truncatedLine, isDark)
-            : (itemType == 'XML'
-                ? _highlightXml(truncatedLine, isDark)
-                : (itemType == 'CODE'
-                    ? _highlightCode(truncatedLine, isDark)
-                    : TextSpan(text: truncatedLine)));
-      }
-      return _prettyHighlightedSpans![index]!;
-    } else {
-      _rawHighlightedSpans ??= List<TextSpan?>.filled(_rawLines.length, null);
-      if (_rawHighlightedSpans![index] == null) {
-        final truncatedLine = line.length > 10000
-            ? '${line.substring(0, 10000)}... [该行超长已截断预览]'
-            : line;
-        _rawHighlightedSpans![index] = TextSpan(text: truncatedLine);
-      }
-      return _rawHighlightedSpans![index]!;
-    }
-  }
-
   @override
   void dispose() {
+    if (_isImageDetail) {
+      _transformationController.removeListener(_handleImageTransformChanged);
+    }
     _transformationController.dispose();
     _scrollController.dispose();
+    _horizontalScrollController.dispose();
     super.dispose();
   }
 
-  void _zoom(double factor, double lastWidth, double lastHeight) {
+  void _handleImageTransformChanged() {
+    widget.onImageTransformChanged?.call(_transformationController.value);
+  }
+
+  void _zoomAt(double factor, Offset focalPoint) {
     final matrix = _transformationController.value.clone();
     final currentScale = matrix.getMaxScaleOnAxis();
     final targetScale = (currentScale * factor).clamp(0.5, 5.0);
@@ -1560,8 +1339,8 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
     if ((actualFactor - 1.0).abs() < 0.001) return;
 
-    final double px = lastWidth / 2;
-    final double py = lastHeight / 2;
+    final double px = focalPoint.dx;
+    final double py = focalPoint.dy;
 
     final translation = Matrix4.translationValues(px, py, 0.0);
     final scale = Matrix4.identity()..scale(actualFactor, actualFactor, 1.0);
@@ -1571,8 +1350,64 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     _transformationController.value = transform * matrix;
   }
 
+  void _zoom(double factor) {
+    _zoomAt(
+      factor,
+      Offset(_lastImageViewportWidth / 2, _lastImageViewportHeight / 2),
+    );
+  }
+
+  TextSpan _getDetailTextSpan(
+    String displayText,
+    String itemType,
+    TextStyle textStyle,
+  ) {
+    if (_cachedDetailTextSpan != null &&
+        _cachedDetailText == displayText &&
+        _cachedDetailItemType == itemType &&
+        _cachedDetailIsDark == widget.isDark &&
+        _cachedDetailHighlightEnabled == _highlightEnabled &&
+        _cachedDetailTextStyle == textStyle) {
+      return _cachedDetailTextSpan!;
+    }
+
+    final span = _highlightEnabled
+        ? _highlightDetailText(displayText, itemType, widget.isDark, textStyle)
+        : TextSpan(text: displayText, style: textStyle);
+
+    _cachedDetailTextSpan = span;
+    _cachedDetailText = displayText;
+    _cachedDetailItemType = itemType;
+    _cachedDetailIsDark = widget.isDark;
+    _cachedDetailHighlightEnabled = _highlightEnabled;
+    _cachedDetailTextStyle = textStyle;
+
+    return span;
+  }
+
   void _reset() {
     _transformationController.value = Matrix4.identity();
+  }
+
+  bool get _hasHorizontalOverflow {
+    return _horizontalScrollController.hasClients &&
+        _horizontalScrollController.position.maxScrollExtent > 0.5;
+  }
+
+  bool _isRightSwipeSignal(double dx, double dy) {
+    return widget.embedded &&
+        !_hasHorizontalOverflow &&
+        dx.abs() > 28 &&
+        dx.abs() > dy.abs() * 1.4;
+  }
+
+  void _handleBackPointerSignal(PointerSignalEvent event) {
+    if (!widget.embedded || event is! PointerScrollEvent) return;
+    final dx = event.scrollDelta.dx;
+    final dy = event.scrollDelta.dy;
+    if (_isRightSwipeSignal(dx, dy)) {
+      widget.onBack?.call();
+    }
   }
 
   @override
@@ -1598,275 +1433,464 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         : (screenHeight - 80.0).clamp(100.0, 255.0);
 
     final hasDimension = _imgWidth != null && _imgHeight != null;
-    final infoText = hasDimension ? '${_imgWidth}×${_imgHeight} ($_fileSizeStr)' : _fileSizeStr;
+    final infoText = hasDimension
+        ? '${_imgWidth}×${_imgHeight} ($_fileSizeStr)'
+        : _fileSizeStr;
 
-    if (_lastIsDark != widget.isDark) {
-      _lastIsDark = widget.isDark;
-      _rawHighlightedSpans = null;
-      _prettyHighlightedSpans = null;
+    final displayText = widget.item.content;
+
+    final detailBody = Container(
+      width: widget.embedded ? double.infinity : dialogWidth,
+      height: widget.embedded ? double.infinity : null,
+      padding: const EdgeInsets.all(4),
+      child: Column(
+        mainAxisSize: widget.embedded ? MainAxisSize.max : MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      isImage ? '图片详情' : '内容详情',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                        color: textColor,
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      '($timeStr)',
+                      style: TextStyle(fontSize: 9, color: subColor),
+                    ),
+                    if (isImage && infoText.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        infoText,
+                        style: TextStyle(fontSize: 9, color: subColor),
+                      ),
+                    ],
+                    if (!isImage && isLargeText) ...[
+                      const SizedBox(width: 6),
+                      Text(
+                        '(超长文本已优化渲染性能)',
+                        style: TextStyle(
+                          fontSize: 9,
+                          color: themeAccent.withOpacity(0.8),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Row(
+                  children: [
+                    if (widget.embedded) ...[
+                      _ToolbarButton(
+                        icon: Icons.arrow_back_rounded,
+                        tooltip: '返回列表',
+                        isDark: widget.isDark,
+                        onTap: widget.onBack ?? () {},
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    // Zoom tools
+                    if (isImage) ...[
+                      _ToolbarButton(
+                        icon: Icons.zoom_in_rounded,
+                        tooltip: '放大',
+                        isDark: widget.isDark,
+                        onTap: () => _zoom(1.2),
+                      ),
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.zoom_out_rounded,
+                        tooltip: '缩小',
+                        isDark: widget.isDark,
+                        onTap: () => _zoom(0.8),
+                      ),
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.settings_backup_restore_rounded,
+                        tooltip: '重置',
+                        isDark: widget.isDark,
+                        onTap: _reset,
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    // Code highlight toggle
+                    if (_isHighlightAvailable) ...[
+                      Text(
+                        '代码高亮',
+                        style: TextStyle(fontSize: 9, color: subColor),
+                      ),
+                      const SizedBox(width: 2),
+                      Transform.scale(
+                        scale: 0.6,
+                        child: Switch(
+                          value: _highlightEnabled,
+                          activeColor: themeAccent,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          onChanged: (val) {
+                            setState(() {
+                              _highlightEnabled = val;
+                            });
+                          },
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                    ],
+                    if (!isImage) ...[
+                      _ToolbarButton(
+                        icon: _wrapCodeLines
+                            ? Icons.wrap_text_rounded
+                            : Icons.short_text_rounded,
+                        tooltip: _wrapCodeLines ? '取消自动换行' : '自动换行',
+                        isDark: widget.isDark,
+                        onTap: () {
+                          final willWrap = !_wrapCodeLines;
+                          if (willWrap &&
+                              _horizontalScrollController.hasClients) {
+                            _horizontalScrollController.jumpTo(0);
+                          }
+                          setState(() {
+                            _wrapCodeLines = willWrap;
+                          });
+                          widget.onWrapCodeLinesChanged?.call(willWrap);
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    // Open URL button
+                    if (itemType == 'URL') ...[
+                      _HeaderOpenUrlButton(
+                        url: widget.item.content,
+                        isDark: widget.isDark,
+                        accentColor: themeAccent,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    // Save image button
+                    if (isImage) ...[
+                      _HeaderSaveImageButton(
+                        imagePath:
+                            _imagePath ?? AppState().getImagePath(widget.item),
+                        isDark: widget.isDark,
+                      ),
+                      const SizedBox(width: 4),
+                    ],
+                    // Copy button
+                    _HeaderCopyButton(
+                      isDark: widget.isDark,
+                      accentColor: themeAccent,
+                      onTap: () {
+                        widget.onCopy();
+                        if (!widget.embedded) {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                    const SizedBox(width: 4),
+                    // Close button
+                    _ToolbarButton(
+                      icon: Icons.close_rounded,
+                      tooltip: widget.embedded ? '返回列表' : '关闭',
+                      isDark: widget.isDark,
+                      onTap: () {
+                        if (widget.embedded) {
+                          widget.onBack?.call();
+                        } else {
+                          Navigator.of(context).pop();
+                        }
+                      },
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 3),
+
+          // Content
+          if (widget.embedded)
+            Expanded(
+              child: _buildDetailContent(
+                isImage: isImage,
+                contentMaxHeight: contentMaxHeight,
+                displayText: displayText,
+                itemType: itemType,
+                textColor: textColor,
+                themeAccent: themeAccent,
+              ),
+            )
+          else
+            Flexible(
+              child: _buildDetailContent(
+                isImage: isImage,
+                contentMaxHeight: contentMaxHeight,
+                displayText: displayText,
+                itemType: itemType,
+                textColor: textColor,
+                themeAccent: themeAccent,
+              ),
+            ),
+        ],
+      ),
+    );
+
+    if (widget.embedded) {
+      final detailWithEsc = Shortcuts(
+        shortcuts: const {
+          SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+        },
+        child: Actions(
+          actions: {
+            DismissIntent: CallbackAction<DismissIntent>(
+              onInvoke: (_) {
+                widget.onBack?.call();
+                return null;
+              },
+            ),
+          },
+          child: Focus(autofocus: true, child: detailBody),
+        ),
+      );
+
+      if (isImage) {
+        return detailWithEsc;
+      }
+
+      return Listener(
+        behavior: HitTestBehavior.translucent,
+        onPointerSignal: _handleBackPointerSignal,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: (_) => _swipeDistance = 0,
+          onHorizontalDragUpdate: (details) {
+            _swipeDistance += details.delta.dx;
+          },
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (!_hasHorizontalOverflow &&
+                (_swipeDistance > 80 || velocity > 520)) {
+              widget.onBack?.call();
+            }
+            _swipeDistance = 0;
+          },
+          onHorizontalDragCancel: () {
+            _swipeDistance = 0;
+          },
+          child: detailWithEsc,
+        ),
+      );
     }
-    final displayLines = _showFormatted ? _prettyLines : _rawLines;
+
+    final dialogWithEsc = Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+      },
+      child: Actions(
+        actions: {
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              Navigator.of(context).pop();
+              return null;
+            },
+          ),
+        },
+        child: Focus(autofocus: true, child: detailBody),
+      ),
+    );
 
     return Dialog(
       backgroundColor: bgColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Container(
-        width: dialogWidth,
-        padding: const EdgeInsets.all(4),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        isImage ? '图片详情' : '内容详情',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: textColor,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '($timeStr)',
-                        style: TextStyle(
-                          fontSize: 9,
-                          color: subColor,
-                        ),
-                      ),
-                      if (isImage && infoText.isNotEmpty) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          infoText,
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: subColor,
-                          ),
-                        ),
-                      ],
-                      if (!isImage && isLargeText) ...[
-                        const SizedBox(width: 6),
-                        Text(
-                          '(超长文本已优化渲染性能)',
-                          style: TextStyle(
-                            fontSize: 9,
-                            color: themeAccent.withOpacity(0.8),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                  Row(
-                    children: [
-                      // Zoom tools
-                      if (isImage) ...[
-                        _ToolbarButton(
-                          icon: Icons.zoom_in_rounded,
-                          tooltip: '放大',
-                          isDark: widget.isDark,
-                          onTap: () => _zoom(1.2, dialogWidth, contentMaxHeight),
-                        ),
-                        const SizedBox(width: 4),
-                        _ToolbarButton(
-                          icon: Icons.zoom_out_rounded,
-                          tooltip: '缩小',
-                          isDark: widget.isDark,
-                          onTap: () => _zoom(0.8, dialogWidth, contentMaxHeight),
-                        ),
-                        const SizedBox(width: 4),
-                        _ToolbarButton(
-                          icon: Icons.settings_backup_restore_rounded,
-                          tooltip: '重置',
-                          isDark: widget.isDark,
-                          onTap: _reset,
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      // Format toggle
-                      if (_isFormatAvailable) ...[
-                        Text(
-                          '格式化',
-                          style: TextStyle(fontSize: 9, color: subColor),
-                        ),
-                        const SizedBox(width: 2),
-                        Transform.scale(
-                          scale: 0.6,
-                          child: Switch(
-                            value: _showFormatted,
-                            activeColor: themeAccent,
-                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            onChanged: (val) {
-                              setState(() {
-                                _showFormatted = val;
-                              });
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
-                      // Open URL button
-                      if (itemType == 'URL') ...[
-                        _HeaderOpenUrlButton(
-                          url: widget.item.content,
-                          isDark: widget.isDark,
-                          accentColor: themeAccent,
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      // Save image button
-                      if (isImage) ...[
-                        _HeaderSaveImageButton(
-                          imagePath: AppState().getImagePath(widget.item),
-                          isDark: widget.isDark,
-                        ),
-                        const SizedBox(width: 4),
-                      ],
-                      // Copy button
-                      _HeaderCopyButton(
-                        isDark: widget.isDark,
-                        accentColor: themeAccent,
-                        onTap: () {
-                          widget.onCopy();
-                          Navigator.of(context).pop();
-                        },
-                      ),
-                      const SizedBox(width: 4),
-                      // Close button
-                      _ToolbarButton(
-                        icon: Icons.close_rounded,
-                        tooltip: '关闭',
-                        isDark: widget.isDark,
-                        onTap: () {
-                          Navigator.of(context).pop();
-                        },
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 3),
+      child: dialogWithEsc,
+    );
+  }
 
-            // Content
-            Flexible(
-              child: Container(
-                constraints: BoxConstraints(maxHeight: contentMaxHeight),
-                width: double.infinity,
-                padding: isImage ? EdgeInsets.zero : const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-                decoration: isImage
-                    ? null
-                    : BoxDecoration(
-                        color: widget.isDark
-                            ? Colors.white.withOpacity(0.02)
-                            : Colors.black.withOpacity(0.02),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                child: isImage
-                    ? LayoutBuilder(
-                        builder: (context, constraints) {
-                          return ClipRRect(
-                            borderRadius: BorderRadius.circular(6),
-                            child: Stack(
-                              children: [
-                                Positioned.fill(
-                                  child: CustomPaint(
-                                    painter: CheckerboardPainter(
-                                      squareSize: 8.0,
-                                      lightColor: widget.isDark ? const Color(0xFF1C1C1C) : Colors.white,
-                                      darkColor: widget.isDark ? const Color(0xFF141414) : const Color(0xFFF2F2F2),
-                                    ),
-                                  ),
-                                ),
-                                Positioned.fill(
-                                  child: InteractiveViewer(
-                                    transformationController: _transformationController,
-                                    maxScale: 5.0,
-                                    minScale: 0.5,
-                                    boundaryMargin: const EdgeInsets.all(240.0),
-                                    child: SizedBox(
-                                      width: double.infinity,
-                                      height: double.infinity,
-                                      child: Center(
-                                        child: Image.file(
-                                          File(AppState().getImagePath(widget.item)),
-                                          fit: BoxFit.contain,
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
+  Widget _buildDetailContent({
+    required bool isImage,
+    required double contentMaxHeight,
+    required String displayText,
+    required String itemType,
+    required Color textColor,
+    required Color themeAccent,
+  }) {
+    return Container(
+      constraints: widget.embedded
+          ? const BoxConstraints.expand()
+          : BoxConstraints(maxHeight: contentMaxHeight),
+      width: double.infinity,
+      padding: isImage
+          ? EdgeInsets.zero
+          : const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+      decoration: isImage
+          ? null
+          : BoxDecoration(
+              color: widget.isDark
+                  ? Colors.white.withOpacity(0.02)
+                  : Colors.black.withOpacity(0.02),
+              borderRadius: BorderRadius.circular(6),
+            ),
+      child: isImage
+          ? LayoutBuilder(
+              builder: (context, constraints) {
+                _lastImageViewportWidth = constraints.maxWidth;
+                _lastImageViewportHeight = constraints.maxHeight;
+                final imageFile =
+                    _imageFile ?? File(AppState().getImagePath(widget.item));
+
+                return ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Stack(
+                    children: [
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: CustomPaint(
+                            painter: CheckerboardPainter(
+                              squareSize: 8.0,
+                              lightColor: widget.isDark
+                                  ? const Color(0xFF1C1C1C)
+                                  : Colors.white,
+                              darkColor: widget.isDark
+                                  ? const Color(0xFF141414)
+                                  : const Color(0xFFF2F2F2),
                             ),
-                          );
-                        },
-                      )
-                    : SelectionArea(
-                        child: Scrollbar(
-                          controller: _scrollController,
-                          thumbVisibility: true,
-                          child: ListView.builder(
-                            controller: _scrollController,
-                            itemCount: displayLines.length,
-                            physics: const BouncingScrollPhysics(),
-                            itemBuilder: (context, index) {
-                              final line = displayLines[index];
-                              final textSpan = _getSpan(index, line, itemType, widget.isDark, _showFormatted);
-                              return Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 1.0),
-                                child: Row(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    // Line number
-                                    SelectionContainer.disabled(
-                                      child: SizedBox(
-                                        width: 28,
-                                        child: Text(
-                                          '${index + 1}',
-                                          style: TextStyle(
-                                            fontFamily: 'Courier New',
-                                            fontSize: 9,
-                                            color: widget.isDark ? Colors.white24 : Colors.black26,
-                                          ),
-                                          textAlign: TextAlign.end,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    // Code content
-                                    Expanded(
-                                      child: Text.rich(
-                                        textSpan,
-                                        style: TextStyle(
-                                          fontSize: 10.5,
-                                          height: 1.3,
-                                          fontFamily: 'Courier New',
-                                          color: itemType == 'URL' ? themeAccent : textColor,
-                                          decoration: itemType == 'URL' ? TextDecoration.underline : null,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              );
-                            },
                           ),
                         ),
                       ),
-              ),
+                      Positioned.fill(
+                        child: RepaintBoundary(
+                          child: InteractiveViewer(
+                            transformationController: _transformationController,
+                            maxScale: 5.0,
+                            minScale: 0.5,
+                            boundaryMargin: const EdgeInsets.all(240.0),
+                            panEnabled: true,
+                            scaleEnabled: true,
+                            trackpadScrollCausesScale: true,
+                            child: SizedBox(
+                              width: double.infinity,
+                              height: double.infinity,
+                              child: Center(
+                                child: Image.file(
+                                  imageFile,
+                                  fit: BoxFit.contain,
+                                  filterQuality: FilterQuality.medium,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            )
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                final viewportWidth = constraints.maxWidth;
+                final viewportHeight = constraints.hasBoundedHeight
+                    ? constraints.maxHeight
+                    : contentMaxHeight;
+                final textStyle = TextStyle(
+                  fontSize: 10.5,
+                  height: 1.32,
+                  fontFamily: 'Menlo',
+                  color: itemType == 'URL' ? themeAccent : textColor,
+                  decoration: itemType == 'URL'
+                      ? TextDecoration.underline
+                      : null,
+                );
+
+                final textContent = Text.rich(
+                  _getDetailTextSpan(displayText, itemType, textStyle),
+                  softWrap: _wrapCodeLines,
+                  overflow: TextOverflow.visible,
+                );
+
+                final scrollBehavior = ScrollConfiguration.of(
+                  context,
+                ).copyWith(scrollbars: false);
+
+                if (_wrapCodeLines) {
+                  return SelectionArea(
+                    child: Scrollbar(
+                      controller: _scrollController,
+                      notificationPredicate: (notification) =>
+                          notification.metrics.axis == Axis.vertical,
+                      thumbVisibility: true,
+                      thickness: 4,
+                      radius: const Radius.circular(999),
+                      child: ScrollConfiguration(
+                        behavior: scrollBehavior,
+                        child: SizedBox(
+                          height: viewportHeight,
+                          child: SingleChildScrollView(
+                            controller: _scrollController,
+                            physics: const BouncingScrollPhysics(),
+                            child: SizedBox(
+                              width: viewportWidth,
+                              child: textContent,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                return SelectionArea(
+                  child: Scrollbar(
+                    controller: _scrollController,
+                    notificationPredicate: (notification) =>
+                        notification.metrics.axis == Axis.vertical,
+                    thumbVisibility: true,
+                    thickness: 4,
+                    radius: const Radius.circular(999),
+                    child: Scrollbar(
+                      controller: _horizontalScrollController,
+                      notificationPredicate: (notification) =>
+                          notification.metrics.axis == Axis.horizontal,
+                      thumbVisibility: false,
+                      thickness: 3,
+                      radius: const Radius.circular(999),
+                      child: ScrollConfiguration(
+                        behavior: scrollBehavior,
+                        child: SizedBox(
+                          height: viewportHeight,
+                          child: SingleChildScrollView(
+                            controller: _scrollController,
+                            physics: const BouncingScrollPhysics(),
+                            child: SingleChildScrollView(
+                              controller: _horizontalScrollController,
+                              scrollDirection: Axis.horizontal,
+                              physics: const BouncingScrollPhysics(),
+                              child: ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minWidth: viewportWidth,
+                                ),
+                                child: textContent,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-          ],
-        ),
-      ),
     );
   }
 }

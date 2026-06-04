@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
 import '../models/app_settings.dart'; // import ThemeStyle
@@ -26,6 +27,7 @@ class _NotesPaneState extends State<NotesPane> {
   final ScrollController _scrollController = ScrollController();
   String _activeNoteId = '';
   bool _showList = true;
+  double _swipeDistance = 0;
 
   @override
   void initState() {
@@ -57,7 +59,8 @@ class _NotesPaneState extends State<NotesPane> {
   void _syncActiveNote() {
     final active = widget.state.activeNote;
     if (active != null) {
-      if (_activeNoteId != active.id || _editorController.text != active.content) {
+      if (_activeNoteId != active.id ||
+          _editorController.text != active.content) {
         _activeNoteId = active.id;
         _editorController.text = active.content;
       }
@@ -69,6 +72,45 @@ class _NotesPaneState extends State<NotesPane> {
 
   void _onContentChanged(String val) {
     widget.state.updateActiveNoteContent(val);
+  }
+
+  void _showNoteDetail(Note note) {
+    widget.state.selectNote(note);
+    _syncActiveNote();
+    setState(() => _showList = false);
+  }
+
+  void _showListView() {
+    setState(() => _showList = true);
+  }
+
+  Widget _wrapDetailBackGesture(Widget child) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent &&
+            event.scrollDelta.dx.abs() > 48 &&
+            event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
+          _showListView();
+        }
+      },
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) => _swipeDistance = 0,
+        onHorizontalDragUpdate: (details) {
+          _swipeDistance += details.delta.dx;
+        },
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (_swipeDistance > 80 || velocity > 520) {
+            _showListView();
+          }
+          _swipeDistance = 0;
+        },
+        onHorizontalDragCancel: () => _swipeDistance = 0,
+        child: child,
+      ),
+    );
   }
 
   void _showDeleteConfirmDialog(
@@ -96,7 +138,7 @@ class _NotesPaneState extends State<NotesPane> {
               await widget.state.deleteNote(note);
               _syncActiveNote();
               if (fromDetail) {
-                setState(() => _showList = true);
+                _showListView();
               } else {
                 setState(() {});
               }
@@ -127,24 +169,19 @@ class _NotesPaneState extends State<NotesPane> {
             '${note.updatedAt.month}-${note.updatedAt.day} ${note.updatedAt.hour.toString().padLeft(2, '0')}:${note.updatedAt.minute.toString().padLeft(2, '0')}';
 
         return Container(
-          margin: const EdgeInsets.only(bottom: 6),
+          margin: const EdgeInsets.only(bottom: 2),
           child: Material(
             color: widget.isDark
                 ? Colors.white.withValues(alpha: 0.05)
                 : Colors.black.withValues(alpha: 0.03),
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(5),
             child: InkWell(
-              borderRadius: BorderRadius.circular(8),
+              borderRadius: BorderRadius.circular(5),
               onTap: () {
-                widget.state.selectNote(note);
-                _syncActiveNote();
-                setState(() => _showList = false);
+                _showNoteDetail(note);
               },
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 10,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 child: Row(
                   children: [
                     Expanded(
@@ -156,18 +193,20 @@ class _NotesPaneState extends State<NotesPane> {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
-                              fontSize: 13,
+                              fontSize: 12,
+                              height: 1.15,
                               fontWeight: FontWeight.w600,
                               color: widget.isDark
                                   ? Colors.white
                                   : Colors.black87,
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 1),
                           Text(
                             dateStr,
                             style: TextStyle(
-                              fontSize: 11,
+                              fontSize: 10,
+                              height: 1.1,
                               color: widget.isDark
                                   ? Colors.white54
                                   : Colors.black54,
@@ -185,8 +224,11 @@ class _NotesPaneState extends State<NotesPane> {
                       ),
                       color: widget.isDark ? Colors.white54 : Colors.black45,
                       hoverColor: Colors.red.withValues(alpha: 0.1),
-                      constraints: const BoxConstraints(),
-                      padding: const EdgeInsets.all(4),
+                      constraints: const BoxConstraints(
+                        minWidth: 22,
+                        minHeight: 22,
+                      ),
+                      padding: const EdgeInsets.all(2),
                       tooltip: '删除便签',
                     ),
                   ],
@@ -446,25 +488,9 @@ class _NotesPaneState extends State<NotesPane> {
 
           // Main Content Area with Transition
           Expanded(
-            child: AnimatedSwitcher(
-              duration: const Duration(milliseconds: 250),
-              transitionBuilder: (Widget child, Animation<double> animation) {
-                return FadeTransition(
-                  opacity: animation,
-                  child: SlideTransition(
-                    position: Tween<Offset>(
-                      begin: const Offset(0.05, 0),
-                      end: Offset.zero,
-                    ).animate(animation),
-                    child: child,
-                  ),
-                );
-              },
-              child: KeyedSubtree(
-                key: ValueKey<bool>(_showList),
-                child: _showList ? _buildList(allNotes) : _buildDetail(active),
-              ),
-            ),
+            child: _showList
+                ? _buildList(allNotes)
+                : _wrapDetailBackGesture(_buildDetail(active)),
           ),
         ],
       ),

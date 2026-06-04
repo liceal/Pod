@@ -12,7 +12,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:uuid/uuid.dart';
 import 'package:pasteboard/pasteboard.dart';
-import 'package:dart_style/dart_style.dart';
 
 import '../models/clipboard_item.dart';
 import '../models/note.dart';
@@ -26,6 +25,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   static const _menuBarScrollChannel = MethodChannel('app.pod/menu_bar_scroll');
 
   static const _focusManagerChannel = MethodChannel('app.pod/focus_manager');
+
+  static const _macFileOpenerChannel = MethodChannel('app.pod/file_opener');
 
   // Singleton
   static final AppState _instance = AppState._internal();
@@ -48,6 +49,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool isAnimating = false;
   bool isDialogOpen = false;
   bool isMouseInside = false;
+  int panelActivationVersion = 0;
   double lastCalculatedWidth = 800.0;
   double fileDisplaySize = 110.0;
 
@@ -62,6 +64,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Timer? _clipboardTimer;
   Timer? _notesSaveTimer;
   Timer? _autoCollapseTimer;
+  Timer? _panelActivationRefreshTimer;
   Timer? _fileWatchDebounce;
 
   String _trayIconPath = '';
@@ -78,7 +81,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Display? _currentDisplay;
   Map<String, double>? _nativeScreenInfo;
   DateTime _lastScrollAction = DateTime.fromMillisecondsSinceEpoch(0);
-  double _lastExpandedScreenX = -1;
   final Map<String, String> _itemTypeCache = {};
 
   // Lightweight callback for animation-only updates
@@ -133,7 +135,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   String _stripMarkdownBlock(String text) {
     var trimmed = text.trim();
-    final regExp = RegExp(r'^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$', multiLine: true);
+    final regExp = RegExp(
+      r'^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$',
+      multiLine: true,
+    );
     final match = regExp.firstMatch(trimmed);
     if (match != null) {
       return match.group(1)?.trim() ?? trimmed;
@@ -150,11 +155,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       return '"$safeContent"';
     });
     // 2. Add double quotes to unquoted keys, e.g. {a: 1} -> {"a": 1}
-    s = s.replaceAllMapped(RegExp(r'([{\s,])([a-zA-Z_$.][a-zA-Z0-9_$.]*)\s*:'), (match) {
-      final prefix = match.group(1) ?? '';
-      final key = match.group(2) ?? '';
-      return '$prefix"$key":';
-    });
+    s = s.replaceAllMapped(
+      RegExp(r'([{\s,])([a-zA-Z_$.][a-zA-Z0-9_$.]*)\s*:'),
+      (match) {
+        final prefix = match.group(1) ?? '';
+        final key = match.group(2) ?? '';
+        return '$prefix"$key":';
+      },
+    );
     // 3. Remove trailing commas, e.g. {"a": 1,} -> {"a": 1}
     s = s.replaceAll(RegExp(r',\s*}'), '}');
     s = s.replaceAll(RegExp(r',\s*]'), ']');
@@ -217,13 +225,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String? tryFormatXml(String text) {
     var trimmed = text.trim();
     trimmed = _stripMarkdownBlock(trimmed);
-    int firstAngle = trimmed.indexOf('<');
-    int lastAngle = trimmed.lastIndexOf('>');
-    if (firstAngle != -1 && lastAngle != -1 && lastAngle > firstAngle) {
-      final substring = trimmed.substring(firstAngle, lastAngle + 1);
-      if (!substring.contains('</') && !substring.contains('/>')) return null;
+    if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
+      if (!trimmed.contains('</') && !trimmed.contains('/>')) return null;
       try {
-        return _formatXmlString(substring);
+        return _formatXmlString(trimmed);
       } catch (_) {
         return null;
       }
@@ -231,58 +236,216 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return null;
   }
 
+  bool _looksLikeCode(String text) {
+    final trimmed = _stripMarkdownBlock(text).trim();
+    if (trimmed.isEmpty) return false;
+    final codeTraits = RegExp(
+      r'''(^|\n)\s*(import|export|part)\s+['"]|'''
+      r'\b(class|enum|mixin|extension|void|final|const|var|return|if|else|for|while|switch|case|try|catch|finally|async|await|typedef|static)\b|'
+      r'=>|;\s*(\n|$)',
+      multiLine: true,
+    );
+    if (!codeTraits.hasMatch(trimmed)) return false;
+    final openBraceCount = '{'.allMatches(trimmed).length;
+    final closeBraceCount = '}'.allMatches(trimmed).length;
+    return openBraceCount == closeBraceCount;
+  }
+
   String? tryFormatCode(String text) {
     var trimmed = text.trim();
     trimmed = _stripMarkdownBlock(trimmed);
-    
+
     final openBraceCount = '{'.allMatches(trimmed).length;
     final closeBraceCount = '}'.allMatches(trimmed).length;
-    
-    // Check if braces are balanced and there are multiple lines with code traits
-    if (openBraceCount >= 1 && openBraceCount == closeBraceCount && '\n'.allMatches(trimmed).length >= 1) {
-      final codeKeywords = RegExp(
-        r'\b(class|void|import|final|const|var|return|public|private|function|def|if|for|while|static|fn|let|package|using|namespace)\b|=>|;',
-      );
-      if (codeKeywords.hasMatch(trimmed)) {
-        return _formatCurlyBraceCode(trimmed);
-      }
+    final hasLineBreak = '\n'.allMatches(trimmed).isNotEmpty;
+
+    if (openBraceCount == closeBraceCount &&
+        (openBraceCount >= 1 || hasLineBreak || trimmed.contains(';')) &&
+        _looksLikeCode(trimmed)) {
+      return _formatCurlyBraceCode(trimmed);
     }
     return null;
   }
 
   String _formatCurlyBraceCode(String code) {
-    final lines = code.split('\n');
-    final sb = StringBuffer();
+    final normalized = code.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
+    final rawLines = <String>[];
+    final current = StringBuffer();
     int indent = 0;
-    
-    for (var line in lines) {
-      var cleanLine = line.trim();
-      if (cleanLine.isEmpty) {
-        sb.writeln();
+    String? stringQuote;
+    bool escape = false;
+    bool inLineComment = false;
+    bool inBlockComment = false;
+    bool lastOutsideWasWhitespace = false;
+
+    void emitLine({int? forcedIndent}) {
+      final text = current.toString().trim();
+      current.clear();
+      lastOutsideWasWhitespace = false;
+      if (text.isEmpty) return;
+      rawLines.add('${'  ' * (forcedIndent ?? indent)}$text');
+    }
+
+    String nextNonWhitespace(int index) {
+      for (var i = index + 1; i < normalized.length; i++) {
+        final char = normalized[i];
+        if (!RegExp(r'\s').hasMatch(char)) return char;
+      }
+      return '';
+    }
+
+    for (var i = 0; i < normalized.length; i++) {
+      final char = normalized[i];
+      final next = i + 1 < normalized.length ? normalized[i + 1] : '';
+
+      if (inLineComment) {
+        if (char == '\n') {
+          emitLine();
+          inLineComment = false;
+        } else {
+          current.write(char);
+        }
         continue;
       }
 
-      // Beautify spaces around common symbols (VS Code style cleanup)
-      cleanLine = cleanLine.replaceAll(RegExp(r',(?!\s)'), ', ');
-      cleanLine = cleanLine.replaceAllMapped(RegExp(r':(?!\s)(?!//)'), (m) => ': ');
-      cleanLine = cleanLine.replaceAll(RegExp(r'(?<!\s){'), ' {');
-      
-      // Align lines starting with closing brackets or control blocks (else/catch/finally)
-      final regex = RegExp(r'^([\}\]]|else\b|catch\b|finally\b)');
-      bool isClosingOrControl = regex.hasMatch(cleanLine);
-      int printIndent = isClosingOrControl ? (indent - 1).clamp(0, 100) : indent;
-      
-      sb.write('  ' * printIndent);
-      sb.writeln(cleanLine);
-      
-      // Update persistent indentation
-      int opens = '{'.allMatches(cleanLine).length;
-      int closes = '}'.allMatches(cleanLine).length;
-      indent += (opens - closes);
-      if (indent < 0) indent = 0;
+      if (inBlockComment) {
+        current.write(char);
+        if (char == '*' && next == '/') {
+          current.write(next);
+          i++;
+          inBlockComment = false;
+        }
+        continue;
+      }
+
+      if (stringQuote != null) {
+        current.write(char);
+        if (escape) {
+          escape = false;
+        } else if (char == '\\') {
+          escape = true;
+        } else if (char == stringQuote) {
+          stringQuote = null;
+        }
+        continue;
+      }
+
+      if (char == '"' || char == "'" || char == '`') {
+        stringQuote = char;
+        current.write(char);
+        lastOutsideWasWhitespace = false;
+        continue;
+      }
+
+      if (char == '/' && next == '/') {
+        if (current.toString().trim().isNotEmpty &&
+            !current.toString().endsWith(' ')) {
+          current.write(' ');
+        }
+        current.write('//');
+        i++;
+        inLineComment = true;
+        continue;
+      }
+
+      if (char == '/' && next == '*') {
+        if (current.toString().trim().isNotEmpty &&
+            !current.toString().endsWith(' ')) {
+          current.write(' ');
+        }
+        current.write('/*');
+        i++;
+        inBlockComment = true;
+        continue;
+      }
+
+      if (char == '\n') {
+        emitLine();
+        continue;
+      }
+
+      if (RegExp(r'\s').hasMatch(char)) {
+        if (!lastOutsideWasWhitespace && current.toString().trim().isNotEmpty) {
+          current.write(' ');
+          lastOutsideWasWhitespace = true;
+        }
+        continue;
+      }
+
+      lastOutsideWasWhitespace = false;
+
+      if (char == '{') {
+        final before = current.toString().trimRight();
+        current.clear();
+        current.write(before);
+        if (before.isNotEmpty &&
+            !before.endsWith(' ') &&
+            !before.endsWith('{') &&
+            !before.endsWith('[') &&
+            !before.endsWith('(')) {
+          current.write(' ');
+        }
+        current.write('{');
+        emitLine();
+        indent++;
+        continue;
+      }
+
+      if (char == '}') {
+        emitLine();
+        indent = (indent - 1).clamp(0, 100);
+        current.write('}');
+        final nextChar = nextNonWhitespace(i);
+        if (nextChar == ';' || nextChar == ',' || nextChar == ')') {
+          continue;
+        }
+        emitLine();
+        continue;
+      }
+
+      if (char == ';') {
+        current.write(';');
+        emitLine();
+        continue;
+      }
+
+      if (char == ',') {
+        current.write(',');
+        if (next != '\n' && next != '\r' && next != ' ') {
+          current.write(' ');
+        }
+        continue;
+      }
+
+      if (char == ':' && next != '/') {
+        current.write(':');
+        if (next != ' ' && next != '\n' && next != '\r') {
+          current.write(' ');
+        }
+        continue;
+      }
+
+      current.write(char);
     }
-    
-    return sb.toString().trim();
+
+    emitLine();
+
+    final merged = <String>[];
+    for (final line in rawLines) {
+      final trimmed = line.trimLeft();
+      if (merged.isNotEmpty &&
+          merged.last.trim() == '}' &&
+          RegExp(r'^(else|catch|finally)\b').hasMatch(trimmed)) {
+        final previousIndent =
+            merged.last.length - merged.last.trimLeft().length;
+        merged[merged.length - 1] =
+            '${' ' * previousIndent}} ${trimmed.trim()}';
+      } else {
+        merged.add(line);
+      }
+    }
+
+    return merged.join('\n').trim();
   }
 
   String _formatXmlString(String xml) {
@@ -296,7 +459,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (token.startsWith('</')) {
         indent = (indent - 1).clamp(0, 100);
         sb.write('\n${'  ' * indent}$token');
-      } else if (token.startsWith('<') && (token.endsWith('/>') || token.startsWith('<?') || token.startsWith('<!'))) {
+      } else if (token.startsWith('<') &&
+          (token.endsWith('/>') ||
+              token.startsWith('<?') ||
+              token.startsWith('<!'))) {
         sb.write('\n${'  ' * indent}$token');
       } else if (token.startsWith('<')) {
         sb.write('\n${'  ' * indent}$token');
@@ -310,7 +476,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   bool isUrl(String text) {
     final trimmed = text.trim();
-    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return false;
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+      return false;
+    }
     try {
       final uri = Uri.parse(trimmed);
       return uri.isAbsolute;
@@ -343,10 +511,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         type = 'URL';
       } else if (tryFormatJson(text) != null) {
         type = 'JSON';
-      } else if (tryFormatXml(text) != null) {
-        type = 'XML';
       } else if (tryFormatCode(text) != null) {
         type = 'CODE';
+      } else if (tryFormatXml(text) != null) {
+        type = 'XML';
       }
     }
     _itemTypeCache[item.id] = type;
@@ -364,9 +532,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
     final query = _searchClipboardQuery.toLowerCase();
     return clipboardHistory
-        .where((item) =>
-            item.content.toLowerCase().contains(query) ||
-            (item.appName != null && item.appName!.toLowerCase().contains(query)))
+        .where(
+          (item) =>
+              item.content.toLowerCase().contains(query) ||
+              (item.appName != null &&
+                  item.appName!.toLowerCase().contains(query)),
+        )
         .toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
@@ -378,9 +549,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
     final query = _searchClipboardQuery.toLowerCase();
     return clipboardFavorites
-        .where((item) =>
-            item.content.toLowerCase().contains(query) ||
-            (item.appName != null && item.appName!.toLowerCase().contains(query)))
+        .where(
+          (item) =>
+              item.content.toLowerCase().contains(query) ||
+              (item.appName != null &&
+                  item.appName!.toLowerCase().contains(query)),
+        )
         .toList()
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
   }
@@ -470,6 +644,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _clipboardTimer?.cancel();
     _notesSaveTimer?.cancel();
     _autoCollapseTimer?.cancel();
+    _panelActivationRefreshTimer?.cancel();
     _fileWatchDebounce?.cancel();
     _dirWatcher?.cancel();
     _imagesDirWatcher?.cancel();
@@ -622,7 +797,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             lastCalculatedWidth = w;
             notifyListeners(); // Ensure Flutter UI updates to the new width immediately
           }
-          _lastExpandedScreenX = info['x']!;
           // Move window to correct screen position (cheap)
           _menuBarScrollChannel.invokeMethod('expandOnScreen', {
             'x': info['x']! + (sw - w) / 2,
@@ -657,9 +831,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         lastCalculatedWidth = w;
         await windowManager.setIgnoreMouseEvents(false);
         final targetX = screenX + (screenWidth - w) / 2;
-        await windowManager.setBounds(
-          Rect.fromLTWH(targetX, screenY, w, 350),
-        );
+        await windowManager.setBounds(Rect.fromLTWH(targetX, screenY, w, 350));
         await windowManager.setHasShadow(true);
         if (shouldFocus) {
           _focusManagerChannel.invokeMethod('savePreviousApp');
@@ -672,6 +844,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       // Now trigger animation AFTER native window is ready
       onAnimationStateChanged?.call(duration);
+      _refreshPanelActivationAfterShow();
       _didGrabFocus = shouldFocus;
     } catch (e) {
       debugPrint('Failed to expand panel: $e');
@@ -755,7 +928,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       isExpanded = true;
       isAnimating = false;
       onAnimationStateChanged?.call(const Duration(milliseconds: 250));
+      _refreshPanelActivationAfterShow();
     }
+  }
+
+  void _refreshPanelActivationAfterShow() {
+    _panelActivationRefreshTimer?.cancel();
+    final delay = Platform.isMacOS
+        ? const Duration(milliseconds: 140)
+        : Duration.zero;
+
+    _panelActivationRefreshTimer = Timer(delay, () {
+      _panelActivationRefreshTimer = null;
+      if (!isExpanded) return;
+      panelActivationVersion++;
+      notifyListeners();
+    });
   }
 
   void setDialogOpen(bool open) {
@@ -962,7 +1150,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String get defaultDataDirectoryPath => _defaultDataDirSync;
 
   String getDataDirectoryPathSync() {
-    if (settings.dataDirectory != null && settings.dataDirectory!.trim().isNotEmpty) {
+    if (settings.dataDirectory != null &&
+        settings.dataDirectory!.trim().isNotEmpty) {
       return settings.dataDirectory!.trim().replaceAll('\\', '/');
     }
     return _defaultDataDirSync;
@@ -972,22 +1161,184 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return getDataDirectoryPathSync();
   }
 
-  Future<String> _getDefaultDataDirectoryPath() async {
-    final appSupport = await getApplicationSupportDirectory();
-    return '${appSupport.path}/data'.replaceAll('\\', '/');
+  String? _readMacDeviceName(String key) {
+    if (!Platform.isMacOS) return null;
+    try {
+      final result = Process.runSync('/usr/sbin/scutil', ['--get', key]);
+      if (result.exitCode == 0) {
+        final value = result.stdout.toString().trim();
+        if (value.isNotEmpty) return value;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  List<String> _getRawDeviceNameCandidates() {
+    final names = <String>[];
+
+    void add(String? value) {
+      final trimmed = value?.trim();
+      if (trimmed == null || trimmed.isEmpty) return;
+      if (!names.contains(trimmed)) names.add(trimmed);
+    }
+
+    add(_readMacDeviceName('LocalHostName'));
+    add(_readMacDeviceName('ComputerName'));
+    add(_readMacDeviceName('HostName'));
+
+    try {
+      add(Platform.localHostname);
+    } catch (_) {
+      // Fall back below.
+    }
+
+    return names.isEmpty ? ['default'] : names;
+  }
+
+  String _getRawDeviceName() {
+    return _getRawDeviceNameCandidates().first;
+  }
+
+  String _cleanDeviceName(String rawName) {
+    var name = rawName.trim();
+    name = name.replaceFirst(
+      RegExp(r'\.(local|lan)$', caseSensitive: false),
+      '',
+    );
+    name = name.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
+    name = name.replaceAll(RegExp(r'\s+'), '-');
+    name = name.replaceAll(RegExp(r'-{2,}'), '-');
+    name = name.replaceAll(RegExp(r'^[.\-]+|[.\-]+$'), '');
+    return name.isEmpty ? 'default' : name;
   }
 
   String _getCleanDeviceName() {
-    try {
-      final rawName = Platform.localHostname;
-      return rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
-    } catch (_) {
-      return 'default';
-    }
+    return _cleanDeviceName(_getRawDeviceName());
   }
 
   String _getClipboardHistoryFilename() {
     return 'clipboard_history-${_getCleanDeviceName()}.json';
+  }
+
+  Set<String> _getLegacyClipboardHistoryFilenames() {
+    final current = _getClipboardHistoryFilename();
+    final legacyNames = <String>{};
+    for (final rawName in _getRawDeviceNameCandidates()) {
+      final safeRaw = rawName.replaceAll(RegExp(r'[\\/:*?"<>|]'), '-');
+      legacyNames.add('clipboard_history-$safeRaw.json');
+      legacyNames.add(
+        'clipboard_history-${safeRaw.replaceAll(RegExp(r'\s+'), '-')}.json',
+      );
+      legacyNames.add('clipboard_history-${_cleanDeviceName(rawName)}.json');
+    }
+    legacyNames.remove(current);
+    legacyNames.removeWhere(
+      (name) => name.trim().isEmpty || name == 'clipboard_history-.json',
+    );
+    return legacyNames;
+  }
+
+  List<dynamic>? _decodeJsonList(String jsonText) {
+    try {
+      final decoded = jsonDecode(jsonText);
+      if (decoded is List) return decoded;
+    } catch (_) {}
+    return null;
+  }
+
+  String _jsonItemIdentity(dynamic item) {
+    if (item is Map) {
+      final id = item['id'];
+      if (id is String && id.isNotEmpty) return 'id:$id';
+      return 'fallback:${item['content']}|${item['timestamp']}|${item['imagePath']}';
+    }
+    return 'raw:${jsonEncode(item)}';
+  }
+
+  String? _mergeJsonListStrings(String? primaryJson, String incomingJson) {
+    final incoming = _decodeJsonList(incomingJson);
+    if (incoming == null) return primaryJson;
+
+    final primary = primaryJson == null
+        ? <dynamic>[]
+        : (_decodeJsonList(primaryJson) ?? <dynamic>[]);
+    final seen = primary.map(_jsonItemIdentity).toSet();
+    for (final item in incoming) {
+      final key = _jsonItemIdentity(item);
+      if (seen.add(key)) {
+        primary.add(item);
+      }
+    }
+    return jsonEncode(primary);
+  }
+
+  File? _findCurrentDeviceHistoryFile(
+    Directory dir, {
+    bool includeDeviceAgnostic = false,
+  }) {
+    final current = File('${dir.path}/${_getClipboardHistoryFilename()}');
+    if (current.existsSync()) return current;
+
+    for (final fileName in _getLegacyClipboardHistoryFilenames()) {
+      final legacy = File('${dir.path}/$fileName');
+      if (legacy.existsSync()) return legacy;
+    }
+
+    if (includeDeviceAgnostic) {
+      final legacy = File('${dir.path}/clipboard_history.json');
+      if (legacy.existsSync()) return legacy;
+    }
+    return null;
+  }
+
+  String? _migrateClipboardHistoryFilenameIfNeeded(String dataDir) {
+    final currentFile = File('$dataDir/${_getClipboardHistoryFilename()}');
+    String? mergedJson;
+    if (currentFile.existsSync()) {
+      try {
+        mergedJson = currentFile.readAsStringSync();
+      } catch (e) {
+        debugPrint(
+          'Failed to read current clipboard history during migration: $e',
+        );
+      }
+    }
+
+    final migratedFiles = <File>[];
+    for (final fileName in _getLegacyClipboardHistoryFilenames()) {
+      final legacyFile = File('$dataDir/$fileName');
+      if (!legacyFile.existsSync()) continue;
+      try {
+        final legacyJson = legacyFile.readAsStringSync();
+        mergedJson =
+            _mergeJsonListStrings(mergedJson, legacyJson) ?? legacyJson;
+        migratedFiles.add(legacyFile);
+      } catch (e) {
+        debugPrint(
+          'Failed to migrate clipboard history file ${legacyFile.path}: $e',
+        );
+      }
+    }
+
+    if (migratedFiles.isEmpty || mergedJson == null) {
+      return mergedJson;
+    }
+
+    try {
+      if (!currentFile.parent.existsSync()) {
+        currentFile.parent.createSync(recursive: true);
+      }
+      currentFile.writeAsStringSync(mergedJson);
+      for (final legacyFile in migratedFiles) {
+        try {
+          legacyFile.deleteSync();
+        } catch (_) {}
+      }
+      return mergedJson;
+    } catch (e) {
+      debugPrint('Failed to write migrated clipboard history file: $e');
+      return mergedJson;
+    }
   }
 
   String getImagePath(ClipboardItem item) {
@@ -1018,11 +1369,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       // 1. Migrate clipboard images if old dir exists and new dir doesn't exist
       final oldImagesDir = Directory('${appSupport.path}/clipboard_images');
       final newImagesDir = Directory('$dataDir/clipboard_images');
-      if (oldImagesDir.existsSync() && !newImagesDir.existsSync() && oldImagesDir.path != newImagesDir.path) {
+      if (oldImagesDir.existsSync() &&
+          !newImagesDir.existsSync() &&
+          oldImagesDir.path != newImagesDir.path) {
         newImagesDir.createSync(recursive: true);
         for (final entity in oldImagesDir.listSync()) {
           if (entity is File) {
-            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final name = entity.path
+                .replaceAll('\\', '/')
+                .split('/')
+                .where((s) => s.isNotEmpty)
+                .last;
             final newPath = '${newImagesDir.path}/$name';
             entity.copySync(newPath);
           }
@@ -1034,9 +1391,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       // 2. Migrate files if old default files dir exists and new files dir doesn't exist
       final oldDefaultFilesPath = _getOldDefaultFilesPath();
-      final oldFilesDir = oldDefaultFilesPath.isNotEmpty ? Directory(oldDefaultFilesPath) : null;
+      final oldFilesDir = oldDefaultFilesPath.isNotEmpty
+          ? Directory(oldDefaultFilesPath)
+          : null;
       final newFilesDir = Directory('$dataDir/files');
-      if (oldFilesDir != null && oldFilesDir.existsSync() && !newFilesDir.existsSync() && oldFilesDir.path != newFilesDir.path) {
+      if (oldFilesDir != null &&
+          oldFilesDir.existsSync() &&
+          !newFilesDir.existsSync() &&
+          oldFilesDir.path != newFilesDir.path) {
         newFilesDir.createSync(recursive: true);
         await _copyDirectory(oldFilesDir, newFilesDir);
         try {
@@ -1045,9 +1407,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       // 3. Migrate custom files path if set in AppSettings
-      if (settings.customFilesPath != null && settings.customFilesPath!.trim().isNotEmpty) {
+      if (settings.customFilesPath != null &&
+          settings.customFilesPath!.trim().isNotEmpty) {
         final oldCustomDir = Directory(settings.customFilesPath!.trim());
-        if (oldCustomDir.existsSync() && oldCustomDir.path != newFilesDir.path) {
+        if (oldCustomDir.existsSync() &&
+            oldCustomDir.path != newFilesDir.path) {
           newFilesDir.createSync(recursive: true);
           await _copyDirectory(oldCustomDir, newFilesDir);
           final updated = settings.copyWith(customFilesPath: '');
@@ -1081,7 +1445,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       destination.createSync(recursive: true);
     }
     await for (var entity in source.list(recursive: false)) {
-      final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+      final name = entity.path
+          .replaceAll('\\', '/')
+          .split('/')
+          .where((s) => s.isNotEmpty)
+          .last;
       if (entity is Directory) {
         final newDirectory = Directory('${destination.path}/$name');
         newDirectory.createSync(recursive: true);
@@ -1129,7 +1497,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           if (entity is File) {
             final name = entity.path.replaceAll('\\', '/').split('/').last;
             if (name == 'clipboard_history.json' ||
-                (name.startsWith('clipboard_history-') && name.endsWith('.json'))) {
+                (name.startsWith('clipboard_history-') &&
+                    name.endsWith('.json'))) {
               entity.copySync('${targetDir.path}/$name');
             }
           }
@@ -1145,7 +1514,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         }
         for (final entity in oldImagesDir.listSync()) {
           if (entity is File) {
-            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final name = entity.path
+                .replaceAll('\\', '/')
+                .split('/')
+                .where((s) => s.isNotEmpty)
+                .last;
             final newFilePath = '${newImagesDir.path}/$name';
             entity.copySync(newFilePath);
           }
@@ -1186,7 +1559,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           if (entity is File) {
             final name = entity.path.replaceAll('\\', '/').split('/').last;
             if (name == 'clipboard_history.json' ||
-                (name.startsWith('clipboard_history-') && name.endsWith('.json'))) {
+                (name.startsWith('clipboard_history-') &&
+                    name.endsWith('.json'))) {
               try {
                 entity.deleteSync();
               } catch (_) {}
@@ -1242,7 +1616,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (sourceNotesFile.existsSync()) {
         final targetNotesFile = File('${targetDir.path}/notes.json');
         List<dynamic> mergedNotesJson = [];
-        
+
         List<dynamic> sourceNotes = [];
         try {
           sourceNotes = jsonDecode(sourceNotesFile.readAsStringSync()) as List;
@@ -1251,7 +1625,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (targetNotesFile.existsSync()) {
           List<dynamic> targetNotes = [];
           try {
-            targetNotes = jsonDecode(targetNotesFile.readAsStringSync()) as List;
+            targetNotes =
+                jsonDecode(targetNotesFile.readAsStringSync()) as List;
           } catch (_) {}
 
           final targetIds = targetNotes.map((n) => n['id']).toSet();
@@ -1268,21 +1643,27 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       // 2. Sync clipboard_history-[deviceName].json (Merge)
-      final historyFilename = _getClipboardHistoryFilename();
-      final sourceHistoryFile = File('${sourceDir.path}/$historyFilename');
-      if (sourceHistoryFile.existsSync()) {
-        final targetHistoryFile = File('${targetDir.path}/$historyFilename');
+      final sourceHistoryFile = _findCurrentDeviceHistoryFile(
+        sourceDir,
+        includeDeviceAgnostic: true,
+      );
+      if (sourceHistoryFile != null) {
+        final targetHistoryFile = File(
+          '${targetDir.path}/${_getClipboardHistoryFilename()}',
+        );
         List<dynamic> mergedHistoryJson = [];
 
         List<dynamic> sourceHistory = [];
         try {
-          sourceHistory = jsonDecode(sourceHistoryFile.readAsStringSync()) as List;
+          sourceHistory =
+              jsonDecode(sourceHistoryFile.readAsStringSync()) as List;
         } catch (_) {}
 
         if (targetHistoryFile.existsSync()) {
           List<dynamic> targetHistory = [];
           try {
-            targetHistory = jsonDecode(targetHistoryFile.readAsStringSync()) as List;
+            targetHistory =
+                jsonDecode(targetHistoryFile.readAsStringSync()) as List;
           } catch (_) {}
 
           final targetIds = targetHistory.map((x) => x['id']).toSet();
@@ -1299,20 +1680,26 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       // 3. Sync clipboard_favorites.json (Merge)
-      final sourceFavoritesFile = File('${sourceDir.path}/clipboard_favorites.json');
+      final sourceFavoritesFile = File(
+        '${sourceDir.path}/clipboard_favorites.json',
+      );
       if (sourceFavoritesFile.existsSync()) {
-        final targetFavoritesFile = File('${targetDir.path}/clipboard_favorites.json');
+        final targetFavoritesFile = File(
+          '${targetDir.path}/clipboard_favorites.json',
+        );
         List<dynamic> mergedFavoritesJson = [];
 
         List<dynamic> sourceFavorites = [];
         try {
-          sourceFavorites = jsonDecode(sourceFavoritesFile.readAsStringSync()) as List;
+          sourceFavorites =
+              jsonDecode(sourceFavoritesFile.readAsStringSync()) as List;
         } catch (_) {}
 
         if (targetFavoritesFile.existsSync()) {
           List<dynamic> targetFavorites = [];
           try {
-            targetFavorites = jsonDecode(targetFavoritesFile.readAsStringSync()) as List;
+            targetFavorites =
+                jsonDecode(targetFavoritesFile.readAsStringSync()) as List;
           } catch (_) {}
 
           final targetIds = targetFavorites.map((x) => x['id']).toSet();
@@ -1337,7 +1724,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         }
         for (final entity in sourceImagesDir.listSync()) {
           if (entity is File) {
-            final name = entity.path.replaceAll('\\', '/').split('/').where((s) => s.isNotEmpty).last;
+            final name = entity.path
+                .replaceAll('\\', '/')
+                .split('/')
+                .where((s) => s.isNotEmpty)
+                .last;
             final targetFilePath = '${targetImagesDir.path}/$name';
             if (!File(targetFilePath).existsSync()) {
               entity.copySync(targetFilePath);
@@ -1408,8 +1799,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           final text = data.text!;
           if (text != _lastSystemClipText) {
             _lastSystemClipText = text;
-            _lastSystemClipImageSignature = null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
-            
+            _lastSystemClipImageSignature =
+                null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
+
             String? appName;
             String? appIconPath;
             if (Platform.isWindows || Platform.isMacOS) {
@@ -1444,7 +1836,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           try {
             final files = await Pasteboard.files();
             if (files.isNotEmpty) {
-              final imageExtensions = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'ico', 'tiff', 'tif', 'heic', 'heif'};
+              final imageExtensions = {
+                'png',
+                'jpg',
+                'jpeg',
+                'gif',
+                'webp',
+                'bmp',
+                'ico',
+                'tiff',
+                'tif',
+                'heic',
+                'heif',
+              };
               final hasImageFile = files.any((path) {
                 final ext = path.split('.').last.toLowerCase();
                 return imageExtensions.contains(ext);
@@ -1464,7 +1868,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               if (imageSignature != _lastSystemClipImageSignature) {
                 _lastSystemClipImageSignature = imageSignature;
                 _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
-                
+
                 String? appName;
                 String? appIconPath;
                 if (Platform.isWindows || Platform.isMacOS) {
@@ -1480,9 +1884,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                     debugPrint('Failed to get clipboard owner info: $e');
                   }
                 }
-                
+
                 final isOwn = _isOwnApp(appName);
-                final isInternalCopy = isOwn && (imageSignature == _lastAppCopiedImageSignature);
+                final isInternalCopy =
+                    isOwn && (imageSignature == _lastAppCopiedImageSignature);
 
                 if (!isInternalCopy) {
                   await addClipboardImageItem(
@@ -1629,7 +2034,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           _lastSystemClipText = ''; // Clear text clip state
           _lastAppCopiedText = ''; // Clear text clip state
           await Pasteboard.writeImage(bytes);
-          
+
           // 立即读回系统剪贴板中的图片以获取系统编码后的图片字节签名，彻底防止因格式转换导致签名不一致的问题
           try {
             final writtenBytes = await Pasteboard.image;
@@ -1674,7 +2079,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     if (itemToDelete != null && itemToDelete.imagePath != null) {
       final path = getImagePath(itemToDelete);
-      final stillHasReference = clipboardHistory.any((x) => getImagePath(x) == path) ||
+      final stillHasReference =
+          clipboardHistory.any((x) => getImagePath(x) == path) ||
           clipboardFavorites.any((x) => getImagePath(x) == path);
       if (!stillHasReference) {
         try {
@@ -1714,7 +2120,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     for (final item in clipboardHistory) {
       if (item.imagePath != null) {
         final path = getImagePath(item);
-        final inFavorites = clipboardFavorites.any((x) => getImagePath(x) == path);
+        final inFavorites = clipboardFavorites.any(
+          (x) => getImagePath(x) == path,
+        );
         if (!inFavorites) {
           try {
             final file = File(path);
@@ -1767,11 +2175,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> _loadClipboardHistory() async {
     final dataDir = getDataDirectoryPathSync();
+    final migratedHistoryJson = _migrateClipboardHistoryFilenameIfNeeded(
+      dataDir,
+    );
 
     // 1. History
     final historyFilename = _getClipboardHistoryFilename();
     final historyFile = File('$dataDir/$historyFilename');
-    String? listJson;
+    String? listJson = migratedHistoryJson;
     if (historyFile.existsSync()) {
       try {
         listJson = historyFile.readAsStringSync();
@@ -1798,7 +2209,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             historyFile.writeAsStringSync(listJson);
             await _prefs.remove('clipboard_history');
           } catch (e) {
-            debugPrint('Failed to migrate clipboard history from SharedPreferences: $e');
+            debugPrint(
+              'Failed to migrate clipboard history from SharedPreferences: $e',
+            );
           }
         }
       }
@@ -1839,7 +2252,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           favoritesFile.writeAsStringSync(favJson);
           await _prefs.remove('clipboard_favorites');
         } catch (e) {
-          debugPrint('Failed to migrate clipboard favorites from SharedPreferences: $e');
+          debugPrint(
+            'Failed to migrate clipboard favorites from SharedPreferences: $e',
+          );
         }
       }
     }
@@ -1991,21 +2406,29 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   void _handleImageFileDeleted(String fileName) {
     bool changed = false;
     final targetPathPart = 'clipboard_images/$fileName';
-    
+
     // 检查历史记录
     final historyLen = clipboardHistory.length;
-    clipboardHistory.removeWhere((item) => item.imagePath != null && item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart));
+    clipboardHistory.removeWhere(
+      (item) =>
+          item.imagePath != null &&
+          item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart),
+    );
     if (clipboardHistory.length != historyLen) {
       changed = true;
     }
-    
+
     // 检查收藏记录
     final favLen = clipboardFavorites.length;
-    clipboardFavorites.removeWhere((item) => item.imagePath != null && item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart));
+    clipboardFavorites.removeWhere(
+      (item) =>
+          item.imagePath != null &&
+          item.imagePath!.replaceAll('\\', '/').endsWith(targetPathPart),
+    );
     if (clipboardFavorites.length != favLen) {
       changed = true;
     }
-    
+
     if (changed) {
       _saveClipboardHistory();
       _saveClipboardFavorites();
@@ -2022,7 +2445,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (!dir.existsSync()) {
         dir.createSync(recursive: true);
       }
-      _imagesDirWatcher = dir.watch(events: FileSystemEvent.all).listen((event) {
+      _imagesDirWatcher = dir.watch(events: FileSystemEvent.all).listen((
+        event,
+      ) {
         if (event is FileSystemDeleteEvent) {
           final path = event.path.replaceAll('\\', '/');
           final fileName = path.split('/').last;
@@ -2053,7 +2478,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               const Duration(milliseconds: 200),
               _reloadNotesFromFile,
             );
-          } else if (fileName == historyFilename || fileName == 'clipboard_favorites.json') {
+          } else if (fileName == historyFilename ||
+              fileName == 'clipboard_favorites.json') {
             _reloadHistoryDebounce?.cancel();
             _reloadHistoryDebounce = Timer(
               const Duration(milliseconds: 200),
@@ -2073,7 +2499,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (!notesFile.existsSync()) return;
     try {
       final content = await notesFile.readAsString();
-      if (content == _lastNotesJsonCache) return; // Ignore if identical (self-write)
+      if (content == _lastNotesJsonCache) {
+        return; // Ignore if identical (self-write)
+      }
       _lastNotesJsonCache = content;
 
       final decoded = jsonDecode(content) as List;
@@ -2100,7 +2528,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> _reloadHistoryFromFile() async {
     final dataDir = getDataDirectoryPathSync();
-    
+
     // 1. History
     final historyFilename = _getClipboardHistoryFilename();
     final historyFile = File('$dataDir/$historyFilename');
@@ -2112,7 +2540,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           _lastHistoryJsonCache = content;
           final decoded = jsonDecode(content) as List;
           clipboardHistory = decoded
-              .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
+              .map(
+                (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
+              )
               .toList();
           historyChanged = true;
         }
@@ -2131,7 +2561,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           _lastFavoritesJsonCache = content;
           final decoded = jsonDecode(content) as List;
           clipboardFavorites = decoded
-              .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
+              .map(
+                (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
+              )
               .toList();
           favoritesChanged = true;
         }
@@ -2253,8 +2685,30 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _scanStoredFiles();
   }
 
+  Future<bool> _openMacPath(String path, {bool reveal = false}) async {
+    if (!Platform.isMacOS) return false;
+    try {
+      final result = await _macFileOpenerChannel.invokeMethod<bool>(
+        reveal ? 'revealPath' : 'openPath',
+        {'path': path},
+      );
+      return result == true;
+    } catch (e) {
+      debugPrint(
+        'Native macOS ${reveal ? 'reveal' : 'open'} failed for $path: $e',
+      );
+      return false;
+    }
+  }
+
   Future<void> openFile(FileSystemEntity entity) async {
     try {
+      if (!entity.existsSync()) return;
+
+      if (Platform.isMacOS && await _openMacPath(entity.path)) {
+        return;
+      }
+
       final uri = Uri.file(entity.path);
       if (await canLaunchUrl(uri)) {
         await launchUrl(uri);
@@ -2272,7 +2726,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Future<void> revealFileInExplorer(FileSystemEntity entity) async {
+    try {
+      if (!entity.existsSync()) return;
 
+      if (Platform.isWindows) {
+        final winPath = entity.path.replaceAll('/', '\\');
+        await Process.run('explorer.exe', ['/select,', winPath]);
+      } else if (Platform.isMacOS) {
+        final revealed = await _openMacPath(entity.path, reveal: true);
+        if (!revealed) {
+          await Process.run('open', ['-R', entity.path]);
+        }
+      } else {
+        final parentPath = entity is Directory
+            ? entity.path
+            : entity.parent.path;
+        await openDirectoryPath(parentPath);
+      }
+    } catch (e) {
+      debugPrint('Failed to reveal file: $e');
+    }
+  }
 
   Future<void> createNewFile(String name) async {
     try {
@@ -2365,7 +2840,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final winPath = path.replaceAll('/', '\\');
         await Process.run('explorer.exe', [winPath]);
       } else if (Platform.isMacOS) {
-        await Process.run('open', [path]);
+        final opened = await _openMacPath(path);
+        if (!opened) {
+          await Process.run('open', [path]);
+        }
       } else {
         final uri = Uri.directory(path);
         await launchUrl(uri);

@@ -1,7 +1,7 @@
 import Cocoa
 import FlutterMacOS
 
-class MainFlutterWindow: NSWindow {
+class MainFlutterWindow: NSPanel {
   private var globalMonitor: Any?
   private var localMonitor: Any?
   private var previousFrontmostApp: NSRunningApplication?
@@ -12,7 +12,7 @@ class MainFlutterWindow: NSWindow {
   }
 
   override var canBecomeMain: Bool {
-    return true
+    return false
   }
 
   private var dummyCloseButton: NSButton?
@@ -69,6 +69,19 @@ class MainFlutterWindow: NSWindow {
     flutterViewController.backgroundColor = NSColor.clear
     self.hasShadow = false
     self.isMovable = false
+    self.styleMask.insert(.nonactivatingPanel)
+    self.styleMask.insert(.utilityWindow)
+    self.isFloatingPanel = true
+    self.hidesOnDeactivate = false
+    self.becomesKeyOnlyIfNeeded = false
+    self.isExcludedFromWindowsMenu = true
+    self.animationBehavior = .none
+    self.collectionBehavior = [
+      .canJoinAllSpaces,
+      .fullScreenAuxiliary,
+      .transient,
+      .ignoresCycle,
+    ]
 
     // Remove macOS system-level window corner radius.
     // Flutter's borderRadius=0 only affects widget painting; the OS still clips
@@ -102,9 +115,8 @@ class MainFlutterWindow: NSWindow {
         self.orderFront(nil)
         result(nil)
       } else if call.method == "focusWindow" {
-        // Explicitly focus and activate the window/app
+        // Focus the panel without promoting the app into the app switcher.
         self.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         result(nil)
       } else if call.method == "savePreviousApp" {
         // Remember the currently frontmost app (excluding our own) before we steal focus
@@ -181,7 +193,6 @@ class MainFlutterWindow: NSWindow {
         
         if shouldFocus {
           self.makeKeyAndOrderFront(nil)
-          NSApp.activate(ignoringOtherApps: true)
         } else {
           self.orderFront(nil)
         }
@@ -229,6 +240,35 @@ class MainFlutterWindow: NSWindow {
         response["name"] = appName
         response["iconPath"] = iconPath
         result(response)
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    let fileOpenerChannel = FlutterMethodChannel(
+      name: "app.pod/file_opener",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    fileOpenerChannel.setMethodCallHandler { (call, result) in
+      guard let args = call.arguments as? [String: Any],
+            let path = args["path"] as? String,
+            !path.isEmpty else {
+        result(FlutterError(code: "INVALID_ARGS", message: "Missing path", details: nil))
+        return
+      }
+
+      guard FileManager.default.fileExists(atPath: path) else {
+        result(FlutterError(code: "NOT_FOUND", message: "Path does not exist", details: path))
+        return
+      }
+
+      let url = URL(fileURLWithPath: path)
+      if call.method == "openPath" {
+        result(NSWorkspace.shared.open(url))
+      } else if call.method == "revealPath" {
+        NSWorkspace.shared.activateFileViewerSelecting([url])
+        result(true)
       } else {
         result(FlutterMethodNotImplemented)
       }
