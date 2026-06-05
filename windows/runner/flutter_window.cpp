@@ -6,6 +6,7 @@
 #include <cwctype>
 #include <string>
 #include <chrono>
+#include <new>
 
 #include "flutter/generated_plugin_registrant.h"
 #include <flutter/standard_method_codec.h>
@@ -14,10 +15,23 @@
 
 FlutterWindow* FlutterWindow::scroll_hook_window_ = nullptr;
 
+namespace {
+
+constexpr UINT kGlobalMouseWheelMessage = WM_APP + 1;
+
+struct MouseWheelEvent {
+  POINT point;
+  int wheel_delta;
+};
+
+}  // namespace
+
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
 
-FlutterWindow::~FlutterWindow() {}
+FlutterWindow::~FlutterWindow() {
+  OnDestroy();
+}
 
 bool FlutterWindow::OnCreate() {
   if (!Win32Window::OnCreate()) {
@@ -36,7 +50,10 @@ bool FlutterWindow::OnCreate() {
 
   // Initialize GDI+
   Gdiplus::GdiplusStartupInput gdiplusStartupInput;
-  Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplusStartupInput, NULL);
+  if (Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplusStartupInput, NULL) ==
+      Gdiplus::Ok) {
+    gdiplus_initialized_ = true;
+  }
 
   RECT frame = GetClientArea();
 
@@ -216,6 +233,12 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  if (resources_destroyed_) {
+    Win32Window::OnDestroy();
+    return;
+  }
+  resources_destroyed_ = true;
+
   RemoveMouseHook();
 
   if (method_channel_) {
@@ -228,8 +251,10 @@ void FlutterWindow::OnDestroy() {
     menu_bar_scroll_channel_ = nullptr;
   }
 
-  // Shutdown GDI+
-  Gdiplus::GdiplusShutdown(gdiplus_token_);
+  if (gdiplus_initialized_) {
+    Gdiplus::GdiplusShutdown(gdiplus_token_);
+    gdiplus_initialized_ = false;
+  }
 
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -248,12 +273,13 @@ void FlutterWindow::InstallMouseHook() {
 }
 
 void FlutterWindow::RemoveMouseHook() {
-  if (mouse_hook_ != nullptr) {
-    UnhookWindowsHookEx(mouse_hook_);
-    mouse_hook_ = nullptr;
-  }
   if (scroll_hook_window_ == this) {
     scroll_hook_window_ = nullptr;
+  }
+  HHOOK hook = mouse_hook_;
+  mouse_hook_ = nullptr;
+  if (hook != nullptr) {
+    UnhookWindowsHookEx(hook);
   }
 }
 
@@ -261,8 +287,16 @@ LRESULT CALLBACK FlutterWindow::LowLevelMouseProc(int n_code, WPARAM wparam,
                                                   LPARAM lparam) {
   if (n_code == HC_ACTION && wparam == WM_MOUSEWHEEL && scroll_hook_window_) {
     const auto* mouse = reinterpret_cast<MSLLHOOKSTRUCT*>(lparam);
-    const int wheel_delta = GET_WHEEL_DELTA_WPARAM(mouse->mouseData);
-    scroll_hook_window_->HandleGlobalMouseWheel(mouse->pt, wheel_delta);
+    HWND hwnd = scroll_hook_window_->GetHandle();
+    if (hwnd) {
+      auto* event = new (std::nothrow) MouseWheelEvent{
+          mouse->pt, GET_WHEEL_DELTA_WPARAM(mouse->mouseData)};
+      if (event &&
+          !PostMessage(hwnd, kGlobalMouseWheelMessage, 0,
+                       reinterpret_cast<LPARAM>(event))) {
+        delete event;
+      }
+    }
   }
   return CallNextHookEx(nullptr, n_code, wparam, lparam);
 }
@@ -339,6 +373,15 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  if (message == kGlobalMouseWheelMessage) {
+    auto* event = reinterpret_cast<MouseWheelEvent*>(lparam);
+    if (event) {
+      HandleGlobalMouseWheel(event->point, event->wheel_delta);
+      delete event;
+    }
+    return 0;
+  }
+
   // Prevent caption/thickframe/sysmenu styles from being added back
   if (message == WM_STYLECHANGING) {
     STYLESTRUCT* ss = reinterpret_cast<STYLESTRUCT*>(lparam);

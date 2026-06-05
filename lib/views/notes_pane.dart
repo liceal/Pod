@@ -84,9 +84,19 @@ class _NotesPaneState extends State<NotesPane> {
     setState(() => _showList = true);
   }
 
+  bool _isMouseBackButton(PointerDownEvent event) {
+    return event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kBackMouseButton) != 0;
+  }
+
   Widget _wrapDetailBackGesture(Widget child) {
     return Listener(
       behavior: HitTestBehavior.translucent,
+      onPointerDown: (event) {
+        if (_isMouseBackButton(event)) {
+          _showListView();
+        }
+      },
       onPointerSignal: (event) {
         if (event is PointerScrollEvent &&
             event.scrollDelta.dx.abs() > 48 &&

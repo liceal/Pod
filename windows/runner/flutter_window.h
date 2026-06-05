@@ -55,6 +55,8 @@ class FlutterWindow : public Win32Window {
   std::unique_ptr<flutter::MethodChannel<>> menu_bar_scroll_channel_;
 
   HHOOK mouse_hook_ = nullptr;
+  bool resources_destroyed_ = false;
+  bool gdiplus_initialized_ = false;
   std::chrono::steady_clock::time_point last_scroll_time_ =
       std::chrono::steady_clock::time_point::min();
 

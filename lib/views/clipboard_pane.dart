@@ -1410,6 +1410,14 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     }
   }
 
+  void _handleBackMouseButton(PointerDownEvent event) {
+    if (!widget.embedded) return;
+    if (event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kBackMouseButton) != 0) {
+      widget.onBack?.call();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final themeAccent = widget.accentColor;
@@ -1664,11 +1672,16 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       );
 
       if (isImage) {
-        return detailWithEsc;
+        return Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerDown: _handleBackMouseButton,
+          child: detailWithEsc,
+        );
       }
 
       return Listener(
         behavior: HitTestBehavior.translucent,
+        onPointerDown: _handleBackMouseButton,
         onPointerSignal: _handleBackPointerSignal,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,

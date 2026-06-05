@@ -78,6 +78,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Timer? _reloadHistoryDebounce;
 
   bool _didGrabFocus = false;
+  bool _isShuttingDown = false;
   Display? _currentDisplay;
   Map<String, double>? _nativeScreenInfo;
   DateTime _lastScrollAction = DateTime.fromMillisecondsSinceEpoch(0);
@@ -639,17 +640,60 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   @override
   void dispose() {
+    _isShuttingDown = true;
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    _cancelRuntimeTimers();
+    _menuBarScrollChannel.setMethodCallHandler(null);
+    _dirWatcher?.cancel();
+    _imagesDirWatcher?.cancel();
+    _dataDirWatcher?.cancel();
+    hotKeyManager.unregisterAll();
+    super.dispose();
+  }
+
+  void _cancelRuntimeTimers() {
     _clipboardTimer?.cancel();
     _notesSaveTimer?.cancel();
     _autoCollapseTimer?.cancel();
     _panelActivationRefreshTimer?.cancel();
     _fileWatchDebounce?.cancel();
-    _dirWatcher?.cancel();
-    _imagesDirWatcher?.cancel();
-    hotKeyManager.unregisterAll();
-    super.dispose();
+    _reloadNotesDebounce?.cancel();
+    _reloadHistoryDebounce?.cancel();
+  }
+
+  Future<void> quit() async {
+    if (_isShuttingDown) return;
+    _isShuttingDown = true;
+
+    windowManager.removeListener(this);
+    trayManager.removeListener(this);
+    await forceSaveNotesIfPending();
+    _cancelRuntimeTimers();
+    _menuBarScrollChannel.setMethodCallHandler(null);
+
+    await Future.wait<void>([
+      if (_dirWatcher != null) _dirWatcher!.cancel(),
+      if (_imagesDirWatcher != null) _imagesDirWatcher!.cancel(),
+      if (_dataDirWatcher != null) _dataDirWatcher!.cancel(),
+    ]);
+    _dirWatcher = null;
+    _imagesDirWatcher = null;
+    _dataDirWatcher = null;
+
+    try {
+      await hotKeyManager.unregisterAll();
+    } catch (e) {
+      debugPrint('Failed to unregister hotkeys during quit: $e');
+    }
+
+    try {
+      await trayManager.destroy();
+    } catch (e) {
+      debugPrint('Failed to destroy tray icon during quit: $e');
+    }
+
+    await windowManager.destroy();
   }
 
   // --- Window Trigger Configuration ---
@@ -1139,10 +1183,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   @override
   void onTrayMenuItemClick(MenuItem menuItem) {
+    if (_isShuttingDown) return;
     if (menuItem.key == 'toggle') {
       togglePanel();
     } else if (menuItem.key == 'quit') {
-      windowManager.destroy();
+      unawaited(quit());
     }
   }
 
@@ -1790,6 +1835,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void _startClipboardMonitoring() {
     _clipboardTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
+      if (_isShuttingDown) return;
       if (_isCheckingClipboard) return;
       _isCheckingClipboard = true;
       try {
