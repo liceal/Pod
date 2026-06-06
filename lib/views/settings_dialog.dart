@@ -1,18 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:file_picker/file_picker.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 
-
 class SettingsDialog extends StatefulWidget {
   final AppState state;
 
-  const SettingsDialog({
-    super.key,
-    required this.state,
-  });
+  const SettingsDialog({super.key, required this.state});
 
   @override
   State<SettingsDialog> createState() => _SettingsDialogState();
@@ -31,6 +26,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late int _autoCollapseDelay;
   late ThemeStyle _themeStyle;
   late double _backdropOpacity;
+  late int _clipboardHistoryLimit;
 
   final List<String> _hotkeyPresets = [
     'alt+u',
@@ -52,11 +48,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _panelWidth = widget.state.settings.panelWidth;
     _isWidthPercentage = widget.state.settings.isWidthPercentage;
     _panelWidthPercent = widget.state.settings.panelWidthPercent;
-    _themeColorName = (widget.state.settings.themeColorName as dynamic) ?? 'blue';
+    _themeColorName =
+        (widget.state.settings.themeColorName as dynamic) ?? 'blue';
     _closeOnBlur = widget.state.settings.closeOnBlur;
     _autoCollapseDelay = widget.state.settings.autoCollapseDelay;
     _themeStyle = widget.state.settings.themeStyle;
     _backdropOpacity = widget.state.settings.backdropOpacity;
+    _clipboardHistoryLimit = widget.state.settings.clipboardHistoryLimit;
     _dataDirectory = widget.state.getDataDirectoryPathSync();
   }
 
@@ -94,11 +92,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
         context: context,
         barrierColor: Colors.transparent,
         builder: (ctx) => AlertDialog(
-          backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
-          title: Text('确认同步数据？', style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87)),
+          backgroundColor: _isDarkTheme
+              ? const Color(0xFF1E1E1E)
+              : Colors.white,
+          title: Text(
+            '确认同步数据？',
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white : Colors.black87,
+            ),
+          ),
           content: Text(
             '即将从所选文件夹同步并合并数据（便签、剪贴板历史、图片、暂存文件）到当前的存储位置：\n$_dataDirectory\n\n注意：这不会覆盖已有的同名数据，而是进行增量合并。',
-            style: TextStyle(color: _isDarkTheme ? Colors.white70 : Colors.black54),
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white70 : Colors.black54,
+            ),
           ),
           actions: [
             TextButton(
@@ -134,7 +141,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   SizedBox(height: 12),
                   Text(
                     '正在同步并刷新数据...',
-                    style: TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.none),
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 13,
+                      decoration: TextDecoration.none,
+                    ),
                   ),
                 ],
               ),
@@ -154,13 +165,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
       await showDialog(
         context: context,
         builder: (ctx) => AlertDialog(
-          backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
-          title: Text(success ? '同步成功' : '同步失败', style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87)),
+          backgroundColor: _isDarkTheme
+              ? const Color(0xFF1E1E1E)
+              : Colors.white,
+          title: Text(
+            success ? '同步成功' : '同步失败',
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white : Colors.black87,
+            ),
+          ),
           content: Text(
-            success 
-                ? '数据已成功同步并合并，界面已实时刷新！' 
-                : '数据同步失败，请检查文件夹权限或所选目录是否正确。',
-            style: TextStyle(color: _isDarkTheme ? Colors.white70 : Colors.black54),
+            success ? '数据已成功同步并合并，界面已实时刷新！' : '数据同步失败，请检查文件夹权限或所选目录是否正确。',
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white70 : Colors.black54,
+            ),
           ),
           actions: [
             TextButton(
@@ -195,6 +213,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       dataDirectory: oldDir,
       themeStyle: _themeStyle,
       backdropOpacity: _backdropOpacity,
+      clipboardHistoryLimit: _clipboardHistoryLimit,
     );
 
     if (isDirChanged) {
@@ -203,11 +222,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
         context: context,
         barrierColor: Colors.transparent,
         builder: (ctx) => AlertDialog(
-          backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
-          title: Text('确认迁移数据？', style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87)),
+          backgroundColor: _isDarkTheme
+              ? const Color(0xFF1E1E1E)
+              : Colors.white,
+          title: Text(
+            '确认迁移数据？',
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white : Colors.black87,
+            ),
+          ),
           content: Text(
             '检测到数据存储位置发生改变，是否立即将现有数据（包含历史记录、便签、图片及暂存文件）迁移到新目录下？',
-            style: TextStyle(color: _isDarkTheme ? Colors.white70 : Colors.black54),
+            style: TextStyle(
+              color: _isDarkTheme ? Colors.white70 : Colors.black54,
+            ),
           ),
           actions: [
             TextButton(
@@ -252,7 +280,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     SizedBox(height: 12),
                     Text(
                       '正在迁移数据，请稍候...',
-                      style: TextStyle(color: Colors.white, fontSize: 13, decoration: TextDecoration.none),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 13,
+                        decoration: TextDecoration.none,
+                      ),
                     ),
                   ],
                 ),
@@ -262,7 +294,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
         );
 
         final success = await widget.state.changeDataDirectory(_dataDirectory);
-        
+
         if (mounted) {
           Navigator.of(context).pop(); // dismiss progress dialog
         }
@@ -273,7 +305,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
           await showDialog(
             context: context,
             builder: (ctx) => AlertDialog(
-              backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+              backgroundColor: _isDarkTheme
+                  ? const Color(0xFF1E1E1E)
+                  : Colors.white,
               title: const Text('错误'),
               content: const Text('数据迁移失败，未更改存储位置。请检查目标文件夹权限。'),
               actions: [
@@ -302,7 +336,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
-
   String _getTriggerModeLabel(TriggerMode mode) {
     switch (mode) {
       case TriggerMode.both:
@@ -321,16 +354,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final textColor = _isDarkTheme ? Colors.white : Colors.black87;
     final subColor = _isDarkTheme ? Colors.white60 : Colors.black54;
     final dialogBg = _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white;
-    final dropdownBg = _isDarkTheme ? const Color(0xFF2C2C2C) : Colors.grey[100];
+    final dropdownBg = _isDarkTheme
+        ? const Color(0xFF2C2C2C)
+        : Colors.grey[100];
     final accentColor = AppTheme.getAccentColor(_themeColorName, _isDarkTheme);
 
     return Dialog(
       backgroundColor: dialogBg,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: BorderSide(
-          color: _isDarkTheme ? Colors.white10 : Colors.black12,
-        ),
+        side: BorderSide(color: _isDarkTheme ? Colors.white10 : Colors.black12),
       ),
       child: Container(
         width: 420,
@@ -349,7 +382,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
             ),
             const Divider(height: 20),
-            
+
             Flexible(
               child: SingleChildScrollView(
                 physics: const BouncingScrollPhysics(),
@@ -372,12 +405,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       decoration: InputDecoration(
                         border: const OutlineInputBorder(),
                         enabledBorder: OutlineInputBorder(
-                          borderSide: BorderSide(color: _isDarkTheme ? Colors.white24 : Colors.black12),
+                          borderSide: BorderSide(
+                            color: _isDarkTheme
+                                ? Colors.white24
+                                : Colors.black12,
+                          ),
                         ),
                         focusedBorder: OutlineInputBorder(
                           borderSide: BorderSide(color: accentColor),
                         ),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
                       ),
                       items: TriggerMode.values.map((mode) {
                         return DropdownMenuItem<TriggerMode>(
@@ -399,7 +439,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     const SizedBox(height: 16),
 
                     // Hotkey Configuration
-                    if (_triggerMode != TriggerMode.hoverOnly && _triggerMode != TriggerMode.scrollOnly) ...[
+                    if (_triggerMode != TriggerMode.hoverOnly &&
+                        _triggerMode != TriggerMode.scrollOnly) ...[
                       Text(
                         '全局快捷键',
                         style: TextStyle(
@@ -418,17 +459,26 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                       const SizedBox(height: 6),
                       DropdownButtonFormField<String>(
-                        value: _hotkeyPresets.contains(_hotkey) ? _hotkey : _hotkeyPresets.first,
+                        value: _hotkeyPresets.contains(_hotkey)
+                            ? _hotkey
+                            : _hotkeyPresets.first,
                         dropdownColor: dropdownBg,
                         decoration: InputDecoration(
                           border: const OutlineInputBorder(),
                           enabledBorder: OutlineInputBorder(
-                            borderSide: BorderSide(color: _isDarkTheme ? Colors.white24 : Colors.black12),
+                            borderSide: BorderSide(
+                              color: _isDarkTheme
+                                  ? Colors.white24
+                                  : Colors.black12,
+                            ),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderSide: BorderSide(color: accentColor),
                           ),
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 8,
+                          ),
                         ),
                         items: _hotkeyPresets.map((key) {
                           return DropdownMenuItem<String>(
@@ -451,7 +501,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ],
 
                     // Hover Timeout config
-                    if (_triggerMode != TriggerMode.hotkeyOnly && _triggerMode != TriggerMode.scrollOnly) ...[
+                    if (_triggerMode != TriggerMode.hotkeyOnly &&
+                        _triggerMode != TriggerMode.scrollOnly) ...[
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
@@ -475,7 +526,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         max: 1000,
                         divisions: 9,
                         activeColor: accentColor,
-                        inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
+                        inactiveColor: _isDarkTheme
+                            ? Colors.white12
+                            : Colors.black12,
                         label: '${_hoverTimeout.toInt()}ms',
                         onChanged: (val) {
                           setState(() {
@@ -516,7 +569,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                   });
                                 },
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: !_isWidthPercentage
                                         ? accentColor
@@ -542,7 +598,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                   });
                                 },
                                 child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 8,
+                                    vertical: 4,
+                                  ),
                                   decoration: BoxDecoration(
                                     color: _isWidthPercentage
                                         ? accentColor
@@ -583,7 +642,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         max: 1600,
                         divisions: 24,
                         activeColor: accentColor,
-                        inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
+                        inactiveColor: _isDarkTheme
+                            ? Colors.white12
+                            : Colors.black12,
                         label: '${_panelWidth.toInt()}px',
                         onChanged: (val) {
                           setState(() {
@@ -607,7 +668,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         max: 100,
                         divisions: 70,
                         activeColor: accentColor,
-                        inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
+                        inactiveColor: _isDarkTheme
+                            ? Colors.white12
+                            : Colors.black12,
                         label: '${_panelWidthPercent.toInt()}%',
                         onChanged: (val) {
                           setState(() {
@@ -642,7 +705,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       max: 1.0,
                       divisions: 65,
                       activeColor: accentColor,
-                      inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
+                      inactiveColor: _isDarkTheme
+                          ? Colors.white12
+                          : Colors.black12,
                       label: '${(_backdropOpacity * 100).round()}%',
                       onChanged: (val) {
                         setState(() {
@@ -663,39 +728,48 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ),
                     const SizedBox(height: 8),
                     Row(
-                      children: ['blue', 'orange', 'green', 'purple', 'red'].map((colorName) {
-                        final color = AppTheme.getAccentColor(colorName, _isDarkTheme);
-                        final isSelected = _themeColorName == colorName;
-                        return GestureDetector(
-                          onTap: () {
-                            setState(() {
-                              _themeColorName = colorName;
-                            });
-                          },
-                          child: Container(
-                            margin: const EdgeInsets.only(right: 12),
-                            width: 24,
-                            height: 24,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSelected 
-                                    ? (_isDarkTheme ? Colors.white : Colors.black87) 
-                                    : Colors.transparent,
-                                width: 2,
+                      children: ['blue', 'orange', 'green', 'purple', 'red']
+                          .map((colorName) {
+                            final color = AppTheme.getAccentColor(
+                              colorName,
+                              _isDarkTheme,
+                            );
+                            final isSelected = _themeColorName == colorName;
+                            return GestureDetector(
+                              onTap: () {
+                                setState(() {
+                                  _themeColorName = colorName;
+                                });
+                              },
+                              child: Container(
+                                margin: const EdgeInsets.only(right: 12),
+                                width: 24,
+                                height: 24,
+                                decoration: BoxDecoration(
+                                  color: color,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? (_isDarkTheme
+                                              ? Colors.white
+                                              : Colors.black87)
+                                        : Colors.transparent,
+                                    width: 2,
+                                  ),
+                                  boxShadow: isSelected
+                                      ? [
+                                          BoxShadow(
+                                            color: color.withOpacity(0.4),
+                                            blurRadius: 6,
+                                            spreadRadius: 1,
+                                          ),
+                                        ]
+                                      : null,
+                                ),
                               ),
-                              boxShadow: isSelected ? [
-                                BoxShadow(
-                                  color: color.withOpacity(0.4),
-                                  blurRadius: 6,
-                                  spreadRadius: 1,
-                                )
-                              ] : null,
-                            ),
-                          ),
-                        );
-                      }).toList(),
+                            );
+                          })
+                          .toList(),
                     ),
                     const SizedBox(height: 20),
 
@@ -719,7 +793,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               _autoCollapseDelay == 0
                                   ? '已禁用'
                                   : '$_autoCollapseDelay 秒后收起',
-                              style: TextStyle(fontSize: 11, color: subColor.withOpacity(0.7)),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: subColor.withOpacity(0.7),
+                              ),
                             ),
                           ],
                         ),
@@ -731,13 +808,63 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       max: 30,
                       divisions: 30,
                       activeColor: accentColor,
-                      inactiveColor: _isDarkTheme ? Colors.white12 : Colors.black12,
-                      label: _autoCollapseDelay == 0 ? '禁用' : '$_autoCollapseDelay 秒',
+                      inactiveColor: _isDarkTheme
+                          ? Colors.white12
+                          : Colors.black12,
+                      label: _autoCollapseDelay == 0
+                          ? '禁用'
+                          : '$_autoCollapseDelay 秒',
                       onChanged: (val) {
                         setState(() {
                           _autoCollapseDelay = val.toInt();
                         });
                       },
+                    ),
+                    const SizedBox(height: 10),
+
+                    // Clipboard history limit
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          '剪贴板记录上限',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: subColor,
+                          ),
+                        ),
+                        Text(
+                          '$_clipboardHistoryLimit 条',
+                          style: TextStyle(fontSize: 12, color: textColor),
+                        ),
+                      ],
+                    ),
+                    Slider(
+                      value: _clipboardHistoryLimit.toDouble(),
+                      min: AppSettings.minClipboardHistoryLimit.toDouble(),
+                      max: AppSettings.maxClipboardHistoryLimit.toDouble(),
+                      divisions:
+                          (AppSettings.maxClipboardHistoryLimit -
+                              AppSettings.minClipboardHistoryLimit) ~/
+                          10,
+                      activeColor: accentColor,
+                      inactiveColor: _isDarkTheme
+                          ? Colors.white12
+                          : Colors.black12,
+                      label: '$_clipboardHistoryLimit 条',
+                      onChanged: (val) {
+                        setState(() {
+                          _clipboardHistoryLimit = (val / 10).round() * 10;
+                        });
+                      },
+                    ),
+                    Text(
+                      '超过上限时会自动删除最早的非收藏记录。',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: subColor.withOpacity(0.7),
+                      ),
                     ),
                     const SizedBox(height: 10),
 
@@ -807,27 +934,46 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               children: [
                                 TextButton.icon(
                                   onPressed: _selectDataDirectory,
-                                  icon: const Icon(Icons.edit_location_alt_rounded, size: 14),
-                                  label: const Text('更改位置', style: TextStyle(fontSize: 11)),
+                                  icon: const Icon(
+                                    Icons.edit_location_alt_rounded,
+                                    size: 14,
+                                  ),
+                                  label: const Text(
+                                    '更改位置',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
                                   style: TextButton.styleFrom(
                                     foregroundColor: accentColor,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                 ),
                                 const SizedBox(width: 4),
                                 TextButton.icon(
                                   onPressed: () {
-                                    widget.state.openDirectoryPath(_dataDirectory);
+                                    widget.state.openDirectoryPath(
+                                      _dataDirectory,
+                                    );
                                   },
                                   icon: const Icon(Icons.folder_open, size: 14),
-                                  label: const Text('打开目录', style: TextStyle(fontSize: 11)),
+                                  label: const Text(
+                                    '打开目录',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
                                   style: TextButton.styleFrom(
                                     foregroundColor: accentColor,
-                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
                                     minimumSize: Size.zero,
-                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    tapTargetSize:
+                                        MaterialTapTargetSize.shrinkWrap,
                                   ),
                                 ),
                               ],
@@ -839,7 +985,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           width: double.infinity,
                           padding: const EdgeInsets.all(8),
                           decoration: BoxDecoration(
-                            color: _isDarkTheme ? Colors.white.withOpacity(0.03) : Colors.black.withOpacity(0.03),
+                            color: _isDarkTheme
+                                ? Colors.white.withOpacity(0.03)
+                                : Colors.black.withOpacity(0.03),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Column(
@@ -847,11 +995,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             children: [
                               Row(
                                 children: [
-                                  Icon(Icons.info_outline_rounded, size: 12, color: subColor),
+                                  Icon(
+                                    Icons.info_outline_rounded,
+                                    size: 12,
+                                    color: subColor,
+                                  ),
                                   const SizedBox(width: 4),
                                   Text(
                                     '默认存储路径（若旧数据丢失可从此处同步）：',
-                                    style: TextStyle(fontSize: 10, color: subColor, fontWeight: FontWeight.w500),
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      color: subColor,
+                                      fontWeight: FontWeight.w500,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -873,10 +1029,15 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           child: OutlinedButton.icon(
                             onPressed: _manualSyncData,
                             icon: const Icon(Icons.sync_rounded, size: 14),
-                            label: const Text('手动同步旧位置数据 / 导入其他文件夹数据', style: TextStyle(fontSize: 11)),
+                            label: const Text(
+                              '手动同步旧位置数据 / 导入其他文件夹数据',
+                              style: TextStyle(fontSize: 11),
+                            ),
                             style: OutlinedButton.styleFrom(
                               foregroundColor: accentColor,
-                              side: BorderSide(color: accentColor.withOpacity(0.4)),
+                              side: BorderSide(
+                                color: accentColor.withOpacity(0.4),
+                              ),
                               padding: const EdgeInsets.symmetric(vertical: 8),
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(6),
@@ -899,10 +1060,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
                 TextButton(
-                  child: Text(
-                    '取消',
-                    style: TextStyle(color: subColor),
-                  ),
+                  child: Text('取消', style: TextStyle(color: subColor)),
                   onPressed: () => Navigator.of(context).pop(),
                 ),
                 const SizedBox(width: 10),

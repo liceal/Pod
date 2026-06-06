@@ -11,8 +11,27 @@ RELEASE_DIR="build/macos/Build/Products/Release"
 APP_BUNDLE="${RELEASE_DIR}/${APP_NAME}.app"
 DMG_OUTPUT="${RELEASE_DIR}/Pod.dmg"
 STAGING_DIR="${RELEASE_DIR}/dmg_staging"
-SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 ENABLE_FINDER_DMG_LAYOUT="${ENABLE_FINDER_DMG_LAYOUT:-0}"
+
+detect_sign_identity() {
+  local identity
+  for prefix in "Developer ID Application" "Apple Distribution" "Apple Development"; do
+    identity=$(
+      security find-identity -v -p codesigning 2>/dev/null \
+        | awk -v prefix="${prefix}" -F '"' '$2 ~ "^" prefix { print $2; exit }'
+    )
+    if [ -n "${identity}" ]; then
+      printf '%s' "${identity}"
+      return 0
+    fi
+  done
+  return 1
+}
+
+if [ -z "${SIGN_IDENTITY+x}" ]; then
+  SIGN_IDENTITY="$(detect_sign_identity || true)"
+fi
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 # macOS does not always have C.UTF-8; create-dmg invokes Perl/AppleScript tools
 # that warn noisily when the inherited locale is unsupported.
@@ -57,9 +76,11 @@ xattr -cr "${APP_BUNDLE}" || true
 echo ""
 if [ "${SIGN_IDENTITY}" = "-" ]; then
   echo "Step 3: Ad-hoc code signing..."
+  echo "⚠️  No valid Apple code signing identity was found. Set SIGN_IDENTITY explicitly or install a certificate with its private key."
   codesign --deep --force --sign - "${APP_BUNDLE}"
 else
-  echo "Step 3: Developer ID code signing with hardened runtime..."
+  echo "Step 3: Apple code signing with hardened runtime..."
+  echo "✓ Signing identity: ${SIGN_IDENTITY}"
   codesign --deep --force --options runtime --timestamp --sign "${SIGN_IDENTITY}" "${APP_BUNDLE}"
 fi
 codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}"

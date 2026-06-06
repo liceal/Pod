@@ -1,16 +1,12 @@
-enum TriggerMode {
-  both,
-  hotkeyOnly,
-  hoverOnly,
-  scrollOnly,
-}
+enum TriggerMode { both, hotkeyOnly, hoverOnly, scrollOnly }
 
-enum ThemeStyle {
-  normal,
-  compact,
-}
+enum ThemeStyle { normal, compact }
 
 class AppSettings {
+  static const int defaultClipboardHistoryLimit = 50;
+  static const int minClipboardHistoryLimit = 10;
+  static const int maxClipboardHistoryLimit = 500;
+
   final TriggerMode triggerMode;
   final String hotkey; // e.g., "alt+u"
   final bool isDarkTheme;
@@ -20,12 +16,14 @@ class AppSettings {
   final double panelWidthPercent;
   final String? _themeColorName;
   final bool? _closeOnBlur;
+
   /// Seconds to wait after mouse leaves before auto-collapsing. 0 = disabled.
   final int autoCollapseDelay;
   final String? customFilesPath;
   final String? dataDirectory; // Unified data storage location
   final ThemeStyle themeStyle;
   final double backdropOpacity;
+  final int clipboardHistoryLimit;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -45,8 +43,18 @@ class AppSettings {
     this.dataDirectory,
     this.themeStyle = ThemeStyle.compact,
     this.backdropOpacity = 0.92,
-  })  : _themeColorName = themeColorName,
-        _closeOnBlur = closeOnBlur;
+    int clipboardHistoryLimit = defaultClipboardHistoryLimit,
+  }) : _themeColorName = themeColorName,
+       _closeOnBlur = closeOnBlur,
+       clipboardHistoryLimit = normalizeClipboardHistoryLimit(
+         clipboardHistoryLimit,
+       );
+
+  static int normalizeClipboardHistoryLimit(int? value) {
+    return (value ?? defaultClipboardHistoryLimit)
+        .clamp(minClipboardHistoryLimit, maxClipboardHistoryLimit)
+        .toInt();
+  }
 
   AppSettings copyWith({
     TriggerMode? triggerMode,
@@ -63,6 +71,7 @@ class AppSettings {
     String? dataDirectory,
     ThemeStyle? themeStyle,
     double? backdropOpacity,
+    int? clipboardHistoryLimit,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -79,6 +88,8 @@ class AppSettings {
       dataDirectory: dataDirectory ?? this.dataDirectory,
       themeStyle: themeStyle ?? this.themeStyle,
       backdropOpacity: backdropOpacity ?? this.backdropOpacity,
+      clipboardHistoryLimit:
+          clipboardHistoryLimit ?? this.clipboardHistoryLimit,
     );
   }
 
@@ -98,6 +109,7 @@ class AppSettings {
       'dataDirectory': dataDirectory,
       'themeStyle': themeStyle.name,
       'backdropOpacity': backdropOpacity,
+      'clipboardHistoryLimit': clipboardHistoryLimit,
     };
   }
 
@@ -121,7 +133,8 @@ class AppSettings {
       hoverTimeoutMs: json['hoverTimeoutMs'] as int? ?? 300,
       panelWidth: (json['panelWidth'] as num?)?.toDouble() ?? 900.0,
       isWidthPercentage: json['isWidthPercentage'] as bool? ?? true,
-      panelWidthPercent: (json['panelWidthPercent'] as num?)?.toDouble() ?? 100.0,
+      panelWidthPercent:
+          (json['panelWidthPercent'] as num?)?.toDouble() ?? 100.0,
       themeColorName: json['themeColorName'] as String?,
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
       autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 3,
@@ -129,7 +142,9 @@ class AppSettings {
       dataDirectory: json['dataDirectory'] as String?,
       themeStyle: parseThemeStyle(json['themeStyle'] as String?),
       backdropOpacity: (json['backdropOpacity'] as num?)?.toDouble() ?? 0.92,
+      clipboardHistoryLimit: normalizeClipboardHistoryLimit(
+        (json['clipboardHistoryLimit'] as num?)?.toInt(),
+      ),
     );
   }
-
 }

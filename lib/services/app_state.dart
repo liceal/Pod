@@ -1051,7 +1051,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Future<void> updateSettings(AppSettings newSettings) async {
     final oldPath = settings.customFilesPath;
     settings = newSettings;
+    final didTrimClipboardHistory = _trimClipboardHistoryToLimit();
     await _prefs.setString('settings', jsonEncode(settings.toJson()));
+    if (didTrimClipboardHistory) {
+      await _saveClipboardHistory();
+    }
 
     // Reconfigure hooks & window positions
     await _setupHotkeys();
@@ -1061,6 +1065,40 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       await _scanStoredFiles();
     }
     notifyListeners();
+  }
+
+  bool _trimClipboardHistoryToLimit() {
+    final limit = settings.clipboardHistoryLimit;
+    if (clipboardHistory.length <= limit) return false;
+
+    final removedItems = clipboardHistory.sublist(limit);
+    clipboardHistory = clipboardHistory.take(limit).toList();
+    for (final item in removedItems) {
+      _itemTypeCache.remove(item.id);
+      _deleteClipboardImageIfUnused(item);
+    }
+    return true;
+  }
+
+  void _deleteClipboardImageIfUnused(ClipboardItem item) {
+    if (item.imagePath == null) return;
+
+    final path = getImagePath(item);
+    final stillHasReference =
+        clipboardHistory.any(
+          (x) => x.imagePath != null && getImagePath(x) == path,
+        ) ||
+        clipboardFavorites.any(
+          (x) => x.imagePath != null && getImagePath(x) == path,
+        );
+    if (stillHasReference) return;
+
+    try {
+      final file = File(path);
+      if (file.existsSync()) file.deleteSync();
+    } catch (e) {
+      debugPrint('Failed to delete unused clipboard image: $e');
+    }
   }
 
   PhysicalKeyboardKey? _getPhysicalKey(String name) {
@@ -1977,16 +2015,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     clipboardHistory.insert(0, newItem);
 
-    // Limit size
-    if (clipboardHistory.length > 50) {
-      final removed = clipboardHistory.removeLast();
-      if (removed.imagePath != null) {
-        try {
-          final f = File(getImagePath(removed));
-          if (f.existsSync()) f.deleteSync();
-        } catch (_) {}
-      }
-    }
+    _trimClipboardHistoryToLimit();
 
     await _saveClipboardHistory();
     notifyListeners();
@@ -2050,16 +2079,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       clipboardHistory.insert(0, newItem);
 
-      // 限制大小
-      if (clipboardHistory.length > 50) {
-        final removed = clipboardHistory.removeLast();
-        if (removed.imagePath != null) {
-          try {
-            final f = File(getImagePath(removed));
-            if (f.existsSync()) f.deleteSync();
-          } catch (_) {}
-        }
-      }
+      _trimClipboardHistoryToLimit();
 
       await _saveClipboardHistory();
       notifyListeners();
@@ -2332,6 +2352,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (clipboardHistory.length != originalHistoryCount) {
       needsSaveHistory = true;
     }
+    if (_trimClipboardHistoryToLimit()) {
+      needsSaveHistory = true;
+    }
 
     bool needsSaveFavorites = false;
     final originalFavCount = clipboardFavorites.length;
@@ -2590,6 +2613,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                 (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
               )
               .toList();
+          if (_trimClipboardHistoryToLimit()) {
+            await _saveClipboardHistory();
+          }
           historyChanged = true;
         }
       } catch (e) {
