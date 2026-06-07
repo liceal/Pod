@@ -2,10 +2,17 @@ enum TriggerMode { both, hotkeyOnly, hoverOnly, scrollOnly }
 
 enum ThemeStyle { normal, compact }
 
+enum PanelPane { clipboard, files, notes }
+
 class AppSettings {
   static const int defaultClipboardHistoryLimit = 50;
   static const int minClipboardHistoryLimit = 10;
   static const int maxClipboardHistoryLimit = 500;
+  static const List<PanelPane> defaultPanelOrder = [
+    PanelPane.clipboard,
+    PanelPane.files,
+    PanelPane.notes,
+  ];
 
   final TriggerMode triggerMode;
   final String hotkey; // e.g., "alt+u"
@@ -24,6 +31,7 @@ class AppSettings {
   final ThemeStyle themeStyle;
   final double backdropOpacity;
   final int clipboardHistoryLimit;
+  final List<PanelPane> panelOrder;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -44,16 +52,33 @@ class AppSettings {
     this.themeStyle = ThemeStyle.compact,
     this.backdropOpacity = 0.92,
     int clipboardHistoryLimit = defaultClipboardHistoryLimit,
+    List<PanelPane>? panelOrder,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
          clipboardHistoryLimit,
-       );
+       ),
+       panelOrder = normalizePanelOrder(panelOrder);
 
   static int normalizeClipboardHistoryLimit(int? value) {
     return (value ?? defaultClipboardHistoryLimit)
         .clamp(minClipboardHistoryLimit, maxClipboardHistoryLimit)
         .toInt();
+  }
+
+  static List<PanelPane> normalizePanelOrder(List<PanelPane>? value) {
+    final result = <PanelPane>[];
+    for (final pane in value ?? defaultPanelOrder) {
+      if (!result.contains(pane)) {
+        result.add(pane);
+      }
+    }
+    for (final pane in defaultPanelOrder) {
+      if (!result.contains(pane)) {
+        result.add(pane);
+      }
+    }
+    return List.unmodifiable(result);
   }
 
   AppSettings copyWith({
@@ -72,6 +97,7 @@ class AppSettings {
     ThemeStyle? themeStyle,
     double? backdropOpacity,
     int? clipboardHistoryLimit,
+    List<PanelPane>? panelOrder,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -90,6 +116,7 @@ class AppSettings {
       backdropOpacity: backdropOpacity ?? this.backdropOpacity,
       clipboardHistoryLimit:
           clipboardHistoryLimit ?? this.clipboardHistoryLimit,
+      panelOrder: panelOrder ?? this.panelOrder,
     );
   }
 
@@ -110,6 +137,7 @@ class AppSettings {
       'themeStyle': themeStyle.name,
       'backdropOpacity': backdropOpacity,
       'clipboardHistoryLimit': clipboardHistoryLimit,
+      'panelOrder': panelOrder.map((pane) => pane.name).toList(),
     };
   }
 
@@ -124,6 +152,23 @@ class AppSettings {
 
     ThemeStyle parseThemeStyle(String? name) {
       return ThemeStyle.compact;
+    }
+
+    List<PanelPane> parsePanelOrder(Object? value) {
+      if (value is! List) {
+        return defaultPanelOrder;
+      }
+      final panes = value
+          .whereType<String>()
+          .map(
+            (name) => PanelPane.values.cast<PanelPane?>().firstWhere(
+              (pane) => pane?.name == name,
+              orElse: () => null,
+            ),
+          )
+          .whereType<PanelPane>()
+          .toList();
+      return normalizePanelOrder(panes);
     }
 
     return AppSettings(
@@ -145,6 +190,7 @@ class AppSettings {
       clipboardHistoryLimit: normalizeClipboardHistoryLimit(
         (json['clipboardHistoryLimit'] as num?)?.toInt(),
       ),
+      panelOrder: parsePanelOrder(json['panelOrder']),
     );
   }
 }

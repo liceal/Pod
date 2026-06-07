@@ -21,6 +21,21 @@ class MainFlutterWindow: NSPanel {
   private var dummyTitleBarView: NSView?
   private var dummyTitleBarContainer: NSView?
 
+  private func restorePreviousFrontmostApp() {
+    let appToRestore = previousFrontmostApp
+    previousFrontmostApp = nil
+
+    self.makeFirstResponder(nil)
+    if self.isKeyWindow {
+      self.resignKey()
+    }
+    NSApp.deactivate()
+
+    if let prev = appToRestore, !prev.isTerminated {
+      prev.activate(options: [.activateIgnoringOtherApps])
+    }
+  }
+
   override func standardWindowButton(_ button: NSWindow.ButtonType) -> NSButton? {
     if let realButton = super.standardWindowButton(button) {
       return realButton
@@ -126,11 +141,7 @@ class MainFlutterWindow: NSPanel {
         }
         result(nil)
       } else if call.method == "restorePreviousApp" {
-        // Restore focus to the previously saved app
-        if let prev = self.previousFrontmostApp, !prev.isTerminated {
-          prev.activate(options: [.activateIgnoringOtherApps])
-        }
-        self.previousFrontmostApp = nil
+        self.restorePreviousFrontmostApp()
         result(nil)
       } else if call.method == "getCurrentScreenInfo" {
         // Return the frame of the screen containing the mouse cursor

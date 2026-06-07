@@ -4,7 +4,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:screen_retriever/screen_retriever.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../models/app_settings.dart';
@@ -123,8 +122,9 @@ class _PodPanelState extends State<PodPanel>
   void _onMouseEnteredTopStrip() {
     if (widget.state.isExpanded || widget.state.isAnimating) return;
     if (widget.state.settings.triggerMode == TriggerMode.hotkeyOnly ||
-        widget.state.settings.triggerMode == TriggerMode.scrollOnly)
+        widget.state.settings.triggerMode == TriggerMode.scrollOnly) {
       return;
+    }
 
     // Start timer for hover activation
     _hoverTimer?.cancel();
@@ -228,6 +228,27 @@ class _PodPanelState extends State<PodPanel>
     }
   }
 
+  Widget _buildPane(PanelPane pane, bool isDark) {
+    return switch (pane) {
+      PanelPane.clipboard => ClipboardPane(
+        key: const ValueKey('clipboard-pane'),
+        state: widget.state,
+        isDark: isDark,
+      ),
+      PanelPane.files => FilesPane(
+        key: const ValueKey('files-pane'),
+        state: widget.state,
+        isDark: isDark,
+      ),
+      PanelPane.notes => NotesPane(
+        key: const ValueKey('notes-pane'),
+        state: widget.state,
+        isDark: isDark,
+        onShowSettings: _showSettings,
+      ),
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
@@ -286,23 +307,32 @@ class _PodPanelState extends State<PodPanel>
                                   duration: const Duration(milliseconds: 250),
                                   curve: Curves.easeInOut,
                                   height: 350,
-                                  margin: (widget.state.settings.themeStyle ==
+                                  margin:
+                                      (widget.state.settings.themeStyle ==
                                               ThemeStyle.compact ||
-                                          (widget.state.settings.isWidthPercentage &&
-                                              widget.state.settings
+                                          (widget
+                                                  .state
+                                                  .settings
+                                                  .isWidthPercentage &&
+                                              widget
+                                                      .state
+                                                      .settings
                                                       .panelWidthPercent >=
                                                   100))
                                       ? EdgeInsets.zero
                                       : const EdgeInsets.symmetric(
-                                          horizontal: 6),
+                                          horizontal: 6,
+                                        ),
                                   decoration: AppTheme.getFrostedDecoration(
                                     isDark: animatedIsDark,
                                     themeStyle:
                                         widget.state.settings.themeStyle,
                                     color: currentTheme.scaffoldBackgroundColor
-                                        .withOpacity(widget
-                                            .state.settings.backdropOpacity),
-                                    borderColor: currentTheme.colorScheme.outline,
+                                        .withOpacity(
+                                          widget.state.settings.backdropOpacity,
+                                        ),
+                                    borderColor:
+                                        currentTheme.colorScheme.outline,
                                   ),
                                   child: Column(
                                     children: [
@@ -310,38 +340,32 @@ class _PodPanelState extends State<PodPanel>
                                       Expanded(
                                         child: Row(
                                           children: [
-                                            // Pane 1: Clipboard
-                                            Expanded(
-                                              child: ClipboardPane(
-                                                state: widget.state,
-                                                isDark: animatedIsDark,
+                                            for (final entry
+                                                in widget
+                                                    .state
+                                                    .settings
+                                                    .panelOrder
+                                                    .asMap()
+                                                    .entries) ...[
+                                              Expanded(
+                                                child: _buildPane(
+                                                  entry.value,
+                                                  animatedIsDark,
+                                                ),
                                               ),
-                                            ),
-                                            VerticalDivider(
-                                              width: 1,
-                                              thickness: 1,
-                                              color: dividerColor,
-                                            ),
-                                            // Pane 2: Files Dropzone
-                                            Expanded(
-                                              child: FilesPane(
-                                                state: widget.state,
-                                                isDark: animatedIsDark,
-                                              ),
-                                            ),
-                                            VerticalDivider(
-                                              width: 1,
-                                              thickness: 1,
-                                              color: dividerColor,
-                                            ),
-                                            // Pane 3: Notes
-                                            Expanded(
-                                              child: NotesPane(
-                                                state: widget.state,
-                                                isDark: animatedIsDark,
-                                                onShowSettings: _showSettings,
-                                              ),
-                                            ),
+                                              if (entry.key <
+                                                  widget
+                                                          .state
+                                                          .settings
+                                                          .panelOrder
+                                                          .length -
+                                                      1)
+                                                VerticalDivider(
+                                                  width: 1,
+                                                  thickness: 1,
+                                                  color: dividerColor,
+                                                ),
+                                            ],
                                           ],
                                         ),
                                       ),
@@ -375,7 +399,8 @@ class _PodPanelState extends State<PodPanel>
 
                                               // Center: Grab Handle / Close indicator (tap to collapse)
                                               GestureDetector(
-                                                behavior: HitTestBehavior.opaque,
+                                                behavior:
+                                                    HitTestBehavior.opaque,
                                                 onTap: () => widget.state
                                                     .collapsePanel(),
                                                 child: MouseRegion(
@@ -389,13 +414,19 @@ class _PodPanelState extends State<PodPanel>
                                                       width: 36,
                                                       height: 4,
                                                       decoration: BoxDecoration(
-                                                        color: (animatedIsDark
-                                                                ? Colors.white
-                                                                : Colors.black)
-                                                            .withOpacity(0.25),
+                                                        color:
+                                                            (animatedIsDark
+                                                                    ? Colors
+                                                                          .white
+                                                                    : Colors
+                                                                          .black)
+                                                                .withOpacity(
+                                                                  0.25,
+                                                                ),
                                                         borderRadius:
                                                             BorderRadius.circular(
-                                                                2),
+                                                              2,
+                                                            ),
                                                       ),
                                                     ),
                                                   ),
@@ -407,18 +438,18 @@ class _PodPanelState extends State<PodPanel>
                                                 icon: Icon(
                                                   animatedIsDark
                                                       ? Icons
-                                                          .light_mode_outlined
+                                                            .light_mode_outlined
                                                       : Icons
-                                                          .dark_mode_outlined,
+                                                            .dark_mode_outlined,
                                                   size: 13,
                                                 ),
                                                 onPressed: () {
                                                   widget.state.updateSettings(
                                                     widget.state.settings
                                                         .copyWith(
-                                                      isDarkTheme:
-                                                          !animatedIsDark,
-                                                    ),
+                                                          isDarkTheme:
+                                                              !animatedIsDark,
+                                                        ),
                                                   );
                                                 },
                                                 tooltip: '切换主题',
@@ -450,9 +481,11 @@ class _PodPanelState extends State<PodPanel>
                                     formats: const [sdd.Formats.fileUri],
                                     onDropEnter: (event) {
                                       final isInternal = event.session.items
-                                          .any((item) =>
-                                              item.localData ==
-                                              'internal_file_drag');
+                                          .any(
+                                            (item) =>
+                                                item.localData ==
+                                                'internal_file_drag',
+                                          );
                                       if (isInternal) return;
                                       if (!widget.state.isExpanded &&
                                           !widget.state.isAnimating) {
@@ -461,9 +494,11 @@ class _PodPanelState extends State<PodPanel>
                                     },
                                     onDropOver: (event) {
                                       final isInternal = event.session.items
-                                          .any((item) =>
-                                              item.localData ==
-                                              'internal_file_drag');
+                                          .any(
+                                            (item) =>
+                                                item.localData ==
+                                                'internal_file_drag',
+                                          );
                                       return isInternal
                                           ? sdd.DropOperation.none
                                           : sdd.DropOperation.copy;
@@ -483,10 +518,12 @@ class _PodPanelState extends State<PodPanel>
                                           color: Platform.isMacOS
                                               ? Colors.white.withOpacity(0.01)
                                               : (animatedIsDark
-                                                  ? Colors.white
-                                                      .withOpacity(0.1)
-                                                  : Colors.black
-                                                      .withOpacity(0.05)),
+                                                    ? Colors.white.withOpacity(
+                                                        0.1,
+                                                      )
+                                                    : Colors.black.withOpacity(
+                                                        0.05,
+                                                      )),
                                         ),
                                       ),
                                     ),
@@ -503,9 +540,12 @@ class _PodPanelState extends State<PodPanel>
                                         color: Platform.isMacOS
                                             ? Colors.white.withOpacity(0.01)
                                             : (animatedIsDark
-                                                ? Colors.white.withOpacity(0.1)
-                                                : Colors.black
-                                                    .withOpacity(0.05)),
+                                                  ? Colors.white.withOpacity(
+                                                      0.1,
+                                                    )
+                                                  : Colors.black.withOpacity(
+                                                      0.05,
+                                                    )),
                                       ),
                                     ),
                                   ),

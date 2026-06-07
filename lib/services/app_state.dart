@@ -78,6 +78,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Timer? _reloadHistoryDebounce;
 
   bool _didGrabFocus = false;
+  bool _restoreFocusAfterCollapse = false;
   bool _isShuttingDown = false;
   Display? _currentDisplay;
   Map<String, double>? _nativeScreenInfo;
@@ -824,6 +825,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (isExpanded || isAnimating) return;
     isAnimating = true;
     isExpanded = true;
+    _restoreFocusAfterCollapse = false;
 
     try {
       final bool shouldFocus =
@@ -925,14 +927,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       isDialogOpen = false;
     }
 
-    if (_didGrabFocus) {
-      if (Platform.isMacOS) {
-        _menuBarScrollChannel.invokeMethod('restorePreviousApp');
-      } else {
-        _focusManagerChannel.invokeMethod('restorePreviousApp');
-      }
-      _didGrabFocus = false;
-    }
+    _restoreFocusAfterCollapse = _didGrabFocus;
+    _didGrabFocus = false;
 
     if (Platform.isMacOS) {
       windowManager.setIgnoreMouseEvents(true);
@@ -965,14 +961,34 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         debugPrint('Failed to resize collapsed window: $e');
       }
     }
+
+    await _restorePreviousAppAfterCollapse();
   }
 
   void cancelCollapseAndExpand() {
     if (!isExpanded) {
       isExpanded = true;
       isAnimating = false;
+      if (_restoreFocusAfterCollapse) {
+        _didGrabFocus = true;
+        _restoreFocusAfterCollapse = false;
+      }
       onAnimationStateChanged?.call(const Duration(milliseconds: 250));
       _refreshPanelActivationAfterShow();
+    }
+  }
+
+  Future<void> _restorePreviousAppAfterCollapse() async {
+    if (!_restoreFocusAfterCollapse) return;
+    _restoreFocusAfterCollapse = false;
+    try {
+      if (Platform.isMacOS) {
+        await _menuBarScrollChannel.invokeMethod('restorePreviousApp');
+      } else if (Platform.isWindows) {
+        await _focusManagerChannel.invokeMethod('restorePreviousApp');
+      }
+    } catch (e) {
+      debugPrint('Failed to restore previous app focus: $e');
     }
   }
 

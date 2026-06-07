@@ -27,6 +27,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late ThemeStyle _themeStyle;
   late double _backdropOpacity;
   late int _clipboardHistoryLimit;
+  late List<PanelPane> _panelOrder;
 
   final List<String> _hotkeyPresets = [
     'alt+u',
@@ -55,6 +56,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _themeStyle = widget.state.settings.themeStyle;
     _backdropOpacity = widget.state.settings.backdropOpacity;
     _clipboardHistoryLimit = widget.state.settings.clipboardHistoryLimit;
+    _panelOrder = List<PanelPane>.from(widget.state.settings.panelOrder);
     _dataDirectory = widget.state.getDataDirectoryPathSync();
   }
 
@@ -214,6 +216,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       themeStyle: _themeStyle,
       backdropOpacity: _backdropOpacity,
       clipboardHistoryLimit: _clipboardHistoryLimit,
+      panelOrder: _panelOrder,
     );
 
     if (isDirChanged) {
@@ -347,6 +350,30 @@ class _SettingsDialogState extends State<SettingsDialog> {
       case TriggerMode.scrollOnly:
         return '仅鼠标滚轮下滑';
     }
+  }
+
+  String _getPanelPaneLabel(PanelPane pane) {
+    return switch (pane) {
+      PanelPane.clipboard => '剪贴板',
+      PanelPane.notes => '便签',
+      PanelPane.files => '文件',
+    };
+  }
+
+  IconData _getPanelPaneIcon(PanelPane pane) {
+    return switch (pane) {
+      PanelPane.clipboard => Icons.content_paste_rounded,
+      PanelPane.notes => Icons.sticky_note_2_outlined,
+      PanelPane.files => Icons.folder_open_rounded,
+    };
+  }
+
+  void _movePanelPane(int fromIndex, int toIndex) {
+    if (toIndex < 0 || toIndex >= _panelOrder.length) return;
+    setState(() {
+      final pane = _panelOrder.removeAt(fromIndex);
+      _panelOrder.insert(toIndex, pane);
+    });
   }
 
   @override
@@ -680,6 +707,85 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ],
                     const SizedBox(height: 10),
+
+                    Text(
+                      '区域顺序',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: subColor,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Column(
+                      children: List.generate(_panelOrder.length, (index) {
+                        final pane = _panelOrder[index];
+                        return Container(
+                          height: 34,
+                          margin: EdgeInsets.only(
+                            bottom: index == _panelOrder.length - 1 ? 0 : 6,
+                          ),
+                          padding: const EdgeInsets.only(left: 10, right: 4),
+                          decoration: BoxDecoration(
+                            color: _isDarkTheme
+                                ? Colors.white.withValues(alpha: 0.04)
+                                : Colors.black.withValues(alpha: 0.03),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _getPanelPaneIcon(pane),
+                                size: 15,
+                                color: textColor.withValues(alpha: 0.72),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  _getPanelPaneLabel(pane),
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: textColor,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: index == 0
+                                    ? null
+                                    : () => _movePanelPane(index, index - 1),
+                                icon: const Icon(
+                                  Icons.keyboard_arrow_up_rounded,
+                                  size: 18,
+                                ),
+                                tooltip: '上移',
+                                constraints: const BoxConstraints(
+                                  minWidth: 28,
+                                  minHeight: 28,
+                                ),
+                                padding: EdgeInsets.zero,
+                              ),
+                              IconButton(
+                                onPressed: index == _panelOrder.length - 1
+                                    ? null
+                                    : () => _movePanelPane(index, index + 1),
+                                icon: const Icon(
+                                  Icons.keyboard_arrow_down_rounded,
+                                  size: 18,
+                                ),
+                                tooltip: '下移',
+                                constraints: const BoxConstraints(
+                                  minWidth: 28,
+                                  minHeight: 28,
+                                ),
+                                padding: EdgeInsets.zero,
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 16),
 
                     // Backdrop opacity
                     Row(

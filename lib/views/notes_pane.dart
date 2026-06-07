@@ -25,6 +25,7 @@ class _NotesPaneState extends State<NotesPane> {
   late TextEditingController _editorController;
   late TextEditingController _searchController;
   final ScrollController _scrollController = ScrollController();
+  final FocusNode _editorFocusNode = FocusNode();
   String _activeNoteId = '';
   bool _showList = true;
   double _swipeDistance = 0;
@@ -53,6 +54,7 @@ class _NotesPaneState extends State<NotesPane> {
     _editorController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
+    _editorFocusNode.dispose();
     super.dispose();
   }
 
@@ -74,14 +76,23 @@ class _NotesPaneState extends State<NotesPane> {
     widget.state.updateActiveNoteContent(val);
   }
 
-  void _showNoteDetail(Note note) {
-    widget.state.selectNote(note);
+  Future<void> _showNoteDetail(Note note) async {
+    await widget.state.selectNote(note);
+    if (!mounted) return;
     _syncActiveNote();
     setState(() => _showList = false);
+    _focusEditorOnNextFrame();
   }
 
   void _showListView() {
     setState(() => _showList = true);
+  }
+
+  void _focusEditorOnNextFrame() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _showList) return;
+      _editorFocusNode.requestFocus();
+    });
   }
 
   bool _isMouseBackButton(PointerDownEvent event) {
@@ -258,6 +269,7 @@ class _NotesPaneState extends State<NotesPane> {
       padding: const EdgeInsets.only(left: 10, right: 10, bottom: 8),
       child: TextField(
         controller: _editorController,
+        focusNode: _editorFocusNode,
         scrollController: _scrollController,
         maxLines: null,
         minLines: null,
@@ -408,6 +420,7 @@ class _NotesPaneState extends State<NotesPane> {
                         await widget.state.createNote();
                         _syncActiveNote();
                         setState(() => _showList = false);
+                        _focusEditorOnNextFrame();
                       },
                       child: Container(
                         width: isCompact ? 26 : 32,
@@ -438,7 +451,11 @@ class _NotesPaneState extends State<NotesPane> {
                     cursor: SystemMouseCursors.click,
                     child: AnimatedPress(
                       onTap: () {
-                        setState(() => _showList = !_showList);
+                        final willShowList = !_showList;
+                        setState(() => _showList = willShowList);
+                        if (!willShowList) {
+                          _focusEditorOnNextFrame();
+                        }
                       },
                       child: Container(
                         width: isCompact ? 26 : 32,

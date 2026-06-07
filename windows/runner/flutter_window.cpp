@@ -24,6 +24,46 @@ struct MouseWheelEvent {
   int wheel_delta;
 };
 
+void RestoreForegroundWindow(HWND target) {
+  if (!target || !IsWindow(target)) {
+    return;
+  }
+
+  if (IsIconic(target)) {
+    ShowWindow(target, SW_RESTORE);
+  }
+
+  const DWORD current_thread = GetCurrentThreadId();
+  const DWORD target_thread = GetWindowThreadProcessId(target, nullptr);
+  HWND foreground = GetForegroundWindow();
+  const DWORD foreground_thread =
+      foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
+
+  const bool attach_target =
+      target_thread != 0 && target_thread != current_thread;
+  const bool attach_foreground =
+      foreground_thread != 0 && foreground_thread != current_thread &&
+      foreground_thread != target_thread;
+
+  if (attach_target) {
+    AttachThreadInput(current_thread, target_thread, TRUE);
+  }
+  if (attach_foreground) {
+    AttachThreadInput(current_thread, foreground_thread, TRUE);
+  }
+
+  BringWindowToTop(target);
+  SetForegroundWindow(target);
+  SetFocus(target);
+
+  if (attach_foreground) {
+    AttachThreadInput(current_thread, foreground_thread, FALSE);
+  }
+  if (attach_target) {
+    AttachThreadInput(current_thread, target_thread, FALSE);
+  }
+}
+
 }  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
@@ -211,7 +251,7 @@ bool FlutterWindow::OnCreate() {
           result->Success();
         } else if (call.method_name() == "restorePreviousApp") {
           if (previous_hwnd_ && IsWindow(previous_hwnd_)) {
-            SetForegroundWindow(previous_hwnd_);
+            RestoreForegroundWindow(previous_hwnd_);
           }
           previous_hwnd_ = nullptr;
           result->Success();
