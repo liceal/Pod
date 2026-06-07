@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter_markdown_plus/flutter_markdown_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
 import '../models/app_settings.dart'; // import ThemeStyle
@@ -25,9 +27,11 @@ class _NotesPaneState extends State<NotesPane> {
   late TextEditingController _editorController;
   late TextEditingController _searchController;
   final ScrollController _scrollController = ScrollController();
+  final ScrollController _markdownScrollController = ScrollController();
   final FocusNode _editorFocusNode = FocusNode();
   String _activeNoteId = '';
   bool _showList = true;
+  bool _renderMarkdown = false;
   double _swipeDistance = 0;
 
   @override
@@ -54,6 +58,7 @@ class _NotesPaneState extends State<NotesPane> {
     _editorController.dispose();
     _searchController.dispose();
     _scrollController.dispose();
+    _markdownScrollController.dispose();
     _editorFocusNode.dispose();
     super.dispose();
   }
@@ -90,9 +95,30 @@ class _NotesPaneState extends State<NotesPane> {
 
   void _focusEditorOnNextFrame() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _showList) return;
+      if (!mounted || _showList || _renderMarkdown) return;
       _editorFocusNode.requestFocus();
     });
+  }
+
+  void _toggleMarkdownRender() {
+    setState(() {
+      _renderMarkdown = !_renderMarkdown;
+    });
+    if (_renderMarkdown) {
+      _editorFocusNode.unfocus();
+      if (_markdownScrollController.hasClients) {
+        _markdownScrollController.jumpTo(0);
+      }
+    } else {
+      _focusEditorOnNextFrame();
+    }
+  }
+
+  Future<void> _openMarkdownLink(String? href) async {
+    if (href == null || href.trim().isEmpty) return;
+    final uri = Uri.tryParse(href.trim());
+    if (uri == null) return;
+    await launchUrl(uri);
   }
 
   bool _isMouseBackButton(PointerDownEvent event) {
@@ -263,6 +289,92 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   Widget _buildDetail(Note active) {
+    if (_renderMarkdown) {
+      final theme = Theme.of(context);
+      final textColor = widget.isDark ? Colors.white : Colors.black87;
+      final subColor = widget.isDark ? Colors.white70 : Colors.black54;
+      final mutedBg = widget.isDark
+          ? Colors.white.withValues(alpha: 0.06)
+          : Colors.black.withValues(alpha: 0.05);
+      final borderColor = widget.isDark
+          ? Colors.white.withValues(alpha: 0.12)
+          : Colors.black.withValues(alpha: 0.10);
+      final markdownStyle = MarkdownStyleSheet.fromTheme(theme).copyWith(
+        p: TextStyle(fontSize: 13, height: 1.42, color: textColor),
+        a: TextStyle(
+          fontSize: 13,
+          height: 1.42,
+          color: theme.colorScheme.primary,
+          decoration: TextDecoration.underline,
+        ),
+        h1: TextStyle(
+          fontSize: 20,
+          height: 1.22,
+          fontWeight: FontWeight.w700,
+          color: textColor,
+        ),
+        h2: TextStyle(
+          fontSize: 17,
+          height: 1.25,
+          fontWeight: FontWeight.w700,
+          color: textColor,
+        ),
+        h3: TextStyle(
+          fontSize: 15,
+          height: 1.28,
+          fontWeight: FontWeight.w700,
+          color: textColor,
+        ),
+        listBullet: TextStyle(fontSize: 13, height: 1.42, color: textColor),
+        blockquote: TextStyle(fontSize: 13, height: 1.42, color: subColor),
+        blockquotePadding: const EdgeInsets.symmetric(
+          horizontal: 10,
+          vertical: 6,
+        ),
+        blockquoteDecoration: BoxDecoration(
+          color: mutedBg,
+          border: Border(left: BorderSide(color: borderColor, width: 3)),
+        ),
+        code: TextStyle(
+          fontSize: 12,
+          height: 1.36,
+          fontFamily: 'Menlo',
+          color: textColor,
+          backgroundColor: mutedBg,
+        ),
+        codeblockPadding: const EdgeInsets.all(8),
+        codeblockDecoration: BoxDecoration(
+          color: mutedBg,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        tableHead: TextStyle(fontSize: 12, color: textColor),
+        tableBody: TextStyle(fontSize: 12, color: textColor),
+        tableBorder: TableBorder.all(color: borderColor),
+        tableCellsPadding: const EdgeInsets.symmetric(
+          horizontal: 6,
+          vertical: 4,
+        ),
+        horizontalRuleDecoration: BoxDecoration(
+          border: Border(top: BorderSide(color: borderColor)),
+        ),
+      );
+
+      return Container(
+        width: double.infinity,
+        height: double.infinity,
+        padding: const EdgeInsets.only(left: 6, right: 6, bottom: 8),
+        child: Markdown(
+          data: _editorController.text,
+          selectable: true,
+          controller: _markdownScrollController,
+          physics: const BouncingScrollPhysics(),
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          styleSheet: markdownStyle,
+          onTapLink: (text, href, title) => _openMarkdownLink(href),
+        ),
+      );
+    }
+
     return Container(
       width: double.infinity,
       height: double.infinity,
@@ -378,6 +490,43 @@ class _NotesPaneState extends State<NotesPane> {
                 SizedBox(width: isCompact ? 2 : 4),
                 if (!_showList) ...[
                   Tooltip(
+                    message: _renderMarkdown ? '编辑便签' : 'Markdown 预览',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: AnimatedPress(
+                        onTap: _toggleMarkdownRender,
+                        child: Container(
+                          width: isCompact ? 26 : 32,
+                          height: isCompact ? 26 : 32,
+                          decoration: BoxDecoration(
+                            color: _renderMarkdown
+                                ? Theme.of(
+                                    context,
+                                  ).colorScheme.primary.withValues(alpha: 0.20)
+                                : (widget.isDark
+                                      ? Colors.white.withValues(alpha: 0.06)
+                                      : Colors.black.withValues(alpha: 0.04)),
+                            borderRadius: BorderRadius.circular(
+                              isCompact ? 0 : 8,
+                            ),
+                          ),
+                          child: Icon(
+                            _renderMarkdown
+                                ? Icons.edit_rounded
+                                : Icons.visibility_rounded,
+                            size: 15,
+                            color: _renderMarkdown
+                                ? Theme.of(context).colorScheme.primary
+                                : (widget.isDark
+                                      ? Colors.white.withValues(alpha: 0.6)
+                                      : Colors.black.withValues(alpha: 0.6)),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: isCompact ? 2 : 4),
+                  Tooltip(
                     message: '删除当前便签',
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
@@ -419,7 +568,10 @@ class _NotesPaneState extends State<NotesPane> {
                       onTap: () async {
                         await widget.state.createNote();
                         _syncActiveNote();
-                        setState(() => _showList = false);
+                        setState(() {
+                          _showList = false;
+                          _renderMarkdown = false;
+                        });
                         _focusEditorOnNextFrame();
                       },
                       child: Container(

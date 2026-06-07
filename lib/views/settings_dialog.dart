@@ -376,6 +376,84 @@ class _SettingsDialogState extends State<SettingsDialog> {
     });
   }
 
+  Widget _buildPanelOrderBlock({
+    required PanelPane pane,
+    required int index,
+    required Color textColor,
+    required Color subColor,
+    required Color accentColor,
+  }) {
+    final canMoveLeft = index > 0;
+    final canMoveRight = index < _panelOrder.length - 1;
+
+    return Expanded(
+      child: Container(
+        height: 72,
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+        decoration: BoxDecoration(
+          color: _isDarkTheme
+              ? Colors.white.withValues(alpha: 0.04)
+              : Colors.black.withValues(alpha: 0.03),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: _isDarkTheme
+                ? Colors.white.withValues(alpha: 0.08)
+                : Colors.black.withValues(alpha: 0.06),
+          ),
+        ),
+        child: Row(
+          children: [
+            IconButton(
+              onPressed: canMoveLeft
+                  ? () => _movePanelPane(index, index - 1)
+                  : null,
+              icon: const Icon(Icons.chevron_left_rounded),
+              iconSize: 18,
+              tooltip: '左移',
+              constraints: const BoxConstraints.tightFor(width: 24, height: 28),
+              padding: EdgeInsets.zero,
+              color: subColor,
+              disabledColor: subColor.withValues(alpha: 0.22),
+            ),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(_getPanelPaneIcon(pane), size: 20, color: accentColor),
+                  const SizedBox(height: 6),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      _getPanelPaneLabel(pane),
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: textColor,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            IconButton(
+              onPressed: canMoveRight
+                  ? () => _movePanelPane(index, index + 1)
+                  : null,
+              icon: const Icon(Icons.chevron_right_rounded),
+              iconSize: 18,
+              tooltip: '右移',
+              constraints: const BoxConstraints.tightFor(width: 24, height: 28),
+              padding: EdgeInsets.zero,
+              color: subColor,
+              disabledColor: subColor.withValues(alpha: 0.22),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final textColor = _isDarkTheme ? Colors.white : Colors.black87;
@@ -717,73 +795,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Column(
-                      children: List.generate(_panelOrder.length, (index) {
-                        final pane = _panelOrder[index];
-                        return Container(
-                          height: 34,
-                          margin: EdgeInsets.only(
-                            bottom: index == _panelOrder.length - 1 ? 0 : 6,
+                    Row(
+                      children: [
+                        for (
+                          var index = 0;
+                          index < _panelOrder.length;
+                          index++
+                        ) ...[
+                          if (index > 0) const SizedBox(width: 6),
+                          _buildPanelOrderBlock(
+                            pane: _panelOrder[index],
+                            index: index,
+                            textColor: textColor,
+                            subColor: subColor,
+                            accentColor: accentColor,
                           ),
-                          padding: const EdgeInsets.only(left: 10, right: 4),
-                          decoration: BoxDecoration(
-                            color: _isDarkTheme
-                                ? Colors.white.withValues(alpha: 0.04)
-                                : Colors.black.withValues(alpha: 0.03),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                _getPanelPaneIcon(pane),
-                                size: 15,
-                                color: textColor.withValues(alpha: 0.72),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  _getPanelPaneLabel(pane),
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    color: textColor,
-                                    fontWeight: FontWeight.w500,
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                onPressed: index == 0
-                                    ? null
-                                    : () => _movePanelPane(index, index - 1),
-                                icon: const Icon(
-                                  Icons.keyboard_arrow_up_rounded,
-                                  size: 18,
-                                ),
-                                tooltip: '上移',
-                                constraints: const BoxConstraints(
-                                  minWidth: 28,
-                                  minHeight: 28,
-                                ),
-                                padding: EdgeInsets.zero,
-                              ),
-                              IconButton(
-                                onPressed: index == _panelOrder.length - 1
-                                    ? null
-                                    : () => _movePanelPane(index, index + 1),
-                                icon: const Icon(
-                                  Icons.keyboard_arrow_down_rounded,
-                                  size: 18,
-                                ),
-                                tooltip: '下移',
-                                constraints: const BoxConstraints(
-                                  minWidth: 28,
-                                  minHeight: 28,
-                                ),
-                                padding: EdgeInsets.zero,
-                              ),
-                            ],
-                          ),
-                        );
-                      }),
+                        ],
+                      ],
                     ),
                     const SizedBox(height: 16),
 
