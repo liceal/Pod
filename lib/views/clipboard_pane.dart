@@ -1852,8 +1852,14 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                           child: SingleChildScrollView(
                             controller: _scrollController,
                             physics: const BouncingScrollPhysics(),
-                            child: SizedBox(
+                            hitTestBehavior: HitTestBehavior.opaque,
+                            child: Container(
                               width: viewportWidth,
+                              constraints: BoxConstraints(
+                                minHeight: viewportHeight,
+                              ),
+                              color: Colors.transparent,
+                              alignment: Alignment.topLeft,
                               child: textContent,
                             ),
                           ),
@@ -1885,14 +1891,19 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                           child: SingleChildScrollView(
                             controller: _scrollController,
                             physics: const BouncingScrollPhysics(),
+                            hitTestBehavior: HitTestBehavior.opaque,
                             child: SingleChildScrollView(
                               controller: _horizontalScrollController,
                               scrollDirection: Axis.horizontal,
                               physics: const BouncingScrollPhysics(),
-                              child: ConstrainedBox(
+                              hitTestBehavior: HitTestBehavior.opaque,
+                              child: Container(
                                 constraints: BoxConstraints(
                                   minWidth: viewportWidth,
+                                  minHeight: viewportHeight,
                                 ),
+                                color: Colors.transparent,
+                                alignment: Alignment.topLeft,
                                 child: textContent,
                               ),
                             ),
