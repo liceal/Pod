@@ -1628,18 +1628,23 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         : _fileSizeStr;
 
     final displayText = widget.item.content;
+    final isCompact = AppState().settings.themeStyle == ThemeStyle.compact;
 
     final detailBody = Container(
       width: widget.embedded ? double.infinity : dialogWidth,
       height: widget.embedded ? double.infinity : null,
-      padding: const EdgeInsets.all(4),
+      padding: widget.embedded ? EdgeInsets.zero : const EdgeInsets.all(4),
       child: Column(
         mainAxisSize: widget.embedded ? MainAxisSize.max : MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          Container(
+            height: widget.embedded ? (isCompact ? 26.0 : 32.0) : null,
+            padding: widget.embedded
+                ? const EdgeInsets.symmetric(horizontal: 4)
+                : const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            alignment: Alignment.center,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -1842,7 +1847,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
               ],
             ),
           ),
-          const SizedBox(height: 3),
+          SizedBox(
+            height: widget.embedded ? (isCompact ? 2.0 : 4.0) : 3.0,
+          ),
 
           // Content
           if (widget.embedded)

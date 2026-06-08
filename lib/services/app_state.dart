@@ -727,7 +727,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         w = settings.panelWidth;
       }
       lastCalculatedWidth = w;
-      final double wCollapsed = Platform.isMacOS ? screenWidth : w;
+      final double wCollapsed = screenWidth; // Both macOS and Windows collapsed strip span 100% screen width
       final double hCollapsed = Platform.isMacOS ? 350.0 : 3.0;
 
       if (isStartup) {
@@ -964,9 +964,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final display = await _getCurrentDisplay();
         final screenWidth = display.size.width;
         final position = display.visiblePosition ?? Offset.zero;
-        final x = position.dx + (screenWidth - lastCalculatedWidth) / 2;
+        final x = position.dx;
         await windowManager.setBounds(
-          Rect.fromLTWH(x, position.dy, lastCalculatedWidth, 3),
+          Rect.fromLTWH(x, position.dy, screenWidth, 3),
         );
         await windowManager.setIgnoreMouseEvents(false);
       } catch (e) {

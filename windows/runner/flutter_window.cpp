@@ -339,47 +339,8 @@ LRESULT CALLBACK FlutterWindow::LowLevelMouseProc(int n_code, WPARAM wparam,
         }
       }
     } else if (wparam == WM_MOUSEMOVE) {
-      const auto* mouse = reinterpret_cast<MSLLHOOKSTRUCT*>(lparam);
-      HWND hwnd = scroll_hook_window_->GetHandle();
-      if (hwnd && IsWindowVisible(hwnd)) {
-        RECT win_rect;
-        if (GetWindowRect(hwnd, &win_rect)) {
-          int win_width = win_rect.right - win_rect.left;
-          int win_height = win_rect.bottom - win_rect.top;
-          if (win_height <= 5) {
-            HMONITOR monitor = MonitorFromPoint(mouse->pt, MONITOR_DEFAULTTONULL);
-            if (monitor) {
-              MONITORINFO monitor_info;
-              monitor_info.cbSize = sizeof(MONITORINFO);
-              if (GetMonitorInfo(monitor, &monitor_info)) {
-                const RECT& frame = monitor_info.rcMonitor;
-                constexpr LONG kTopEdgeHeight = 20;
-                
-                bool is_on_top_edge =
-                    mouse->pt.x >= frame.left && mouse->pt.x < frame.right &&
-                    mouse->pt.y >= frame.top && mouse->pt.y <= frame.top + kTopEdgeHeight;
-                    
-                if (is_on_top_edge) {
-                  bool is_already_inside = 
-                      mouse->pt.x >= win_rect.left && mouse->pt.x < win_rect.right &&
-                      mouse->pt.y >= win_rect.top && mouse->pt.y < win_rect.bottom;
-                      
-                  if (!is_already_inside) {
-                    int target_x = mouse->pt.x - win_width / 2;
-                    if (target_x < frame.left) {
-                      target_x = frame.left;
-                    } else if (target_x + win_width > frame.right) {
-                      target_x = frame.right - win_width;
-                    }
-                    
-                    SetWindowPos(hwnd, HWND_TOPMOST, target_x, frame.top, win_width, win_height, SWP_NOACTIVATE);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
+      // The collapsed window is now 100% screen width on Windows as well,
+      // so it does not need to follow the mouse cursor horizontally.
     }
   }
   return CallNextHookEx(nullptr, n_code, wparam, lparam);
