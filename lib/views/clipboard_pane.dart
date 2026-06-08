@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -1184,6 +1185,156 @@ TextSpan _highlightDetailText(
 }
 
 // ══════════════════════════════════════════════════
+// Background-isolate highlight computation
+// ══════════════════════════════════════════════════
+
+/// Runs inside a background isolate – no Flutter UI objects allowed.
+/// Returns LINE-GROUPED tokens so the main thread can render only visible
+/// lines via ListView.builder (true virtualization, zero render jank).
+/// Each outer element = one source line; inner elements = tokens on that line.
+List<List<List<Object?>>> _computeHighlightTokensByLine(
+  Map<String, dynamic> args,
+) {
+  final text = args['text'] as String;
+  final itemType = args['itemType'] as String;
+  final isDark = args['isDark'] as bool;
+
+  final rawLines = text.split('\n');
+
+  if (text.length > _maxDetailHighlightLength) {
+    return rawLines
+        .map(
+          (l) =>
+              [
+                    [l, null, false, false],
+                  ]
+                  as List<List<Object?>>,
+        )
+        .toList();
+  }
+
+  RegExp pattern;
+  List<Object?> Function(Match) getStyle;
+
+  if (itemType == 'JSON') {
+    pattern = _detailJsonPattern;
+    final keyColor = isDark ? 0xFF9CDCFE : 0xFF0451A5;
+    final strColor = isDark ? 0xFFCE9178 : 0xFFA31515;
+    final numColor = isDark ? 0xFFB5CEA8 : 0xFF098658;
+    final boolColor = isDark ? 0xFF569CD6 : 0xFF0000FF;
+    getStyle = (m) {
+      if (m.group(1) != null) return [keyColor, true, false];
+      if (m.group(2) != null) return [strColor, false, false];
+      if (m.group(3) != null) return [boolColor, true, false];
+      return [numColor, false, false];
+    };
+  } else if (itemType == 'XML') {
+    pattern = _detailXmlPattern;
+    final tagColor = isDark ? 0xFF569CD6 : 0xFF800000;
+    final attrColor = isDark ? 0xFF9CDCFE : 0xFFFF0000;
+    final valColor = isDark ? 0xFFCE9178 : 0xFF0000FF;
+    final commentColor = isDark ? 0x59FFFFFF : 0x66000000;
+    getStyle = (m) {
+      if (m.group(1) != null) return [commentColor, false, true];
+      if (m.group(2) != null || m.group(5) != null)
+        return [tagColor, true, false];
+      if (m.group(3) != null) return [attrColor, false, false];
+      return [valColor, false, false];
+    };
+  } else if (itemType == 'CODE') {
+    pattern = _detailCodePattern;
+    final commentColor = isDark ? 0xFF6A9955 : 0xFF008000;
+    final strColor = isDark ? 0xFFCE9178 : 0xFFA31515;
+    final kwColor = isDark ? 0xFF569CD6 : 0xFF0000FF;
+    final typeColor = isDark ? 0xFF4EC9B0 : 0xFF267F99;
+    final numColor = isDark ? 0xFFB5CEA8 : 0xFF098658;
+    final fnColor = isDark ? 0xFFDCDCAA : 0xFF795E26;
+    getStyle = (m) {
+      if (m.group(1) != null || m.group(2) != null)
+        return [commentColor, false, true];
+      if (m.group(3) != null || m.group(4) != null)
+        return [strColor, false, false];
+      if (m.group(5) != null) return [kwColor, true, false];
+      if (m.group(6) != null) return [typeColor, false, false];
+      if (m.group(7) != null) return [numColor, false, false];
+      return [fnColor, false, false];
+    };
+  } else {
+    return rawLines
+        .map(
+          (l) =>
+              [
+                    [l, null, false, false],
+                  ]
+                  as List<List<Object?>>,
+        )
+        .toList();
+  }
+
+  // Tokenize entire text at once (multi-line constructs handled correctly).
+  final allTokens = <List<Object?>>[];
+  var lastIndex = 0;
+  for (final match in pattern.allMatches(text)) {
+    if (match.start > lastIndex) {
+      allTokens.add([
+        text.substring(lastIndex, match.start),
+        null,
+        false,
+        false,
+      ]);
+    }
+    final s = getStyle(match);
+    allTokens.add([match.group(0)!, s[0], s[1], s[2]]);
+    lastIndex = match.end;
+  }
+  if (lastIndex < text.length) {
+    allTokens.add([text.substring(lastIndex), null, false, false]);
+  }
+
+  // Group tokens into lines by splitting on embedded '\n' characters.
+  final lineGroups = <List<List<Object?>>>[[]];
+  for (final tok in allTokens) {
+    final str = tok[0] as String;
+    if (!str.contains('\n')) {
+      lineGroups.last.add(tok);
+    } else {
+      final parts = str.split('\n');
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].isNotEmpty) {
+          lineGroups.last.add([parts[i], tok[1], tok[2], tok[3]]);
+        }
+        if (i < parts.length - 1) lineGroups.add([]);
+      }
+    }
+  }
+  return lineGroups;
+}
+
+/// Build a TextSpan for ONE line from its pre-computed token list.
+/// Called lazily by ListView.builder – only for visible lines.
+TextSpan _buildLineSpan(List<List<Object?>> lineTokens, TextStyle baseStyle) {
+  if (lineTokens.isEmpty) return TextSpan(text: '', style: baseStyle);
+  return TextSpan(
+    style: baseStyle,
+    children: lineTokens.map<TextSpan>((t) {
+      final str = t[0] as String;
+      final colorVal = t[1] as int?;
+      final bold = t[2] as bool;
+      final italic = t[3] as bool;
+      if (colorVal == null && !bold && !italic) return TextSpan(text: str);
+      return TextSpan(
+        text: str,
+        style: TextStyle(
+          color: colorVal != null ? Color(colorVal) : null,
+          fontWeight: bold ? FontWeight.w600 : null,
+          fontStyle: italic ? FontStyle.italic : null,
+        ),
+      );
+    }).toList(),
+  );
+}
+
+// ══════════════════════════════════════════════════
 // Text / Image Detail Content Component
 // ══════════════════════════════════════════════════
 class _DetailDialogContent extends StatefulWidget {
@@ -1240,6 +1391,11 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   double _lastImageViewportHeight = 220.0;
   double _swipeDistance = 0;
   bool _isImageDetail = false;
+  bool _isHighlightComputing = false;
+  // Line-grouped tokens from isolate: outer list = lines, inner = tokens per line.
+  List<List<List<Object?>>>? _highlightLineTokens;
+  // Plain lines for non-highlighted / loading fallback.
+  List<String> _displayLines = const [];
 
   @override
   void initState() {
@@ -1255,6 +1411,11 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       widget.item.content,
     );
     _highlightEnabled = _isHighlightAvailable;
+    _displayLines = widget.item.content.split('\n');
+    if (_isHighlightAvailable) {
+      _isHighlightComputing = true;
+      _startHighlightCompute(widget.item.content, itemType);
+    }
 
     final isImage = itemType == 'IMAGE';
     _isImageDetail = isImage;
@@ -1327,6 +1488,22 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     super.dispose();
   }
 
+  @override
+  void didUpdateWidget(_DetailDialogContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Re-run highlight computation if the theme flips while detail is open
+    if (oldWidget.isDark != widget.isDark &&
+        _highlightEnabled &&
+        _isHighlightAvailable) {
+      _highlightLineTokens = null;
+      _cachedDetailTextSpan = null;
+      _cachedDetailHighlightEnabled = null;
+      _isHighlightComputing = true;
+      final itemType = AppState().getClipboardItemType(widget.item);
+      _startHighlightCompute(widget.item.content, itemType);
+    }
+  }
+
   void _handleImageTransformChanged() {
     widget.onImageTransformChanged?.call(_transformationController.value);
   }
@@ -1357,32 +1534,37 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     );
   }
 
-  TextSpan _getDetailTextSpan(
-    String displayText,
-    String itemType,
-    TextStyle textStyle,
-  ) {
-    if (_cachedDetailTextSpan != null &&
-        _cachedDetailText == displayText &&
-        _cachedDetailItemType == itemType &&
-        _cachedDetailIsDark == widget.isDark &&
-        _cachedDetailHighlightEnabled == _highlightEnabled &&
-        _cachedDetailTextStyle == textStyle) {
-      return _cachedDetailTextSpan!;
+  /// Returns the TextSpan for ONE visible line (called lazily from ListView).
+  TextSpan _getLineSpan(int lineIndex, TextStyle textStyle) {
+    if (_highlightEnabled && _highlightLineTokens != null) {
+      final lineTokens = lineIndex < _highlightLineTokens!.length
+          ? _highlightLineTokens![lineIndex]
+          : const <List<Object?>>[];
+      return _buildLineSpan(lineTokens, textStyle);
     }
+    final txt = lineIndex < _displayLines.length
+        ? _displayLines[lineIndex]
+        : '';
+    return TextSpan(text: txt, style: textStyle);
+  }
 
-    final span = _highlightEnabled
-        ? _highlightDetailText(displayText, itemType, widget.isDark, textStyle)
-        : TextSpan(text: displayText, style: textStyle);
-
-    _cachedDetailTextSpan = span;
-    _cachedDetailText = displayText;
-    _cachedDetailItemType = itemType;
-    _cachedDetailIsDark = widget.isDark;
-    _cachedDetailHighlightEnabled = _highlightEnabled;
-    _cachedDetailTextStyle = textStyle;
-
-    return span;
+  /// Kicks off background-isolate tokenization and updates state when done.
+  Future<void> _startHighlightCompute(String text, String itemType) {
+    return compute(_computeHighlightTokensByLine, {
+          'text': text,
+          'itemType': itemType,
+          'isDark': widget.isDark,
+        })
+        .then((lineTokens) {
+          if (!mounted || !_highlightEnabled) return;
+          setState(() {
+            _highlightLineTokens = lineTokens;
+            _isHighlightComputing = false;
+          });
+        })
+        .catchError((_) {
+          if (mounted) setState(() => _isHighlightComputing = false);
+        });
   }
 
   void _reset() {
@@ -1538,19 +1720,55 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         '代码高亮',
                         style: TextStyle(fontSize: 9, color: subColor),
                       ),
+                      // Fixed-size placeholder: always 3+8 px wide so the
+                      // switch never shifts when the spinner shows/hides.
+                      const SizedBox(width: 3),
+                      SizedBox(
+                        width: 8,
+                        height: 8,
+                        // child: (_isHighlightComputing && _highlightEnabled)
+                        //     ? CircularProgressIndicator(
+                        //         strokeWidth: 1.2,
+                        //         color: subColor,
+                        //       )
+                        //     : null,
+                      ),
                       const SizedBox(width: 2),
-                      Transform.scale(
-                        scale: 0.6,
-                        child: Switch(
-                          value: _highlightEnabled,
-                          activeColor: themeAccent,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          onChanged: (val) {
-                            setState(() {
-                              _highlightEnabled = val;
-                            });
-                          },
+                      SizedBox(
+                        width: 36,
+                        height: 22,
+                        child: Transform.scale(
+                          scale: 0.6,
+                          child: OverflowBox(
+                            minWidth: 60,
+                            maxWidth: 60,
+                            minHeight: 40,
+                            maxHeight: 40,
+                            child: Switch(
+                              value: _highlightEnabled,
+                              activeColor: themeAccent,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              onChanged: (val) {
+                                setState(() {
+                                  _highlightEnabled = val;
+                                  _highlightLineTokens = null;
+                                  _cachedDetailTextSpan = null;
+                                  _cachedDetailHighlightEnabled = null;
+                                  _isHighlightComputing = val;
+                                });
+                                if (val) {
+                                  final tp = AppState().getClipboardItemType(
+                                    widget.item,
+                                  );
+                                  _startHighlightCompute(
+                                    widget.item.content,
+                                    tp,
+                                  );
+                                }
+                              },
+                            ),
+                          ),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -1826,10 +2044,24 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                       : null,
                 );
 
-                final textContent = Text.rich(
-                  _getDetailTextSpan(displayText, itemType, textStyle),
-                  softWrap: _wrapCodeLines,
-                  overflow: TextOverflow.visible,
+                final lineCount =
+                    (_highlightEnabled && _highlightLineTokens != null)
+                    ? _highlightLineTokens!.length
+                    : _displayLines.length;
+
+                // Line-virtualized builder: Flutter only lays out visible
+                // lines (~20), so even 50K-line files never freeze the UI.
+                Widget lineListView = ListView.builder(
+                  controller: _scrollController,
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: lineCount,
+                  itemBuilder: (_, i) => Text.rich(
+                    _getLineSpan(i, textStyle),
+                    softWrap: _wrapCodeLines,
+                    overflow: _wrapCodeLines
+                        ? TextOverflow.visible
+                        : TextOverflow.clip,
+                  ),
                 );
 
                 final scrollBehavior = ScrollConfiguration.of(
@@ -1840,8 +2072,8 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   return SelectionArea(
                     child: Scrollbar(
                       controller: _scrollController,
-                      notificationPredicate: (notification) =>
-                          notification.metrics.axis == Axis.vertical,
+                      notificationPredicate: (n) =>
+                          n.metrics.axis == Axis.vertical,
                       thumbVisibility: true,
                       thickness: 4,
                       radius: const Radius.circular(999),
@@ -1849,20 +2081,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         behavior: scrollBehavior,
                         child: SizedBox(
                           height: viewportHeight,
-                          child: SingleChildScrollView(
-                            controller: _scrollController,
-                            physics: const BouncingScrollPhysics(),
-                            hitTestBehavior: HitTestBehavior.opaque,
-                            child: Container(
-                              width: viewportWidth,
-                              constraints: BoxConstraints(
-                                minHeight: viewportHeight,
-                              ),
-                              color: Colors.transparent,
-                              alignment: Alignment.topLeft,
-                              child: textContent,
-                            ),
-                          ),
+                          child: lineListView,
                         ),
                       ),
                     ),
@@ -1872,15 +2091,15 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                 return SelectionArea(
                   child: Scrollbar(
                     controller: _scrollController,
-                    notificationPredicate: (notification) =>
-                        notification.metrics.axis == Axis.vertical,
+                    notificationPredicate: (n) =>
+                        n.metrics.axis == Axis.vertical,
                     thumbVisibility: true,
                     thickness: 4,
                     radius: const Radius.circular(999),
                     child: Scrollbar(
                       controller: _horizontalScrollController,
-                      notificationPredicate: (notification) =>
-                          notification.metrics.axis == Axis.horizontal,
+                      notificationPredicate: (n) =>
+                          n.metrics.axis == Axis.horizontal,
                       thumbVisibility: false,
                       thickness: 3,
                       radius: const Radius.circular(999),
@@ -1889,23 +2108,12 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         child: SizedBox(
                           height: viewportHeight,
                           child: SingleChildScrollView(
-                            controller: _scrollController,
+                            controller: _horizontalScrollController,
+                            scrollDirection: Axis.horizontal,
                             physics: const BouncingScrollPhysics(),
-                            hitTestBehavior: HitTestBehavior.opaque,
-                            child: SingleChildScrollView(
-                              controller: _horizontalScrollController,
-                              scrollDirection: Axis.horizontal,
-                              physics: const BouncingScrollPhysics(),
-                              hitTestBehavior: HitTestBehavior.opaque,
-                              child: Container(
-                                constraints: BoxConstraints(
-                                  minWidth: viewportWidth,
-                                  minHeight: viewportHeight,
-                                ),
-                                color: Colors.transparent,
-                                alignment: Alignment.topLeft,
-                                child: textContent,
-                              ),
+                            child: SizedBox(
+                              width: viewportWidth * 4,
+                              child: lineListView,
                             ),
                           ),
                         ),

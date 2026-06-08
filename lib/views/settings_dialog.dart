@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:window_manager/window_manager.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
@@ -67,6 +68,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   Future<void> _selectDataDirectory() async {
     try {
+      await windowManager.setAlwaysOnTop(false);
       final selected = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择数据存储文件夹',
       );
@@ -77,11 +79,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
       }
     } catch (e) {
       debugPrint('Failed to select directory: $e');
+    } finally {
+      await windowManager.setAlwaysOnTop(true);
     }
   }
 
   Future<void> _manualSyncData() async {
     try {
+      await windowManager.setAlwaysOnTop(false);
       final selected = await FilePicker.platform.getDirectoryPath(
         dialogTitle: '选择源数据文件夹（导入合并）',
       );
@@ -193,6 +198,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       widget.state.setDialogOpen(false);
     } catch (e) {
       debugPrint('Failed to sync directory: $e');
+    } finally {
+      await windowManager.setAlwaysOnTop(true);
     }
   }
 
