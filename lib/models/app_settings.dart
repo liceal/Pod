@@ -32,6 +32,7 @@ class AppSettings {
   final double backdropOpacity;
   final int clipboardHistoryLimit;
   final List<PanelPane> panelOrder;
+  final Map<PanelPane, double> panelWeights;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -53,12 +54,14 @@ class AppSettings {
     this.backdropOpacity = 0.92,
     int clipboardHistoryLimit = defaultClipboardHistoryLimit,
     List<PanelPane>? panelOrder,
+    Map<PanelPane, double>? panelWeights,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
          clipboardHistoryLimit,
        ),
-       panelOrder = normalizePanelOrder(panelOrder);
+       panelOrder = normalizePanelOrder(panelOrder),
+       panelWeights = normalizePanelWeights(panelWeights);
 
   static int normalizeClipboardHistoryLimit(int? value) {
     return (value ?? defaultClipboardHistoryLimit)
@@ -81,6 +84,24 @@ class AppSettings {
     return List.unmodifiable(result);
   }
 
+  static Map<PanelPane, double> normalizePanelWeights(
+    Map<PanelPane, double>? value,
+  ) {
+    final result = <PanelPane, double>{
+      PanelPane.clipboard: 1.0,
+      PanelPane.files: 1.0,
+      PanelPane.notes: 1.0,
+    };
+    if (value != null) {
+      value.forEach((k, v) {
+        if (result.containsKey(k)) {
+          result[k] = v;
+        }
+      });
+    }
+    return Map.unmodifiable(result);
+  }
+
   AppSettings copyWith({
     TriggerMode? triggerMode,
     String? hotkey,
@@ -98,6 +119,7 @@ class AppSettings {
     double? backdropOpacity,
     int? clipboardHistoryLimit,
     List<PanelPane>? panelOrder,
+    Map<PanelPane, double>? panelWeights,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -117,6 +139,7 @@ class AppSettings {
       clipboardHistoryLimit:
           clipboardHistoryLimit ?? this.clipboardHistoryLimit,
       panelOrder: panelOrder ?? this.panelOrder,
+      panelWeights: panelWeights ?? this.panelWeights,
     );
   }
 
@@ -138,6 +161,7 @@ class AppSettings {
       'backdropOpacity': backdropOpacity,
       'clipboardHistoryLimit': clipboardHistoryLimit,
       'panelOrder': panelOrder.map((pane) => pane.name).toList(),
+      'panelWeights': panelWeights.map((pane, w) => MapEntry(pane.name, w)),
     };
   }
 
@@ -171,6 +195,26 @@ class AppSettings {
       return normalizePanelOrder(panes);
     }
 
+    Map<PanelPane, double> parsePanelWeights(Object? value) {
+      final result = <PanelPane, double>{
+        PanelPane.clipboard: 1.0,
+        PanelPane.files: 1.0,
+        PanelPane.notes: 1.0,
+      };
+      if (value is Map) {
+        value.forEach((k, v) {
+          final pane = PanelPane.values.cast<PanelPane?>().firstWhere(
+            (p) => p?.name == k,
+            orElse: () => null,
+          );
+          if (pane != null && v is num) {
+            result[pane] = v.toDouble();
+          }
+        });
+      }
+      return result;
+    }
+
     return AppSettings(
       triggerMode: parseTriggerMode(json['triggerMode'] as String?),
       hotkey: json['hotkey'] as String? ?? 'alt+u',
@@ -191,6 +235,7 @@ class AppSettings {
         (json['clipboardHistoryLimit'] as num?)?.toInt(),
       ),
       panelOrder: parsePanelOrder(json['panelOrder']),
+      panelWeights: parsePanelWeights(json['panelWeights']),
     );
   }
 }
