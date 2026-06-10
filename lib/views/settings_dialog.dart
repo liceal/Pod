@@ -375,14 +375,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
     };
   }
 
-  void _movePanelPane(int fromIndex, int toIndex) {
-    if (toIndex < 0 || toIndex >= _panelOrder.length) return;
-    setState(() {
-      final pane = _panelOrder.removeAt(fromIndex);
-      _panelOrder.insert(toIndex, pane);
-    });
-  }
-
   Widget _buildPanelOrderBlock({
     required PanelPane pane,
     required int index,
@@ -390,73 +382,38 @@ class _SettingsDialogState extends State<SettingsDialog> {
     required Color subColor,
     required Color accentColor,
   }) {
-    final canMoveLeft = index > 0;
-    final canMoveRight = index < _panelOrder.length - 1;
-
-    return Expanded(
-      child: Container(
-        height: 72,
-        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-        decoration: BoxDecoration(
+    return Container(
+      height: 72,
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+      decoration: BoxDecoration(
+        color: _isDarkTheme
+            ? Colors.white.withValues(alpha: 0.04)
+            : Colors.black.withValues(alpha: 0.03),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
           color: _isDarkTheme
-              ? Colors.white.withValues(alpha: 0.04)
-              : Colors.black.withValues(alpha: 0.03),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: _isDarkTheme
-                ? Colors.white.withValues(alpha: 0.08)
-                : Colors.black.withValues(alpha: 0.06),
-          ),
+              ? Colors.white.withValues(alpha: 0.08)
+              : Colors.black.withValues(alpha: 0.06),
         ),
-        child: Row(
-          children: [
-            IconButton(
-              onPressed: canMoveLeft
-                  ? () => _movePanelPane(index, index - 1)
-                  : null,
-              icon: const Icon(Icons.chevron_left_rounded),
-              iconSize: 18,
-              tooltip: '左移',
-              constraints: const BoxConstraints.tightFor(width: 24, height: 28),
-              padding: EdgeInsets.zero,
-              color: subColor,
-              disabledColor: subColor.withValues(alpha: 0.22),
-            ),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(_getPanelPaneIcon(pane), size: 20, color: accentColor),
-                  const SizedBox(height: 6),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      _getPanelPaneLabel(pane),
-                      maxLines: 1,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: textColor,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(_getPanelPaneIcon(pane), size: 20, color: accentColor),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              _getPanelPaneLabel(pane),
+              maxLines: 1,
+              style: TextStyle(
+                fontSize: 12,
+                color: textColor,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            IconButton(
-              onPressed: canMoveRight
-                  ? () => _movePanelPane(index, index + 1)
-                  : null,
-              icon: const Icon(Icons.chevron_right_rounded),
-              iconSize: 18,
-              tooltip: '右移',
-              constraints: const BoxConstraints.tightFor(width: 24, height: 28),
-              padding: EdgeInsets.zero,
-              color: subColor,
-              disabledColor: subColor.withValues(alpha: 0.22),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -802,23 +759,56 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        for (
-                          var index = 0;
-                          index < _panelOrder.length;
-                          index++
-                        ) ...[
-                          if (index > 0) const SizedBox(width: 6),
-                          _buildPanelOrderBlock(
-                            pane: _panelOrder[index],
-                            index: index,
-                            textColor: textColor,
-                            subColor: subColor,
-                            accentColor: accentColor,
-                          ),
+                    SizedBox(
+                      height: 72,
+                      child: ReorderableListView(
+                        scrollDirection: Axis.horizontal,
+                        buildDefaultDragHandles: false,
+                        onReorder: (int oldIndex, int newIndex) {
+                          setState(() {
+                            if (oldIndex < newIndex) {
+                              newIndex -= 1;
+                            }
+                            final pane = _panelOrder.removeAt(oldIndex);
+                            _panelOrder.insert(newIndex, pane);
+                          });
+                        },
+                        proxyDecorator: (Widget child, int index, Animation<double> animation) {
+                          return AnimatedBuilder(
+                            animation: animation,
+                            builder: (BuildContext context, Widget? child) {
+                              return Material(
+                                elevation: 4.0,
+                                color: Colors.transparent,
+                                child: child,
+                              );
+                            },
+                            child: child,
+                          );
+                        },
+                        children: [
+                          for (
+                            var index = 0;
+                            index < _panelOrder.length;
+                            index++
+                          )
+                            ReorderableDragStartListener(
+                              key: ValueKey(_panelOrder[index]),
+                              index: index,
+                              child: Container(
+                                width: 120,
+                                margin: const EdgeInsets.only(right: 6),
+                                child: _buildPanelOrderBlock(
+                                  pane: _panelOrder[index],
+                                  index: index,
+                                  textColor: textColor,
+                                  subColor: subColor,
+                                  accentColor: accentColor,
+                                ),
+                              ),
+                            ),
                         ],
-                      ],
+                      ),
                     ),
                     const SizedBox(height: 16),
 

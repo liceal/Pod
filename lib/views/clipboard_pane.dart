@@ -542,8 +542,10 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                   ]
                 : null,
           ),
-          child: Row(
-            children: [
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 24),
+            child: Row(
+              children: [
               Container(
                 margin: const EdgeInsets.only(right: 6),
                 child: Tooltip(
@@ -592,99 +594,90 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                   ],
                 ),
               ),
-              const SizedBox(width: 4),
-              // Fixed-width right section — no layout shift
-              SizedBox(
-                width: 78,
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 180),
-                  transitionBuilder:
-                      (Widget child, Animation<double> animation) {
-                        return FadeTransition(
-                          opacity: animation,
-                          child: ScaleTransition(
-                            scale: animation,
-                            child: child,
+              // Dynamic-width right section — collapses completely to let text stretch to the right
+              _isCopied
+                  ? SizedBox(
+                      height: 24,
+                      child: Row(
+                        key: const ValueKey('copied_indicator'),
+                        mainAxisSize: MainAxisSize.min,
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Icon(
+                            Icons.check_circle_rounded,
+                            size: 13,
+                            color: themeAccent,
                           ),
-                        );
-                      },
-                  child: _isCopied
+                          const SizedBox(width: 4),
+                          Text(
+                            '已复制',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: themeAccent,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    )
+                  : (_isHovered || widget.isFavorite)
                       ? SizedBox(
-                          height: 24,
-                          child: Row(
-                            key: const ValueKey('copied_indicator'),
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              Icon(
-                                Icons.check_circle_rounded,
-                                size: 13,
-                                color: themeAccent,
-                              ),
-                              const SizedBox(width: 4),
-                              Text(
-                                '已复制',
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  color: themeAccent,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : SizedBox(
                           height: 24,
                           child: Row(
                             key: const ValueKey('normal_actions'),
                             mainAxisSize: MainAxisSize.min,
                             mainAxisAlignment: MainAxisAlignment.end,
                             children: [
-                              _IconActionButton(
-                                icon: Icons.info_outline,
-                                iconColor: widget.isDark
-                                    ? Colors.white60
-                                    : Colors.black54,
-                                hoverBgColor: widget.isDark
-                                    ? Colors.white.withOpacity(0.15)
-                                    : Colors.black.withOpacity(0.1),
-                                visible: _isHovered,
-                                isDark: widget.isDark,
-                                onTap: widget.onOpenDetail,
-                              ),
-                              _IconActionButton(
-                                icon: widget.isFavorite
-                                    ? Icons.star_rounded
-                                    : Icons.star_outline_rounded,
-                                iconColor: widget.isFavorite
-                                    ? Colors.amber
-                                    : (widget.isDark
-                                          ? Colors.white60
-                                          : Colors.black54),
-                                hoverBgColor: widget.isDark
-                                    ? Colors.amber.withOpacity(0.15)
-                                    : Colors.amber.withOpacity(0.1),
-                                visible: _isHovered || widget.isFavorite,
-                                isDark: widget.isDark,
-                                onTap: _handleFavoriteToggle,
-                              ),
-                              _IconActionButton(
-                                icon: Icons.close,
-                                iconColor: widget.isDark
-                                    ? Colors.red.withOpacity(0.7)
-                                    : Colors.red,
-                                hoverBgColor: widget.isDark
-                                    ? Colors.red.withOpacity(0.15)
-                                    : Colors.red.withOpacity(0.1),
-                                visible: _isHovered,
-                                isDark: widget.isDark,
-                                onTap: _handleDelete,
-                              ),
+                              if (_isHovered) ...[
+                                _IconActionButton(
+                                  icon: Icons.info_outline,
+                                  iconColor: widget.isDark
+                                      ? Colors.white60
+                                      : Colors.black54,
+                                  hoverBgColor: widget.isDark
+                                      ? Colors.white.withOpacity(0.15)
+                                      : Colors.black.withOpacity(0.1),
+                                  isDark: widget.isDark,
+                                  onTap: widget.onOpenDetail,
+                                ),
+                                const SizedBox(width: 4),
+                              ],
+                              if (_isHovered || widget.isFavorite) ...[
+                                _IconActionButton(
+                                  icon: widget.isFavorite
+                                      ? Icons.star_rounded
+                                      : Icons.star_outline_rounded,
+                                  iconColor: widget.isFavorite
+                                      ? Colors.amber
+                                      : (widget.isDark
+                                            ? Colors.white60
+                                            : Colors.black54),
+                                  hoverBgColor: widget.isDark
+                                      ? Colors.amber.withOpacity(0.15)
+                                      : Colors.amber.withOpacity(0.1),
+                                  isDark: widget.isDark,
+                                  onTap: _handleFavoriteToggle,
+                                ),
+                                if (_isHovered) const SizedBox(width: 4),
+                              ],
+                              if (_isHovered)
+                                _IconActionButton(
+                                  icon: Icons.close,
+                                  iconColor: widget.isDark
+                                      ? Colors.red.withOpacity(0.7)
+                                      : Colors.red,
+                                  hoverBgColor: widget.isDark
+                                      ? Colors.red.withOpacity(0.15)
+                                      : Colors.red.withOpacity(0.1),
+                                  isDark: widget.isDark,
+                                  onTap: _handleDelete,
+                                ),
                             ],
                           ),
-                        ),
-                ),
-              ),
+                        )
+                      : const SizedBox.shrink(),
             ],
+          ),
           ),
         ),
       ),
@@ -699,7 +692,6 @@ class _IconActionButton extends StatefulWidget {
   final IconData icon;
   final Color iconColor;
   final Color hoverBgColor;
-  final bool visible;
   final bool isDark;
   final VoidCallback onTap;
 
@@ -707,7 +699,6 @@ class _IconActionButton extends StatefulWidget {
     required this.icon,
     required this.iconColor,
     required this.hoverBgColor,
-    required this.visible,
     required this.isDark,
     required this.onTap,
   });
@@ -741,7 +732,7 @@ class _IconActionButtonState extends State<_IconActionButton> {
           child: Icon(
             widget.icon,
             size: 14,
-            color: widget.visible ? widget.iconColor : Colors.transparent,
+            color: widget.iconColor,
           ),
         ),
       ),

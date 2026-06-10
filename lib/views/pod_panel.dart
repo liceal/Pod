@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
@@ -29,6 +30,7 @@ class _PodPanelState extends State<PodPanel>
   Timer? _hoverTimer;
   bool _isMouseInside = false;
   bool _isDragDropReady = false;
+  Map<PanelPane, double>? _dragWeights;
 
   @override
   void initState() {
@@ -338,35 +340,81 @@ class _PodPanelState extends State<PodPanel>
                                     children: [
                                       // Main Columns Content
                                       Expanded(
-                                        child: Row(
-                                          children: [
-                                            for (final entry
-                                                in widget
-                                                    .state
-                                                    .settings
-                                                    .panelOrder
-                                                    .asMap()
-                                                    .entries) ...[
-                                              Expanded(
-                                                child: _buildPane(
-                                                  entry.value,
-                                                  animatedIsDark,
+                                        child: LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final double totalW = constraints.maxWidth;
+                                            final panes = widget.state.settings.panelOrder;
+                                            final int n = panes.length;
+                                            final double wAvailable = totalW - ((n - 1) * 1.0);
+
+                                            final currentWeights = _dragWeights ?? widget.state.settings.panelWeights;
+                                            final double totalWeight = currentWeights.values.fold(0.0, (sum, w) => sum + w);
+
+                                            final resolvedTotalWeight = totalWeight > 0.0 ? totalWeight : n.toDouble();
+                                            final resolvedWeights = totalWeight > 0.0 ? currentWeights : {
+                                              for (final pane in panes) pane: 1.0
+                                            };
+
+                                            final children = <Widget>[];
+                                            for (var i = 0; i < n; i++) {
+                                              final paneW = wAvailable * ((resolvedWeights[panes[i]] ?? 1.0) / resolvedTotalWeight);
+                                              children.add(
+                                                SizedBox(
+                                                  width: paneW,
+                                                  child: _buildPane(
+                                                    panes[i],
+                                                    animatedIsDark,
+                                                  ),
                                                 ),
-                                              ),
-                                              if (entry.key <
-                                                  widget
-                                                          .state
-                                                          .settings
-                                                          .panelOrder
-                                                          .length -
-                                                      1)
-                                                VerticalDivider(
-                                                  width: 1,
-                                                  thickness: 1,
-                                                  color: dividerColor,
-                                                ),
-                                            ],
-                                          ],
+                                              );
+
+                                              if (i < n - 1) {
+                                                final dividerIndex = i;
+                                                children.add(
+                                                  DraggableDivider(
+                                                    color: dividerColor,
+                                                    onDragUpdate: (dx) {
+                                                      setState(() {
+                                                        final currentWeights = _dragWeights ?? widget.state.settings.panelWeights;
+                                                        final Map<PanelPane, double> newWeights = Map.from(currentWeights);
+                                                        final totalWeight = newWeights.values.fold(0.0, (sum, w) => sum + w);
+
+                                                        final resolvedTotal = totalWeight > 0.0 ? totalWeight : n.toDouble();
+                                                        final pixelWidths = panes.map((pane) => wAvailable * ((newWeights[pane] ?? 1.0) / resolvedTotal)).toList();
+
+                                                        final sumBefore = pixelWidths[dividerIndex] + pixelWidths[dividerIndex + 1];
+                                                        double newWi = pixelWidths[dividerIndex] + dx;
+
+                                                        const double minWidth = 100.0;
+                                                        newWi = newWi.clamp(minWidth, sumBefore - minWidth);
+
+                                                        pixelWidths[dividerIndex] = newWi;
+                                                        pixelWidths[dividerIndex + 1] = sumBefore - newWi;
+
+                                                        for (var j = 0; j < n; j++) {
+                                                          newWeights[panes[j]] = pixelWidths[j];
+                                                        }
+
+                                                        _dragWeights = newWeights;
+                                                      });
+                                                    },
+                                                    onDragEnd: () async {
+                                                      if (_dragWeights != null) {
+                                                        final updatedSettings = widget.state.settings.copyWith(
+                                                          panelWeights: _dragWeights,
+                                                        );
+                                                        await widget.state.updateSettings(updatedSettings);
+                                                      }
+                                                    },
+                                                  ),
+                                                );
+                                              }
+                                            }
+
+                                            return Row(
+                                              children: children,
+                                            );
+                                          },
                                         ),
                                       ),
                                     ],
@@ -468,5 +516,146 @@ class _PodPanelState extends State<PodPanel>
         ); // AnimatedTheme
       },
     );
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Custom Draggable Divider Component
+// ══════════════════════════════════════════════════
+class DraggableDivider extends StatefulWidget {
+  final Color color;
+  final ValueChanged<double> onDragUpdate;
+  final VoidCallback? onDragEnd;
+
+  const DraggableDivider({
+    super.key,
+    required this.color,
+    required this.onDragUpdate,
+    this.onDragEnd,
+  });
+
+  @override
+  State<DraggableDivider> createState() => _DraggableDividerState();
+}
+
+class _DraggableDividerState extends State<DraggableDivider> {
+  @override
+  Widget build(BuildContext context) {
+    return ExpandedHitTestMinSize(
+      minWidth: 32.0,
+      child: SizedBox(
+        width: 1.0,
+        height: double.infinity,
+        child: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Positioned.fill(
+              child: Container(
+                color: widget.color,
+              ),
+            ),
+            Positioned(
+              left: -16.0,
+              right: -16.0,
+              top: 0,
+              bottom: 0,
+              child: MouseRegion(
+                cursor: SystemMouseCursors.resizeLeftRight,
+                child: GestureDetector(
+                  behavior: HitTestBehavior.translucent,
+                  onHorizontalDragUpdate: (details) {
+                    widget.onDragUpdate(details.delta.dx);
+                  },
+                  onHorizontalDragEnd: (_) {
+                    widget.onDragEnd?.call();
+                  },
+                  onHorizontalDragCancel: () {
+                    widget.onDragEnd?.call();
+                  },
+                  child: Container(
+                    color: Colors.transparent,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Custom RenderBox to expand hit test bounds without changing layout width
+// ══════════════════════════════════════════════════
+class ExpandedHitTestMinSize extends SingleChildRenderObjectWidget {
+  final double minWidth;
+  final double minHeight;
+
+  const ExpandedHitTestMinSize({
+    super.key,
+    this.minWidth = 0.0,
+    this.minHeight = 0.0,
+    super.child,
+  });
+
+  @override
+  RenderExpandedHitTestMinSize createRenderObject(BuildContext context) {
+    return RenderExpandedHitTestMinSize(
+      minWidth: minWidth,
+      minHeight: minHeight,
+    );
+  }
+
+  @override
+  void updateRenderObject(
+    BuildContext context,
+    RenderExpandedHitTestMinSize renderObject,
+  ) {
+    renderObject
+      ..minWidth = minWidth
+      ..minHeight = minHeight;
+  }
+}
+
+class RenderExpandedHitTestMinSize extends RenderProxyBox {
+  double minWidth;
+  double minHeight;
+
+  RenderExpandedHitTestMinSize({
+    required this.minWidth,
+    required this.minHeight,
+    RenderBox? child,
+  }) : super(child);
+
+  @override
+  bool hitTest(BoxHitTestResult result, {required Offset position}) {
+    final double widthDiff = minWidth > size.width ? minWidth - size.width : 0.0;
+    final double heightDiff = minHeight > size.height ? minHeight - size.height : 0.0;
+
+    final Rect expandedBounds = Rect.fromLTWH(
+      -widthDiff / 2.0,
+      -heightDiff / 2.0,
+      size.width + widthDiff,
+      size.height + heightDiff,
+    );
+
+    if (expandedBounds.contains(position)) {
+      if (child != null) {
+        // Clamp position to be inside the child's actual size bounds so that the child's
+        // hitTest (and its descendants' hitTest) passes.
+        final Offset clampedPosition = Offset(
+          position.dx.clamp(0.0, size.width),
+          position.dy.clamp(0.0, size.height),
+        );
+        if (child!.hitTest(result, position: clampedPosition)) {
+          result.add(BoxHitTestEntry(this, position));
+          return true;
+        }
+      }
+      result.add(BoxHitTestEntry(this, position));
+      return true;
+    }
+    return false;
   }
 }
