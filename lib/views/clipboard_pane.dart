@@ -129,7 +129,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
             },
           );
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -501,10 +501,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
           margin: const EdgeInsets.only(bottom: 1),
-          padding: const EdgeInsets.symmetric(
-            horizontal: 8,
-            vertical: 3,
-          ),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.zero,
             border: Border.all(

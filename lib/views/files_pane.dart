@@ -334,7 +334,7 @@ class _FilesPaneState extends State<FilesPane> {
     final mainContent = Stack(
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2.0),
+          padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
