@@ -1,7 +1,5 @@
 enum TriggerMode { both, hotkeyOnly, hoverOnly, scrollOnly }
 
-enum ThemeStyle { normal, compact }
-
 enum PanelPane { clipboard, files, notes }
 
 class AppSettings {
@@ -28,7 +26,6 @@ class AppSettings {
   final int autoCollapseDelay;
   final String? customFilesPath;
   final String? dataDirectory; // Unified data storage location
-  final ThemeStyle themeStyle;
   final double backdropOpacity;
   final int clipboardHistoryLimit;
   final List<PanelPane> panelOrder;
@@ -50,7 +47,6 @@ class AppSettings {
     this.autoCollapseDelay = 3,
     this.customFilesPath,
     this.dataDirectory,
-    this.themeStyle = ThemeStyle.compact,
     this.backdropOpacity = 0.92,
     int clipboardHistoryLimit = defaultClipboardHistoryLimit,
     List<PanelPane>? panelOrder,
@@ -115,7 +111,6 @@ class AppSettings {
     int? autoCollapseDelay,
     String? customFilesPath,
     String? dataDirectory,
-    ThemeStyle? themeStyle,
     double? backdropOpacity,
     int? clipboardHistoryLimit,
     List<PanelPane>? panelOrder,
@@ -134,7 +129,6 @@ class AppSettings {
       autoCollapseDelay: autoCollapseDelay ?? this.autoCollapseDelay,
       customFilesPath: customFilesPath ?? this.customFilesPath,
       dataDirectory: dataDirectory ?? this.dataDirectory,
-      themeStyle: themeStyle ?? this.themeStyle,
       backdropOpacity: backdropOpacity ?? this.backdropOpacity,
       clipboardHistoryLimit:
           clipboardHistoryLimit ?? this.clipboardHistoryLimit,
@@ -157,7 +151,6 @@ class AppSettings {
       'autoCollapseDelay': autoCollapseDelay,
       'customFilesPath': customFilesPath,
       'dataDirectory': dataDirectory,
-      'themeStyle': themeStyle.name,
       'backdropOpacity': backdropOpacity,
       'clipboardHistoryLimit': clipboardHistoryLimit,
       'panelOrder': panelOrder.map((pane) => pane.name).toList(),
@@ -172,10 +165,6 @@ class AppSettings {
         (e) => e.name == name,
         orElse: () => TriggerMode.both,
       );
-    }
-
-    ThemeStyle parseThemeStyle(String? name) {
-      return ThemeStyle.compact;
     }
 
     List<PanelPane> parsePanelOrder(Object? value) {
@@ -229,7 +218,6 @@ class AppSettings {
       autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 3,
       customFilesPath: json['customFilesPath'] as String?,
       dataDirectory: json['dataDirectory'] as String?,
-      themeStyle: parseThemeStyle(json['themeStyle'] as String?),
       backdropOpacity: (json['backdropOpacity'] as num?)?.toDouble() ?? 0.92,
       clipboardHistoryLimit: normalizeClipboardHistoryLimit(
         (json['clipboardHistoryLimit'] as num?)?.toInt(),

@@ -72,7 +72,6 @@ class _ClipboardPaneState extends State<ClipboardPane> {
       widget.isDark,
     );
 
-    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
     final detailItem = _detailItem;
     final detailItemType = detailItem == null
         ? null
@@ -130,7 +129,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
             },
           );
     return Padding(
-      padding: EdgeInsets.all(isCompact ? 2.0 : 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -147,26 +146,26 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                 children: [
                   Expanded(
                     child: Container(
-                      height: isCompact ? 26 : 32,
+                      height: 26,
                       decoration: BoxDecoration(
                         color: widget.isDark
                             ? Colors.white.withOpacity(0.06)
                             : Colors.black.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
+                        borderRadius: BorderRadius.zero,
                       ),
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: TextStyle(fontSize: isCompact ? 11 : 12),
+                        style: const TextStyle(fontSize: 11),
                         decoration: InputDecoration(
                           hintText: _showFavoritesOnly
                               ? '搜索收藏记录...'
                               : '搜索剪贴板记录...',
                           hintStyle: TextStyle(
-                            fontSize: isCompact ? 11 : 12,
+                            fontSize: 11,
                             color: widget.isDark
                                 ? Colors.white30
-                                : Colors.black.withOpacity(0.3),
+                                : Colors.black54,
                           ),
                           prefixIcon: Padding(
                             padding: const EdgeInsets.only(
@@ -262,7 +261,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                       ),
                     ),
                   ),
-                  SizedBox(width: isCompact ? 2 : 4),
+                  const SizedBox(width: 2),
                   Tooltip(
                     message: _showFavoritesOnly ? '所有记录' : '收藏记录',
                     child: MouseRegion(
@@ -274,15 +273,13 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                           });
                         },
                         child: Container(
-                          width: isCompact ? 26 : 32,
-                          height: isCompact ? 26 : 32,
+                          width: 26,
+                          height: 26,
                           decoration: BoxDecoration(
                             color: widget.isDark
                                 ? Colors.white.withOpacity(0.06)
                                 : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(
-                              isCompact ? 0 : 8,
-                            ),
+                            borderRadius: BorderRadius.zero,
                           ),
                           child: Icon(
                             _showFavoritesOnly
@@ -302,7 +299,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                 ],
               ),
             ),
-            SizedBox(height: isCompact ? 2 : 4),
+            const SizedBox(height: 2),
           ],
 
           // History List with transition animation
@@ -397,9 +394,9 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     );
   }
 
-  Widget _buildThumbnail(bool isCompact) {
-    final width = isCompact ? 44.0 : 60.0;
-    final height = isCompact ? 22.0 : 36.0;
+  Widget _buildThumbnail() {
+    const double width = 44.0;
+    const double height = 22.0;
     final imagePath = AppState().getImagePath(widget.item);
     final file = File(imagePath);
     if (file.existsSync()) {
@@ -489,7 +486,6 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     if (_isDeleted) return const SizedBox.shrink();
 
     final themeAccent = widget.accentColor;
-    final isCompact = AppState().settings.themeStyle == ThemeStyle.compact;
     final itemType = AppState().getClipboardItemType(widget.item);
 
     return MouseRegion(
@@ -504,13 +500,13 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
-          margin: EdgeInsets.only(bottom: isCompact ? 1 : 3),
-          padding: EdgeInsets.symmetric(
+          margin: const EdgeInsets.only(bottom: 1),
+          padding: const EdgeInsets.symmetric(
             horizontal: 8,
-            vertical: isCompact ? 3 : 6,
+            vertical: 3,
           ),
           decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(isCompact ? 0 : 6),
+            borderRadius: BorderRadius.zero,
             border: Border.all(
               color: _isCopied
                   ? themeAccent.withOpacity(0.35)
@@ -546,138 +542,138 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
             constraints: const BoxConstraints(minHeight: 24),
             child: Row(
               children: [
-              Container(
-                margin: const EdgeInsets.only(right: 6),
-                child: Tooltip(
-                  message: widget.item.appName ?? '未知应用',
+                Container(
+                  margin: const EdgeInsets.only(right: 6),
+                  child: Tooltip(
+                    message: widget.item.appName ?? '未知应用',
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _buildAppIcon(),
+                        if (widget.item.imagePath == null &&
+                            (itemType == 'JSON' ||
+                                itemType == 'XML' ||
+                                itemType == 'URL'))
+                          _buildBadge(itemType),
+                      ],
+                    ),
+                  ),
+                ),
+                Expanded(
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      _buildAppIcon(),
-                      if (widget.item.imagePath == null &&
-                          (itemType == 'JSON' ||
-                              itemType == 'XML' ||
-                              itemType == 'URL'))
-                        _buildBadge(itemType),
+                      if (widget.item.imagePath != null)
+                        _buildThumbnail()
+                      else
+                        Expanded(
+                          child: AnimatedDefaultTextStyle(
+                            duration: const Duration(milliseconds: 200),
+                            curve: Curves.easeOut,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: widget.isFavorite
+                                  ? FontWeight.w500
+                                  : FontWeight.normal,
+                              color: _isCopied
+                                  ? themeAccent
+                                  : (widget.isDark
+                                        ? Colors.white70
+                                        : Colors.black87),
+                            ),
+                            child: Text(
+                              widget.item.content.trim().replaceAll('\n', ' '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              ),
-              Expanded(
-                child: Row(
-                  children: [
-                    if (widget.item.imagePath != null)
-                      _buildThumbnail(isCompact)
-                    else
-                      Expanded(
-                        child: AnimatedDefaultTextStyle(
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeOut,
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: widget.isFavorite
-                                ? FontWeight.w500
-                                : FontWeight.normal,
-                            color: _isCopied
-                                ? themeAccent
-                                : (widget.isDark
-                                      ? Colors.white70
-                                      : Colors.black87),
-                          ),
-                          child: Text(
-                            widget.item.content.trim().replaceAll('\n', ' '),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-              // Dynamic-width right section — collapses completely to let text stretch to the right
-              _isCopied
-                  ? SizedBox(
-                      height: 24,
-                      child: Row(
-                        key: const ValueKey('copied_indicator'),
-                        mainAxisSize: MainAxisSize.min,
-                        mainAxisAlignment: MainAxisAlignment.end,
-                        children: [
-                          Icon(
-                            Icons.check_circle_rounded,
-                            size: 13,
-                            color: themeAccent,
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            '已复制',
-                            style: TextStyle(
-                              fontSize: 10,
+                // Dynamic-width right section — collapses completely to let text stretch to the right
+                _isCopied
+                    ? SizedBox(
+                        height: 24,
+                        child: Row(
+                          key: const ValueKey('copied_indicator'),
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            Icon(
+                              Icons.check_circle_rounded,
+                              size: 13,
                               color: themeAccent,
-                              fontWeight: FontWeight.w600,
                             ),
-                          ),
-                        ],
-                      ),
-                    )
-                  : (_isHovered || widget.isFavorite)
-                      ? SizedBox(
-                          height: 24,
-                          child: Row(
-                            key: const ValueKey('normal_actions'),
-                            mainAxisSize: MainAxisSize.min,
-                            mainAxisAlignment: MainAxisAlignment.end,
-                            children: [
-                              if (_isHovered) ...[
-                                _IconActionButton(
-                                  icon: Icons.info_outline,
-                                  iconColor: widget.isDark
-                                      ? Colors.white60
-                                      : Colors.black54,
-                                  hoverBgColor: widget.isDark
-                                      ? Colors.white.withOpacity(0.15)
-                                      : Colors.black.withOpacity(0.1),
-                                  isDark: widget.isDark,
-                                  onTap: widget.onOpenDetail,
-                                ),
-                                const SizedBox(width: 4),
-                              ],
-                              if (_isHovered || widget.isFavorite) ...[
-                                _IconActionButton(
-                                  icon: widget.isFavorite
-                                      ? Icons.star_rounded
-                                      : Icons.star_outline_rounded,
-                                  iconColor: widget.isFavorite
-                                      ? Colors.amber
-                                      : (widget.isDark
-                                            ? Colors.white60
-                                            : Colors.black54),
-                                  hoverBgColor: widget.isDark
-                                      ? Colors.amber.withOpacity(0.15)
-                                      : Colors.amber.withOpacity(0.1),
-                                  isDark: widget.isDark,
-                                  onTap: _handleFavoriteToggle,
-                                ),
-                                if (_isHovered) const SizedBox(width: 4),
-                              ],
-                              if (_isHovered)
-                                _IconActionButton(
-                                  icon: Icons.close,
-                                  iconColor: widget.isDark
-                                      ? Colors.red.withOpacity(0.7)
-                                      : Colors.red,
-                                  hoverBgColor: widget.isDark
-                                      ? Colors.red.withOpacity(0.15)
-                                      : Colors.red.withOpacity(0.1),
-                                  isDark: widget.isDark,
-                                  onTap: _handleDelete,
-                                ),
+                            const SizedBox(width: 4),
+                            Text(
+                              '已复制',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: themeAccent,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
+                        ),
+                      )
+                    : (_isHovered || widget.isFavorite)
+                    ? SizedBox(
+                        height: 24,
+                        child: Row(
+                          key: const ValueKey('normal_actions'),
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (_isHovered) ...[
+                              _IconActionButton(
+                                icon: Icons.info_outline,
+                                iconColor: widget.isDark
+                                    ? Colors.white60
+                                    : Colors.black54,
+                                hoverBgColor: widget.isDark
+                                    ? Colors.white.withOpacity(0.15)
+                                    : Colors.black.withOpacity(0.1),
+                                isDark: widget.isDark,
+                                onTap: widget.onOpenDetail,
+                              ),
+                              const SizedBox(width: 4),
                             ],
-                          ),
-                        )
-                      : const SizedBox.shrink(),
-            ],
-          ),
+                            if (_isHovered || widget.isFavorite) ...[
+                              _IconActionButton(
+                                icon: widget.isFavorite
+                                    ? Icons.star_rounded
+                                    : Icons.star_outline_rounded,
+                                iconColor: widget.isFavorite
+                                    ? Colors.amber
+                                    : (widget.isDark
+                                          ? Colors.white60
+                                          : Colors.black54),
+                                hoverBgColor: widget.isDark
+                                    ? Colors.amber.withOpacity(0.15)
+                                    : Colors.amber.withOpacity(0.1),
+                                isDark: widget.isDark,
+                                onTap: _handleFavoriteToggle,
+                              ),
+                              if (_isHovered) const SizedBox(width: 4),
+                            ],
+                            if (_isHovered)
+                              _IconActionButton(
+                                icon: Icons.close,
+                                iconColor: widget.isDark
+                                    ? Colors.red.withOpacity(0.7)
+                                    : Colors.red,
+                                hoverBgColor: widget.isDark
+                                    ? Colors.red.withOpacity(0.15)
+                                    : Colors.red.withOpacity(0.1),
+                                isDark: widget.isDark,
+                                onTap: _handleDelete,
+                              ),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ],
+            ),
           ),
         ),
       ),
@@ -729,11 +725,7 @@ class _IconActionButtonState extends State<_IconActionButton> {
             color: _hovered ? widget.hoverBgColor : Colors.transparent,
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Icon(
-            widget.icon,
-            size: 14,
-            color: widget.iconColor,
-          ),
+          child: Icon(widget.icon, size: 14, color: widget.iconColor),
         ),
       ),
     );
@@ -1619,7 +1611,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         : _fileSizeStr;
 
     final displayText = widget.item.content;
-    final isCompact = AppState().settings.themeStyle == ThemeStyle.compact;
 
     final detailBody = Container(
       width: widget.embedded ? double.infinity : dialogWidth,
@@ -1631,9 +1622,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         children: [
           // Header
           Container(
-            height: widget.embedded ? (isCompact ? 26.0 : 32.0) : null,
+            height: widget.embedded ? 26.0 : null,
             padding: widget.embedded
-                ? const EdgeInsets.symmetric(horizontal: 4)
+                ? const EdgeInsets.symmetric(horizontal: 8.0)
                 : const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             alignment: Alignment.center,
             child: Row(
@@ -1838,9 +1829,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
               ],
             ),
           ),
-          SizedBox(
-            height: widget.embedded ? (isCompact ? 2.0 : 4.0) : 3.0,
-          ),
+          SizedBox(height: widget.embedded ? 2.0 : 3.0),
 
           // Content
           if (widget.embedded)

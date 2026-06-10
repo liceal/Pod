@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
-import '../models/app_settings.dart'; // import ThemeStyle
+
 import 'components/animated_press.dart';
 
 class NotesPane extends StatefulWidget {
@@ -282,7 +282,7 @@ class _NotesPaneState extends State<NotesPane> {
     return Container(
       width: double.infinity,
       height: double.infinity,
-      padding: const EdgeInsets.only(left: 10, right: 10, bottom: 8),
+      padding: const EdgeInsets.only(bottom: 8),
       child: Focus(
         onKeyEvent: (node, event) {
           if (event is KeyDownEvent &&
@@ -309,7 +309,7 @@ class _NotesPaneState extends State<NotesPane> {
               color: widget.isDark ? Colors.white24 : Colors.black26,
             ),
             border: InputBorder.none,
-            contentPadding: EdgeInsets.zero,
+            contentPadding: const EdgeInsets.only(left: 10, right: 2),
             isDense: true,
           ),
           onChanged: _onContentChanged,
@@ -327,38 +327,37 @@ class _NotesPaneState extends State<NotesPane> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
     return Padding(
-      padding: EdgeInsets.all(isCompact ? 2.0 : 4.0),
+      padding: const EdgeInsets.symmetric(vertical: 2.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header with search input & buttons
           SizedBox(
-            height: isCompact ? 26 : 32,
+            height: 26,
             child: Row(
               children: [
                 if (_showList)
                   Expanded(
                     child: Container(
-                      height: isCompact ? 26 : 32,
+                      height: 26,
                       decoration: BoxDecoration(
                         color: widget.isDark
                             ? Colors.white.withOpacity(0.06)
                             : Colors.black.withOpacity(0.04),
-                        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
+                        borderRadius: BorderRadius.zero,
                       ),
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: TextStyle(fontSize: isCompact ? 11 : 12),
+                        style: const TextStyle(fontSize: 11),
                         decoration: InputDecoration(
                           hintText: '搜索便签...',
                           hintStyle: TextStyle(
-                            fontSize: isCompact ? 11 : 12,
+                            fontSize: 11,
                             color: widget.isDark
                                 ? Colors.white30
-                                : Colors.black.withOpacity(0.3),
+                                : Colors.black54,
                           ),
                           prefixIcon: Padding(
                             padding: const EdgeInsets.only(left: 8, right: 6),
@@ -401,7 +400,7 @@ class _NotesPaneState extends State<NotesPane> {
                   )
                 else
                   const Spacer(),
-                SizedBox(width: isCompact ? 2 : 4),
+                const SizedBox(width: 2),
                 if (!_showList) ...[
                   Tooltip(
                     message: '删除当前便签',
@@ -414,15 +413,13 @@ class _NotesPaneState extends State<NotesPane> {
                           fromDetail: true,
                         ),
                         child: Container(
-                          width: isCompact ? 26 : 32,
-                          height: isCompact ? 26 : 32,
+                          width: 26,
+                          height: 26,
                           decoration: BoxDecoration(
                             color: widget.isDark
                                 ? Colors.white.withOpacity(0.06)
                                 : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(
-                              isCompact ? 0 : 8,
-                            ),
+                            borderRadius: BorderRadius.zero,
                           ),
                           child: Icon(
                             Icons.delete_outline_rounded,
@@ -435,7 +432,7 @@ class _NotesPaneState extends State<NotesPane> {
                       ),
                     ),
                   ),
-                  SizedBox(width: isCompact ? 2 : 4),
+                  const SizedBox(width: 2),
                 ],
                 Tooltip(
                   message: '新建便签',
@@ -451,15 +448,13 @@ class _NotesPaneState extends State<NotesPane> {
                         _focusEditorOnNextFrame();
                       },
                       child: Container(
-                        width: isCompact ? 26 : 32,
-                        height: isCompact ? 26 : 32,
+                        width: 26,
+                        height: 26,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(
-                            isCompact ? 0 : 8,
-                          ),
+                          borderRadius: BorderRadius.zero,
                         ),
                         child: Icon(
                           Icons.add_rounded,
@@ -472,7 +467,7 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                   ),
                 ),
-                SizedBox(width: isCompact ? 2 : 4),
+                const SizedBox(width: 2),
                 Tooltip(
                   message: _showList ? '当前为列表视图' : '返回列表视图',
                   child: MouseRegion(
@@ -486,15 +481,13 @@ class _NotesPaneState extends State<NotesPane> {
                         }
                       },
                       child: Container(
-                        width: isCompact ? 26 : 32,
-                        height: isCompact ? 26 : 32,
+                        width: 26,
+                        height: 26,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(
-                            isCompact ? 0 : 8,
-                          ),
+                          borderRadius: BorderRadius.zero,
                         ),
                         child: Icon(
                           Icons.menu_rounded,
@@ -507,7 +500,7 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                   ),
                 ),
-                SizedBox(width: isCompact ? 2 : 4),
+                const SizedBox(width: 2),
                 Tooltip(
                   message: '设置',
                   child: MouseRegion(
@@ -515,15 +508,13 @@ class _NotesPaneState extends State<NotesPane> {
                     child: AnimatedPress(
                       onTap: widget.onShowSettings,
                       child: Container(
-                        width: isCompact ? 26 : 32,
-                        height: isCompact ? 26 : 32,
+                        width: 26,
+                        height: 26,
                         decoration: BoxDecoration(
                           color: widget.isDark
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.circular(
-                            isCompact ? 0 : 8,
-                          ),
+                          borderRadius: BorderRadius.zero,
                         ),
                         child: Icon(
                           Icons.settings_outlined,
@@ -539,7 +530,7 @@ class _NotesPaneState extends State<NotesPane> {
               ],
             ),
           ),
-          SizedBox(height: isCompact ? 2 : 4),
+          const SizedBox(height: 2),
 
           // Main Content Area with Transition
           Expanded(

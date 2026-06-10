@@ -25,7 +25,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late String _themeColorName;
   late bool _closeOnBlur;
   late int _autoCollapseDelay;
-  late ThemeStyle _themeStyle;
   late double _backdropOpacity;
   late int _clipboardHistoryLimit;
   late List<PanelPane> _panelOrder;
@@ -54,7 +53,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
         (widget.state.settings.themeColorName as dynamic) ?? 'blue';
     _closeOnBlur = widget.state.settings.closeOnBlur;
     _autoCollapseDelay = widget.state.settings.autoCollapseDelay;
-    _themeStyle = widget.state.settings.themeStyle;
     _backdropOpacity = widget.state.settings.backdropOpacity;
     _clipboardHistoryLimit = widget.state.settings.clipboardHistoryLimit;
     _panelOrder = List<PanelPane>.from(widget.state.settings.panelOrder);
@@ -220,7 +218,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
       autoCollapseDelay: _autoCollapseDelay,
       customFilesPath: widget.state.settings.customFilesPath,
       dataDirectory: oldDir,
-      themeStyle: _themeStyle,
       backdropOpacity: _backdropOpacity,
       clipboardHistoryLimit: _clipboardHistoryLimit,
       panelOrder: _panelOrder,

@@ -331,11 +331,10 @@ class _FilesPaneState extends State<FilesPane> {
       );
     }
 
-    final isCompact = widget.state.settings.themeStyle == ThemeStyle.compact;
     final mainContent = Stack(
       children: [
         Padding(
-          padding: EdgeInsets.all(isCompact ? 2 : 4),
+          padding: const EdgeInsets.symmetric(vertical: 2.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
@@ -356,10 +355,9 @@ class _FilesPaneState extends State<FilesPane> {
                         showFolderBtn: _searchController.text.isEmpty,
                         onOpenFolder: () =>
                             widget.state.openFilesDirectoryInExplorer(),
-                        themeStyle: widget.state.settings.themeStyle,
                       ),
                     ),
-                    SizedBox(width: isCompact ? 2 : 4),
+                    const SizedBox(width: 2),
                     if (_showSizeSlider) ...[
                       SizedBox(
                         width: 80,
@@ -392,7 +390,7 @@ class _FilesPaneState extends State<FilesPane> {
                           ),
                         ),
                       ),
-                      SizedBox(width: isCompact ? 2 : 4),
+                      const SizedBox(width: 2),
                     ],
                     Tooltip(
                       message: '调整显示大小',
@@ -403,8 +401,8 @@ class _FilesPaneState extends State<FilesPane> {
                             () => _showSizeSlider = !_showSizeSlider,
                           ),
                           child: Container(
-                            width: isCompact ? 26 : 32,
-                            height: isCompact ? 26 : 32,
+                            width: 26,
+                            height: 26,
                             decoration: BoxDecoration(
                               color: _showSizeSlider
                                   ? (widget.isDark
@@ -413,9 +411,7 @@ class _FilesPaneState extends State<FilesPane> {
                                   : (widget.isDark
                                         ? Colors.white.withOpacity(0.06)
                                         : Colors.black.withOpacity(0.04)),
-                              borderRadius: BorderRadius.circular(
-                                isCompact ? 0 : 8,
-                              ),
+                              borderRadius: BorderRadius.zero,
                             ),
                             child: Icon(
                               Icons.photo_size_select_large_rounded,
@@ -428,7 +424,7 @@ class _FilesPaneState extends State<FilesPane> {
                         ),
                       ),
                     ),
-                    SizedBox(width: isCompact ? 2 : 4),
+                    const SizedBox(width: 2),
                     MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
@@ -440,15 +436,13 @@ class _FilesPaneState extends State<FilesPane> {
                           }
                         }),
                         child: Container(
-                          width: isCompact ? 26 : 32,
-                          height: isCompact ? 26 : 32,
+                          width: 26,
+                          height: 26,
                           decoration: BoxDecoration(
                             color: widget.isDark
                                 ? Colors.white.withOpacity(0.06)
                                 : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.circular(
-                              isCompact ? 0 : 8,
-                            ),
+                            borderRadius: BorderRadius.zero,
                           ),
                           child: Icon(
                             _viewMode == _ViewMode.grid
@@ -465,7 +459,7 @@ class _FilesPaneState extends State<FilesPane> {
                   ],
                 ),
               ),
-              SizedBox(height: isCompact ? 2 : 4),
+              const SizedBox(height: 2),
 
               // ── File Content ──
               Expanded(
@@ -752,6 +746,7 @@ class _FilesPaneState extends State<FilesPane> {
     return GridView.builder(
       key: const PageStorageKey('files_grid_view'),
       controller: _gridScrollController,
+      padding: EdgeInsets.zero,
       physics: const BouncingScrollPhysics(),
       gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
         maxCrossAxisExtent: widget.state.fileDisplaySize,
@@ -793,7 +788,7 @@ class _FilesPaneState extends State<FilesPane> {
       children: [
         // Table Headers
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 2.0, vertical: 2.0),
           child: Row(
             children: [
               Expanded(
@@ -905,36 +900,33 @@ class _SearchBar extends StatelessWidget {
   final bool isDark;
   final bool showFolderBtn;
   final VoidCallback onOpenFolder;
-  final ThemeStyle themeStyle;
 
   const _SearchBar({
     required this.controller,
     required this.isDark,
     required this.showFolderBtn,
     required this.onOpenFolder,
-    required this.themeStyle,
   });
 
   @override
   Widget build(BuildContext context) {
-    final isCompact = themeStyle == ThemeStyle.compact;
     return Container(
-      height: isCompact ? 26 : 32,
+      height: 26,
       decoration: BoxDecoration(
         color: isDark
             ? Colors.white.withOpacity(0.06)
             : Colors.black.withOpacity(0.04),
-        borderRadius: BorderRadius.circular(isCompact ? 0 : 8),
+        borderRadius: BorderRadius.zero,
       ),
       child: TextField(
         controller: controller,
         textAlignVertical: TextAlignVertical.center,
-        style: TextStyle(fontSize: isCompact ? 11 : 12),
+        style: const TextStyle(fontSize: 11),
         decoration: InputDecoration(
           hintText: '搜索暂存文件...',
           hintStyle: TextStyle(
-            fontSize: isCompact ? 11 : 12,
-            color: isDark ? Colors.white30 : Colors.black.withOpacity(0.3),
+            fontSize: 11,
+            color: isDark ? Colors.white30 : Colors.black54,
           ),
           prefixIcon: Padding(
             padding: const EdgeInsets.only(left: 8, right: 6),
@@ -1104,9 +1096,7 @@ class _GridFileCardState extends State<_GridFileCard> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(
-                  AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 8,
-                ),
+                borderRadius: BorderRadius.zero,
                 onTap: () {
                   final now = DateTime.now();
                   if (_lastTapTime != null &&
@@ -1128,11 +1118,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                         : (widget.isDark
                               ? Colors.white.withOpacity(0.03)
                               : Colors.black.withOpacity(0.02)),
-                    borderRadius: BorderRadius.circular(
-                      AppState().settings.themeStyle == ThemeStyle.compact
-                          ? 0
-                          : 8,
-                    ),
+                    borderRadius: BorderRadius.zero,
                     border: Border.all(
                       color: _isHovered
                           ? (widget.isDark ? Colors.white12 : Colors.black12)
@@ -1148,12 +1134,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                           child: Center(
                             child: widget.isImage
                                 ? ClipRRect(
-                                    borderRadius: BorderRadius.circular(
-                                      AppState().settings.themeStyle ==
-                                              ThemeStyle.compact
-                                          ? 0
-                                          : 6,
-                                    ),
+                                    borderRadius: BorderRadius.zero,
                                     child: Image.file(
                                       File(widget.file.path),
                                       fit: BoxFit.cover,
@@ -1170,12 +1151,7 @@ class _GridFileCardState extends State<_GridFileCard> {
                                     height: 32,
                                     decoration: BoxDecoration(
                                       color: widget.iconColor.withOpacity(0.12),
-                                      borderRadius: BorderRadius.circular(
-                                        AppState().settings.themeStyle ==
-                                                ThemeStyle.compact
-                                            ? 0
-                                            : 8,
-                                      ),
+                                      borderRadius: BorderRadius.zero,
                                     ),
                                     child: Icon(
                                       widget.icon,
@@ -1578,9 +1554,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(
-                  AppState().settings.themeStyle == ThemeStyle.compact ? 0 : 6,
-                ),
+                borderRadius: BorderRadius.zero,
                 onTap: () {
                   final now = DateTime.now();
                   if (_lastTapTime != null &&
@@ -1594,18 +1568,10 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
-                  margin: EdgeInsets.only(
-                    bottom: AppState().settings.themeStyle == ThemeStyle.compact
-                        ? 0
-                        : 1,
-                  ),
+                  margin: EdgeInsets.zero,
                   padding: EdgeInsets.symmetric(
                     horizontal: 2,
-                    vertical:
-                        (AppState().settings.themeStyle == ThemeStyle.compact
-                            ? 0.5
-                            : 1) *
-                        scaleFactor,
+                    vertical: 0.5 * scaleFactor,
                   ),
                   decoration: BoxDecoration(
                     color: _isHovered
@@ -1613,11 +1579,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                               ? Colors.white.withOpacity(0.06)
                               : Colors.black.withOpacity(0.04))
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(
-                      AppState().settings.themeStyle == ThemeStyle.compact
-                          ? 0
-                          : 6,
-                    ),
+                    borderRadius: BorderRadius.zero,
                   ),
                   child: Row(
                     children: [
@@ -1627,20 +1589,11 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                         height: 17 * scaleFactor,
                         decoration: BoxDecoration(
                           color: widget.iconColor.withOpacity(0.12),
-                          borderRadius: BorderRadius.circular(
-                            AppState().settings.themeStyle == ThemeStyle.compact
-                                ? 0
-                                : 4,
-                          ),
+                          borderRadius: BorderRadius.zero,
                         ),
                         child: widget.isImage
                             ? ClipRRect(
-                                borderRadius: BorderRadius.circular(
-                                  AppState().settings.themeStyle ==
-                                          ThemeStyle.compact
-                                      ? 0
-                                      : 4,
-                                ),
+                                borderRadius: BorderRadius.zero,
                                 child: Image.file(
                                   File(widget.file.path),
                                   fit: BoxFit.cover,

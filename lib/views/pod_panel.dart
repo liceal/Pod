@@ -309,26 +309,9 @@ class _PodPanelState extends State<PodPanel>
                                   duration: const Duration(milliseconds: 250),
                                   curve: Curves.easeInOut,
                                   height: 350,
-                                  margin:
-                                      (widget.state.settings.themeStyle ==
-                                              ThemeStyle.compact ||
-                                          (widget
-                                                  .state
-                                                  .settings
-                                                  .isWidthPercentage &&
-                                              widget
-                                                      .state
-                                                      .settings
-                                                      .panelWidthPercent >=
-                                                  100))
-                                      ? EdgeInsets.zero
-                                      : const EdgeInsets.symmetric(
-                                          horizontal: 6,
-                                        ),
+                                  margin: EdgeInsets.zero,
                                   decoration: AppTheme.getFrostedDecoration(
                                     isDark: animatedIsDark,
-                                    themeStyle:
-                                        widget.state.settings.themeStyle,
                                     color: currentTheme.scaffoldBackgroundColor
                                         .withOpacity(
                                           widget.state.settings.backdropOpacity,
@@ -539,34 +522,56 @@ class DraggableDivider extends StatefulWidget {
 }
 
 class _DraggableDividerState extends State<DraggableDivider> {
+  bool _isHovered = false;
+  bool _isDragging = false;
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final Color lineColor = (_isHovered || _isDragging)
+        ? theme.primaryColor
+        : widget.color;
+    final double visualWidth = (_isHovered || _isDragging) ? 2.0 : 1.0;
+
     return ExpandedHitTestMinSize(
-      minWidth: 32.0,
+      minWidth: 10.0, // 10px hit test zone (5px on each side) is easy to target but won't block scrollbars
       child: SizedBox(
         width: 1.0,
         height: double.infinity,
         child: Stack(
           clipBehavior: Clip.none,
           children: [
-            Positioned.fill(
-              child: Container(
-                color: widget.color,
+            // Visible divider line with smooth highlight transition
+            Positioned(
+              left: -(visualWidth - 1.0) / 2.0,
+              right: -(visualWidth - 1.0) / 2.0,
+              top: 0,
+              bottom: 0,
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 150),
+                color: lineColor,
               ),
             ),
+            // Invisible drag target (extends 5px left/right)
             Positioned(
-              left: -16.0,
-              right: -16.0,
+              left: -5.0,
+              right: -5.0,
               top: 0,
               bottom: 0,
               child: MouseRegion(
                 cursor: SystemMouseCursors.resizeLeftRight,
+                onEnter: (_) => setState(() => _isHovered = true),
+                onExit: (_) => setState(() => _isHovered = false),
                 child: GestureDetector(
                   behavior: HitTestBehavior.translucent,
+                  onHorizontalDragStart: (_) {
+                    setState(() => _isDragging = true);
+                  },
                   onHorizontalDragUpdate: (details) {
                     widget.onDragUpdate(details.delta.dx);
                   },
                   onHorizontalDragEnd: (_) {
+                    setState(() => _isDragging = false);
                     widget.onDragEnd?.call();
                   },
                   onHorizontalDragCancel: () {

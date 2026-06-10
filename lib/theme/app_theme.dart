@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/app_settings.dart';
 
 class AppTheme {
   // Dark theme colors (Mac-like)
@@ -34,17 +33,12 @@ class AppTheme {
   static BoxDecoration getFrostedDecoration({
     required bool isDark,
     double radius = panelBorderRadius,
-    ThemeStyle themeStyle = ThemeStyle.normal,
     Color? color,
     Color? borderColor,
   }) {
-    final double computedRadius = (themeStyle == ThemeStyle.compact) ? 0.0 : radius;
     return BoxDecoration(
       color: color ?? (isDark ? darkBg : lightBg),
-      borderRadius: BorderRadius.only(
-        bottomLeft: Radius.circular(computedRadius),
-        bottomRight: Radius.circular(computedRadius),
-      ),
+      borderRadius: BorderRadius.zero,
       border: Border.all(
         color: borderColor ?? (isDark ? darkBorder : lightBorder),
         width: 1.0,
@@ -82,6 +76,18 @@ class AppTheme {
         brightness: isDark ? Brightness.dark : Brightness.light,
         surface: isDark ? darkPanelBg : lightPanelBg,
         outline: isDark ? darkBorder : lightBorder,
+      ),
+      scrollbarTheme: ScrollbarThemeData(
+        thickness: WidgetStateProperty.all(4.0),
+        radius: const Radius.circular(999),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered) || states.contains(WidgetState.dragged)) {
+            return isDark ? Colors.white60 : Colors.black54;
+          }
+          return isDark ? Colors.white30 : Colors.black.withOpacity(0.15);
+        }),
+        trackColor: WidgetStateProperty.all(Colors.transparent),
+        minThumbLength: 20.0,
       ),
       textTheme: const TextTheme(
         titleMedium: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
