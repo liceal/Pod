@@ -5,7 +5,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/clipboard_item.dart';
-import '../models/app_settings.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
@@ -372,20 +371,17 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
   Widget _buildAppIcon() {
     final iconPath = widget.item.appIconPath;
     if (iconPath != null && iconPath.isNotEmpty) {
-      final file = File(iconPath);
-      if (file.existsSync()) {
-        return Image.file(
-          file,
-          width: 14,
-          height: 14,
-          fit: BoxFit.contain,
-          errorBuilder: (context, error, stackTrace) => Icon(
-            Icons.article_outlined,
-            size: 14,
-            color: widget.isDark ? Colors.white30 : Colors.black38,
-          ),
-        );
-      }
+      return Image.file(
+        File(iconPath),
+        width: 14,
+        height: 14,
+        fit: BoxFit.contain,
+        errorBuilder: (context, error, stackTrace) => Icon(
+          Icons.article_outlined,
+          size: 14,
+          color: widget.isDark ? Colors.white30 : Colors.black38,
+        ),
+      );
     }
     return Icon(
       Icons.article_outlined,
@@ -398,36 +394,29 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     const double width = 44.0;
     const double height = 22.0;
     final imagePath = AppState().getImagePath(widget.item);
-    final file = File(imagePath);
-    if (file.existsSync()) {
-      return Container(
-        width: width,
-        height: height,
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(4),
-          border: Border.all(
-            color: widget.isDark ? Colors.white10 : Colors.black12,
-            width: 0.5,
-          ),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(3),
-          child: Image.file(
-            file,
-            fit: BoxFit.cover,
-            errorBuilder: (context, error, stackTrace) => Container(
-              color: Colors.red.withOpacity(0.1),
-              child: const Icon(Icons.broken_image, size: 12),
-            ),
-          ),
-        ),
-      );
-    }
     return Container(
       width: width,
       height: height,
-      color: Colors.grey.withOpacity(0.2),
-      child: const Icon(Icons.broken_image, size: 12),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(
+          color: widget.isDark ? Colors.white10 : Colors.black12,
+          width: 0.5,
+        ),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(3),
+        child: Image.file(
+          File(imagePath),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stackTrace) => Container(
+            color: widget.isDark
+                ? Colors.white.withOpacity(0.06)
+                : Colors.black.withOpacity(0.04),
+            child: const Icon(Icons.broken_image, size: 12),
+          ),
+        ),
+      ),
     );
   }
 

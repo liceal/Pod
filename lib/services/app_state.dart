@@ -85,6 +85,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   DateTime _lastScrollAction = DateTime.fromMillisecondsSinceEpoch(0);
   final Map<String, String> _itemTypeCache = {};
 
+  // Cache for file metadata to avoid blocking synchronous IO in widget builds
+  final Map<String, FileStat> _fileStatCache = {};
+  final Map<String, bool> _isDirectoryCache = {};
+
+  FileStat? getCachedFileStat(String path) {
+    return _fileStatCache[path];
+  }
+
+  bool getCachedIsDirectory(String path) {
+    return _isDirectoryCache[path] ?? false;
+  }
+
   // Lightweight callback for animation-only updates
   void Function(Duration duration)? onAnimationStateChanged;
 
@@ -760,9 +772,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               await Future.delayed(const Duration(milliseconds: 50));
               await _menuBarScrollChannel.invokeMethod('showInactive');
             } else {
-              await windowManager.setBounds(
+              final x = screenPosition.dx + (screenWidth - wCollapsed) / 2;
+              windowManager.setBounds(
                 Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
-              );
+              ).catchError((e) => debugPrint('Failed to set startup bounds: $e'));
               await windowManager.show();
             }
           }
@@ -781,9 +794,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           } else {
             // Windows: position collapsed bar on the correct screen
             final x = screenPosition.dx + (screenWidth - wCollapsed) / 2;
-            await windowManager.setBounds(
+            windowManager.setBounds(
               Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
-            );
+            ).catchError((e) => debugPrint('Failed to set collapsed bounds: $e'));
             await windowManager.setIgnoreMouseEvents(false);
             if (!await windowManager.isVisible()) {
               await windowManager.show();
@@ -845,28 +858,30 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       // Set native window FIRST, then trigger animation
       if (Platform.isMacOS) {
-        final info = _nativeScreenInfo;
-        if (info != null) {
-          final sw = info['width']!;
-          double w = settings.isWidthPercentage
-              ? sw * (settings.panelWidthPercent / 100.0)
-              : settings.panelWidth;
-          if (lastCalculatedWidth != w) {
-            lastCalculatedWidth = w;
-            notifyListeners(); // Ensure Flutter UI updates to the new width immediately
-          }
-          // Move window to correct screen position (cheap)
-          _menuBarScrollChannel.invokeMethod('expandOnScreen', {
-            'x': info['x']! + (sw - w) / 2,
-            'y': info['visibleY']!,
-            'width': w,
-            'height': 350.0,
-            'focus': shouldFocus,
-          });
-          // The native window is resized immediately without display block,
-          // and animated natively via CoreAnimation in MainFlutterWindow.swift.
-          // This avoids Flutter timeout issues entirely and gives 60fps animations.
+        var info = _nativeScreenInfo;
+        if (info == null) {
+          info = await getActiveScreenInfo();
+          _nativeScreenInfo = info;
         }
+        final sw = info['width']!;
+        double w = settings.isWidthPercentage
+            ? sw * (settings.panelWidthPercent / 100.0)
+            : settings.panelWidth;
+        if (lastCalculatedWidth != w) {
+          lastCalculatedWidth = w;
+          notifyListeners(); // Ensure Flutter UI updates to the new width immediately
+        }
+        // Move window to correct screen position (cheap)
+        await _menuBarScrollChannel.invokeMethod('expandOnScreen', {
+          'x': info['x']! + (sw - w) / 2,
+          'y': info['visibleY']!,
+          'width': w,
+          'height': 350.0,
+          'focus': shouldFocus,
+        });
+        // Wait 10ms to let the OS map the window and perform the initial frame layout 
+        // before starting the slide transition.
+        await Future.delayed(const Duration(milliseconds: 10));
       } else {
         final nativeInfo = _nativeScreenInfo;
         double screenX;
@@ -889,7 +904,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         lastCalculatedWidth = w;
         await windowManager.setIgnoreMouseEvents(false);
         final targetX = screenX + (screenWidth - w) / 2;
-        await windowManager.setBounds(Rect.fromLTWH(targetX, screenY, w, 350));
+        windowManager.setBounds(Rect.fromLTWH(targetX, screenY, w, 350)).catchError((e) {
+          debugPrint('Failed to set expand bounds: $e');
+        });
         await windowManager.setHasShadow(true);
         if (shouldFocus) {
           _focusManagerChannel.invokeMethod('savePreviousApp');
@@ -898,6 +915,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         } else {
           await windowManager.show(inactive: true);
         }
+        // Wait 10ms to let the OS map the window and perform the initial frame layout 
+        // before starting the slide transition.
+        await Future.delayed(const Duration(milliseconds: 10));
       }
 
       // Now trigger animation AFTER native window is ready
@@ -927,6 +947,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     isAnimating = true;
     isExpanded = false;
 
+    // Unfocus any active text inputs immediately to hide the OS IME and prevent cursor layout calculations
+    // from blocking the main UI thread during the sliding animation.
+    FocusManager.instance.primaryFocus?.unfocus();
+
     if (isDialogOpen) {
       try {
         final context = navigatorKey.currentContext;
@@ -942,13 +966,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _restoreFocusAfterCollapse = _didGrabFocus;
     _didGrabFocus = false;
 
-    if (Platform.isMacOS) {
-      windowManager.setIgnoreMouseEvents(true);
-    }
     onAnimationStateChanged?.call(duration);
-
-    // Save notes in background to avoid blocking focus restore and UI
-    forceSaveNotesIfPending();
 
     // We wait for the sliding animation to complete inside the UI before resizing the native window.
     // The UI calls AppState.onCollapseAnimationFinished() to finalize this.
@@ -959,15 +977,21 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _currentDisplay = null;
     _nativeScreenInfo = null;
 
-    if (!Platform.isMacOS) {
+    if (Platform.isMacOS) {
+      try {
+        await windowManager.setIgnoreMouseEvents(true);
+      } catch (e) {
+        debugPrint('Failed to set ignore mouse events on collapse: $e');
+      }
+    } else {
       try {
         final display = await _getCurrentDisplay();
         final screenWidth = display.size.width;
         final position = display.visiblePosition ?? Offset.zero;
         final x = position.dx;
-        await windowManager.setBounds(
+        windowManager.setBounds(
           Rect.fromLTWH(x, position.dy, screenWidth, 3),
-        );
+        ).catchError((e) => debugPrint('Failed to set collapsed bounds: $e'));
         await windowManager.setIgnoreMouseEvents(false);
       } catch (e) {
         debugPrint('Failed to resize collapsed window: $e');
@@ -975,6 +999,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     await _restorePreviousAppAfterCollapse();
+
+    // Save notes after collapse animation finishes so we don't drop frames during slide-up transition
+    await forceSaveNotesIfPending();
   }
 
   void cancelCollapseAndExpand() {
@@ -1006,9 +1033,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void _refreshPanelActivationAfterShow() {
     _panelActivationRefreshTimer?.cancel();
-    final delay = Platform.isMacOS
-        ? const Duration(milliseconds: 140)
-        : Duration.zero;
+    // Postpone to 320ms to run after the 280ms panel expand animation finishes.
+    // This avoids heavy rebuilds and layout passes during the transition on all platforms.
+    const delay = Duration(milliseconds: 320);
 
     _panelActivationRefreshTimer = Timer(delay, () {
       _panelActivationRefreshTimer = null;
@@ -2496,6 +2523,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final dir = Directory(path);
       if (!await dir.exists()) {
         storedFiles = [];
+        _fileStatCache.clear();
+        _isDirectoryCache.clear();
         notifyListeners();
         await _startWatchingFilesDirectory(path);
         return;
@@ -2510,9 +2539,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       // Fetch stats in parallel asynchronously to avoid sequential blocking
       final List<MapEntry<FileSystemEntity, DateTime>> entitiesWithTime = [];
+      final Map<String, FileStat> newStats = {};
+      final Map<String, bool> newDirs = {};
+
       await Future.wait(entities.map((entity) async {
         try {
+          final isDir = await FileSystemEntity.isDirectory(entity.path);
+          newDirs[entity.path] = isDir;
           final stat = await entity.stat();
+          newStats[entity.path] = stat;
           final time = Platform.isWindows ? stat.changed : stat.modified;
           entitiesWithTime.add(MapEntry(entity, time));
         } catch (_) {
@@ -2523,6 +2558,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       // Sort
       entitiesWithTime.sort((a, b) => b.value.compareTo(a.value));
       storedFiles = entitiesWithTime.map((e) => e.key).toList();
+
+      // Update cache
+      _fileStatCache.clear();
+      _fileStatCache.addAll(newStats);
+      _isDirectoryCache.clear();
+      _isDirectoryCache.addAll(newDirs);
 
       notifyListeners();
       // 每次扫描后重新建立监听（路径可能刚刚创建）

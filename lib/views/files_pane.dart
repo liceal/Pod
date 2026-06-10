@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
-import '../models/app_settings.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
 
@@ -845,8 +844,10 @@ class _FilesPaneState extends State<FilesPane> {
                   .toList();
               final fileName = segments.isEmpty ? '未知' : segments.last;
               final (icon, iconColor) = _getFileIconAndColor(file.path);
-              final stat = file.existsSync() ? file.statSync() : null;
-              final sizeStr = FileSystemEntity.isDirectorySync(file.path)
+              final stat = widget.state.getCachedFileStat(file.path) ??
+                  (file.existsSync() ? file.statSync() : null);
+              final isDir = widget.state.getCachedIsDirectory(file.path);
+              final sizeStr = isDir
                   ? '—'
                   : (stat != null ? formatFileSize(stat.size) : '—');
 
@@ -1289,7 +1290,8 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
     final subColor = widget.isDark ? Colors.white54 : Colors.black45;
 
     // File metadata
-    final stat = widget.file.existsSync() ? widget.file.statSync() : null;
+    final stat = AppState().getCachedFileStat(widget.file.path) ??
+        (widget.file.existsSync() ? widget.file.statSync() : null);
     final size = stat != null ? _FilesPaneState.formatFileSize(stat.size) : '—';
     final creationTime = stat != null
         ? (Platform.isWindows ? stat.changed : stat.modified)

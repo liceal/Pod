@@ -199,9 +199,9 @@ class _PodPanelState extends State<PodPanel>
 
     // 展开窗口高度以容纳设置弹窗
     final x = screenX + (screenWidth - panelW) / 2;
-    await windowManager.setBounds(
+    windowManager.setBounds(
       Rect.fromLTWH(x, menuBarHeight, panelW, dialogH),
-    );
+    ).catchError((e) => debugPrint('Failed to expand settings window: $e'));
 
     if (!mounted) return;
 
@@ -220,9 +220,9 @@ class _PodPanelState extends State<PodPanel>
     // 弹窗关闭后：直接用 lastCalculatedWidth（updateSettings 已更新）
     final double updatedPanelW = widget.state.lastCalculatedWidth;
     final rx = screenX + (screenWidth - updatedPanelW) / 2;
-    await windowManager.setBounds(
+    windowManager.setBounds(
       Rect.fromLTWH(rx, menuBarHeight, updatedPanelW, expandedH),
-    );
+    ).catchError((e) => debugPrint('Failed to restore window size after settings: $e'));
 
     // 设置关闭后若鼠标不在面板内，启动自动收起计时器
     if (!_isMouseInside) {
