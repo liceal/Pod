@@ -1,5 +1,4 @@
 import 'dart:io';
-import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -94,38 +93,49 @@ class _ClipboardPaneState extends State<ClipboardPane> {
               ),
             ),
           )
-        : ListView.builder(
-            key: PageStorageKey<String>(
-              _showFavoritesOnly ? 'favs_list' : 'all_list',
-            ),
-            controller: _scrollController,
-            itemCount: items.length,
-            physics: const BouncingScrollPhysics(),
-            itemBuilder: (context, index) {
-              final item = items[index];
-
-              return ClipboardItemCard(
-                key: ValueKey(item.id),
-                item: item,
-                isDark: widget.isDark,
-                accentColor: accentColor,
-                isFavorite: widget.state.isItemFavorite(item.content),
-                onCopy: () => widget.state.copyToClipboard(item),
-                onOpenDetail: () => _openDetail(item),
-                onFavoriteToggle: () =>
-                    widget.state.toggleFavoriteClipboardItem(item),
-                onDelete: () {
-                  if (_detailItem?.id == item.id) {
-                    _detailItem = null;
-                  }
-                  _imageDetailTransforms.remove(item.id);
-                  widget.state.deleteClipboardItem(item.id);
-                  Future.delayed(Duration.zero, () {
-                    if (mounted) setState(() {});
-                  });
-                },
-              );
+        : NotificationListener<OverscrollNotification>(
+            onNotification: (notification) {
+              if (notification.overscroll < 0) {
+                if (widget.state.isExpanded && !widget.state.isAnimating) {
+                  widget.state.collapsePanel();
+                  return true;
+                }
+              }
+              return false;
             },
+            child: ListView.builder(
+                key: PageStorageKey<String>(
+                  _showFavoritesOnly ? 'favs_list' : 'all_list',
+                ),
+                controller: _scrollController,
+                itemCount: items.length,
+                physics: const BouncingScrollPhysics(),
+                itemBuilder: (context, index) {
+                  final item = items[index];
+
+                  return ClipboardItemCard(
+                    key: ValueKey(item.id),
+                    item: item,
+                    isDark: widget.isDark,
+                    accentColor: accentColor,
+                    isFavorite: widget.state.isItemFavorite(item.content),
+                    onCopy: () => widget.state.copyToClipboard(item),
+                    onOpenDetail: () => _openDetail(item),
+                    onFavoriteToggle: () =>
+                        widget.state.toggleFavoriteClipboardItem(item),
+                    onDelete: () {
+                      if (_detailItem?.id == item.id) {
+                        _detailItem = null;
+                      }
+                      _imageDetailTransforms.remove(item.id);
+                      widget.state.deleteClipboardItem(item.id);
+                      Future.delayed(Duration.zero, () {
+                        if (mounted) setState(() {});
+                      });
+                    },
+                  );
+                },
+              ),
           );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
@@ -421,11 +431,15 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
   }
 
   Widget _buildBadge(String type) {
-    final Color color = type == 'JSON'
-        ? Colors.blue
-        : (type == 'XML'
-              ? Colors.green
-              : (type == 'URL' ? Colors.indigo : Colors.blue));
+    final Color color = type == 'URL'
+        ? Colors.indigo
+        : (type == 'IMAGE'
+            ? Colors.teal
+            : (type == 'COLOR'
+                ? Colors.deepOrange
+                : (type == 'DATETIME'
+                    ? Colors.purple
+                    : Colors.blue)));
     return Container(
       margin: const EdgeInsets.only(left: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -536,10 +550,10 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         _buildAppIcon(),
-                        if (widget.item.imagePath == null &&
-                            (itemType == 'JSON' ||
-                                itemType == 'XML' ||
-                                itemType == 'URL'))
+                        if (itemType == 'URL' ||
+                            itemType == 'IMAGE' ||
+                            itemType == 'COLOR' ||
+                            itemType == 'DATETIME')
                           _buildBadge(itemType),
                       ],
                     ),
@@ -550,6 +564,83 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                     children: [
                       if (widget.item.imagePath != null)
                         _buildThumbnail()
+                      else if (itemType == 'COLOR')
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 10,
+                                height: 10,
+                                decoration: BoxDecoration(
+                                  color: AppState().parseColor(widget.item.content) ?? Colors.transparent,
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: widget.isDark ? Colors.white30 : Colors.black26,
+                                    width: 1.0,
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: AnimatedDefaultTextStyle(
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: widget.isFavorite
+                                        ? FontWeight.w500
+                                        : FontWeight.normal,
+                                    color: _isCopied
+                                        ? themeAccent
+                                        : (widget.isDark
+                                              ? Colors.white70
+                                              : Colors.black87),
+                                  ),
+                                  child: Text(
+                                    widget.item.content.trim(),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else if (itemType == 'DATETIME')
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.access_time_rounded,
+                                size: 12,
+                                color: widget.isDark ? Colors.white30 : Colors.black38,
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: AnimatedDefaultTextStyle(
+                                  duration: const Duration(milliseconds: 200),
+                                  curve: Curves.easeOut,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: widget.isFavorite
+                                        ? FontWeight.w500
+                                        : FontWeight.normal,
+                                    color: _isCopied
+                                        ? themeAccent
+                                        : (widget.isDark
+                                              ? Colors.white70
+                                              : Colors.black87),
+                                  ),
+                                  child: Text(
+                                    '${widget.item.content.trim()} ➔ ${DateFormat('yyyy-MM-dd HH:mm:ss').format(AppState().parseTimestamp(widget.item.content)!)}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
                       else
                         Expanded(
                           child: AnimatedDefaultTextStyle(
@@ -997,311 +1088,7 @@ class _HeaderCopyButtonState extends State<_HeaderCopyButton> {
   }
 }
 
-// ══════════════════════════════════════════════════
-// Lightweight Detail Syntax Highlighting
-// ══════════════════════════════════════════════════
-const int _maxDetailHighlightLength = 120000;
 
-final RegExp _detailJsonPattern = RegExp(
-  r'("(?:\\.|[^"\\])*"\s*:)|("(?:\\.|[^"\\])*")|(\b(?:true|false|null)\b)|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)',
-  multiLine: true,
-);
-
-final RegExp _detailXmlPattern = RegExp(
-  r'''(<!--[\s\S]*?-->)|(<\/?[\w:.-]+)|([\w:.-]+)(?=\s*=)|("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')|(\/?>)''',
-  multiLine: true,
-);
-
-final RegExp _detailCodePattern = RegExp(
-  r'(//[^\n\r]*)|(/\*[\s\S]*?\*/)|("(?:\\.|[^"\\])*")|'
-  r"('(?:\\.|[^'\\])*')|"
-  r'\b(abstract|as|assert|async|await|break|case|catch|class|const|continue|default|defer|def|do|dynamic|else|enum|export|extends|extension|external|factory|false|final|finally|for|func|function|get|if|implements|import|in|interface|is|late|let|library|mixin|namespace|new|null|operator|override|package|part|private|public|return|set|static|struct|super|switch|this|throw|true|try|typedef|using|var|void|while|with|yield)\b|'
-  r'\b(String|int|double|num|bool|List|Map|Set|Future|Stream|Widget|State|BuildContext|[A-Z][A-Za-z0-9_]*)\b|'
-  r'\b(\d+(?:\.\d+)?)\b|'
-  r'\b([A-Za-z_][A-Za-z0-9_]*)(?=\s*\()',
-  multiLine: true,
-);
-
-bool _canHighlightDetailText(String itemType, String text) {
-  return (itemType == 'JSON' || itemType == 'XML' || itemType == 'CODE') &&
-      text.length <= _maxDetailHighlightLength;
-}
-
-TextSpan _highlightMatches(
-  String text,
-  RegExp pattern,
-  TextStyle baseStyle,
-  TextStyle Function(Match match) styleFor,
-) {
-  final spans = <TextSpan>[];
-  var lastIndex = 0;
-
-  for (final match in pattern.allMatches(text)) {
-    if (match.start > lastIndex) {
-      spans.add(TextSpan(text: text.substring(lastIndex, match.start)));
-    }
-    spans.add(TextSpan(text: match.group(0), style: styleFor(match)));
-    lastIndex = match.end;
-  }
-
-  if (lastIndex < text.length) {
-    spans.add(TextSpan(text: text.substring(lastIndex)));
-  }
-
-  return TextSpan(style: baseStyle, children: spans);
-}
-
-TextSpan _highlightDetailJson(String text, bool isDark, TextStyle baseStyle) {
-  final keyColor = isDark ? const Color(0xFF9CDCFE) : const Color(0xFF0451A5);
-  final stringColor = isDark
-      ? const Color(0xFFCE9178)
-      : const Color(0xFFA31515);
-  final numberColor = isDark
-      ? const Color(0xFFB5CEA8)
-      : const Color(0xFF098658);
-  final boolColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF0000FF);
-
-  return _highlightMatches(text, _detailJsonPattern, baseStyle, (match) {
-    if (match.group(1) != null) {
-      return TextStyle(color: keyColor, fontWeight: FontWeight.w600);
-    }
-    if (match.group(2) != null) {
-      return TextStyle(color: stringColor);
-    }
-    if (match.group(3) != null) {
-      return TextStyle(color: boolColor, fontWeight: FontWeight.w600);
-    }
-    return TextStyle(color: numberColor);
-  });
-}
-
-TextSpan _highlightDetailXml(String text, bool isDark, TextStyle baseStyle) {
-  final tagColor = isDark ? const Color(0xFF569CD6) : const Color(0xFF800000);
-  final attrColor = isDark ? const Color(0xFF9CDCFE) : const Color(0xFFFF0000);
-  final valueColor = isDark ? const Color(0xFFCE9178) : const Color(0xFF0000FF);
-  final commentColor = isDark
-      ? Colors.white.withOpacity(0.35)
-      : Colors.black.withOpacity(0.4);
-
-  return _highlightMatches(text, _detailXmlPattern, baseStyle, (match) {
-    if (match.group(1) != null) {
-      return TextStyle(color: commentColor, fontStyle: FontStyle.italic);
-    }
-    if (match.group(2) != null || match.group(5) != null) {
-      return TextStyle(color: tagColor, fontWeight: FontWeight.w600);
-    }
-    if (match.group(3) != null) {
-      return TextStyle(color: attrColor);
-    }
-    return TextStyle(color: valueColor);
-  });
-}
-
-TextSpan _highlightDetailCode(String text, bool isDark, TextStyle baseStyle) {
-  final commentColor = isDark
-      ? const Color(0xFF6A9955)
-      : const Color(0xFF008000);
-  final stringColor = isDark
-      ? const Color(0xFFCE9178)
-      : const Color(0xFFA31515);
-  final keywordColor = isDark
-      ? const Color(0xFF569CD6)
-      : const Color(0xFF0000FF);
-  final typeColor = isDark ? const Color(0xFF4EC9B0) : const Color(0xFF267F99);
-  final numberColor = isDark
-      ? const Color(0xFFB5CEA8)
-      : const Color(0xFF098658);
-  final functionColor = isDark
-      ? const Color(0xFFDCDCAA)
-      : const Color(0xFF795E26);
-
-  return _highlightMatches(text, _detailCodePattern, baseStyle, (match) {
-    if (match.group(1) != null || match.group(2) != null) {
-      return TextStyle(color: commentColor, fontStyle: FontStyle.italic);
-    }
-    if (match.group(3) != null || match.group(4) != null) {
-      return TextStyle(color: stringColor);
-    }
-    if (match.group(5) != null) {
-      return TextStyle(color: keywordColor, fontWeight: FontWeight.w600);
-    }
-    if (match.group(6) != null) {
-      return TextStyle(color: typeColor);
-    }
-    if (match.group(7) != null) {
-      return TextStyle(color: numberColor);
-    }
-    return TextStyle(color: functionColor);
-  });
-}
-
-TextSpan _highlightDetailText(
-  String text,
-  String itemType,
-  bool isDark,
-  TextStyle baseStyle,
-) {
-  if (text.length > _maxDetailHighlightLength) {
-    return TextSpan(text: text, style: baseStyle);
-  }
-
-  return switch (itemType) {
-    'JSON' => _highlightDetailJson(text, isDark, baseStyle),
-    'XML' => _highlightDetailXml(text, isDark, baseStyle),
-    'CODE' => _highlightDetailCode(text, isDark, baseStyle),
-    _ => TextSpan(text: text, style: baseStyle),
-  };
-}
-
-// ══════════════════════════════════════════════════
-// Background-isolate highlight computation
-// ══════════════════════════════════════════════════
-
-/// Runs inside a background isolate – no Flutter UI objects allowed.
-/// Returns LINE-GROUPED tokens so the main thread can render only visible
-/// lines via ListView.builder (true virtualization, zero render jank).
-/// Each outer element = one source line; inner elements = tokens on that line.
-List<List<List<Object?>>> _computeHighlightTokensByLine(
-  Map<String, dynamic> args,
-) {
-  final text = args['text'] as String;
-  final itemType = args['itemType'] as String;
-  final isDark = args['isDark'] as bool;
-
-  final rawLines = text.split('\n');
-
-  if (text.length > _maxDetailHighlightLength) {
-    return rawLines
-        .map(
-          (l) =>
-              [
-                    [l, null, false, false],
-                  ]
-                  as List<List<Object?>>,
-        )
-        .toList();
-  }
-
-  RegExp pattern;
-  List<Object?> Function(Match) getStyle;
-
-  if (itemType == 'JSON') {
-    pattern = _detailJsonPattern;
-    final keyColor = isDark ? 0xFF9CDCFE : 0xFF0451A5;
-    final strColor = isDark ? 0xFFCE9178 : 0xFFA31515;
-    final numColor = isDark ? 0xFFB5CEA8 : 0xFF098658;
-    final boolColor = isDark ? 0xFF569CD6 : 0xFF0000FF;
-    getStyle = (m) {
-      if (m.group(1) != null) return [keyColor, true, false];
-      if (m.group(2) != null) return [strColor, false, false];
-      if (m.group(3) != null) return [boolColor, true, false];
-      return [numColor, false, false];
-    };
-  } else if (itemType == 'XML') {
-    pattern = _detailXmlPattern;
-    final tagColor = isDark ? 0xFF569CD6 : 0xFF800000;
-    final attrColor = isDark ? 0xFF9CDCFE : 0xFFFF0000;
-    final valColor = isDark ? 0xFFCE9178 : 0xFF0000FF;
-    final commentColor = isDark ? 0x59FFFFFF : 0x66000000;
-    getStyle = (m) {
-      if (m.group(1) != null) return [commentColor, false, true];
-      if (m.group(2) != null || m.group(5) != null)
-        return [tagColor, true, false];
-      if (m.group(3) != null) return [attrColor, false, false];
-      return [valColor, false, false];
-    };
-  } else if (itemType == 'CODE') {
-    pattern = _detailCodePattern;
-    final commentColor = isDark ? 0xFF6A9955 : 0xFF008000;
-    final strColor = isDark ? 0xFFCE9178 : 0xFFA31515;
-    final kwColor = isDark ? 0xFF569CD6 : 0xFF0000FF;
-    final typeColor = isDark ? 0xFF4EC9B0 : 0xFF267F99;
-    final numColor = isDark ? 0xFFB5CEA8 : 0xFF098658;
-    final fnColor = isDark ? 0xFFDCDCAA : 0xFF795E26;
-    getStyle = (m) {
-      if (m.group(1) != null || m.group(2) != null)
-        return [commentColor, false, true];
-      if (m.group(3) != null || m.group(4) != null)
-        return [strColor, false, false];
-      if (m.group(5) != null) return [kwColor, true, false];
-      if (m.group(6) != null) return [typeColor, false, false];
-      if (m.group(7) != null) return [numColor, false, false];
-      return [fnColor, false, false];
-    };
-  } else {
-    return rawLines
-        .map(
-          (l) =>
-              [
-                    [l, null, false, false],
-                  ]
-                  as List<List<Object?>>,
-        )
-        .toList();
-  }
-
-  // Tokenize entire text at once (multi-line constructs handled correctly).
-  final allTokens = <List<Object?>>[];
-  var lastIndex = 0;
-  for (final match in pattern.allMatches(text)) {
-    if (match.start > lastIndex) {
-      allTokens.add([
-        text.substring(lastIndex, match.start),
-        null,
-        false,
-        false,
-      ]);
-    }
-    final s = getStyle(match);
-    allTokens.add([match.group(0)!, s[0], s[1], s[2]]);
-    lastIndex = match.end;
-  }
-  if (lastIndex < text.length) {
-    allTokens.add([text.substring(lastIndex), null, false, false]);
-  }
-
-  // Group tokens into lines by splitting on embedded '\n' characters.
-  final lineGroups = <List<List<Object?>>>[[]];
-  for (final tok in allTokens) {
-    final str = tok[0] as String;
-    if (!str.contains('\n')) {
-      lineGroups.last.add(tok);
-    } else {
-      final parts = str.split('\n');
-      for (var i = 0; i < parts.length; i++) {
-        if (parts[i].isNotEmpty) {
-          lineGroups.last.add([parts[i], tok[1], tok[2], tok[3]]);
-        }
-        if (i < parts.length - 1) lineGroups.add([]);
-      }
-    }
-  }
-  return lineGroups;
-}
-
-/// Build a TextSpan for ONE line from its pre-computed token list.
-/// Called lazily by ListView.builder – only for visible lines.
-TextSpan _buildLineSpan(List<List<Object?>> lineTokens, TextStyle baseStyle) {
-  if (lineTokens.isEmpty) return TextSpan(text: '', style: baseStyle);
-  return TextSpan(
-    style: baseStyle,
-    children: lineTokens.map<TextSpan>((t) {
-      final str = t[0] as String;
-      final colorVal = t[1] as int?;
-      final bold = t[2] as bool;
-      final italic = t[3] as bool;
-      if (colorVal == null && !bold && !italic) return TextSpan(text: str);
-      return TextSpan(
-        text: str,
-        style: TextStyle(
-          color: colorVal != null ? Color(colorVal) : null,
-          fontWeight: bold ? FontWeight.w600 : null,
-          fontStyle: italic ? FontStyle.italic : null,
-        ),
-      );
-    }).toList(),
-  );
-}
 
 // ══════════════════════════════════════════════════
 // Text / Image Detail Content Component
@@ -1341,8 +1128,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   late final ScrollController _scrollController;
   late final ScrollController _horizontalScrollController;
 
-  bool _highlightEnabled = false;
-  bool _isHighlightAvailable = false;
   bool _wrapCodeLines = true;
 
   int? _imgWidth;
@@ -1350,21 +1135,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   String _fileSizeStr = '';
   String? _imagePath;
   File? _imageFile;
-  TextSpan? _cachedDetailTextSpan;
-  String? _cachedDetailText;
-  String? _cachedDetailItemType;
-  bool? _cachedDetailIsDark;
-  bool? _cachedDetailHighlightEnabled;
-  TextStyle? _cachedDetailTextStyle;
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
-  double _swipeDistance = 0;
   bool _isImageDetail = false;
-  bool _isHighlightComputing = false;
-  // Line-grouped tokens from isolate: outer list = lines, inner = tokens per line.
-  List<List<List<Object?>>>? _highlightLineTokens;
-  // Plain lines for non-highlighted / loading fallback.
-  List<String> _displayLines = const [];
 
   @override
   void initState() {
@@ -1375,17 +1148,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     _wrapCodeLines = widget.wrapCodeLines;
 
     final itemType = AppState().getClipboardItemType(widget.item);
-    _isHighlightAvailable = _canHighlightDetailText(
-      itemType,
-      widget.item.content,
-    );
-    _highlightEnabled = _isHighlightAvailable;
-    _displayLines = widget.item.content.split('\n');
-    if (_isHighlightAvailable) {
-      _isHighlightComputing = true;
-      _startHighlightCompute(widget.item.content, itemType);
-    }
-
     final isImage = itemType == 'IMAGE';
     _isImageDetail = isImage;
     if (isImage) {
@@ -1457,22 +1219,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     super.dispose();
   }
 
-  @override
-  void didUpdateWidget(_DetailDialogContent oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    // Re-run highlight computation if the theme flips while detail is open
-    if (oldWidget.isDark != widget.isDark &&
-        _highlightEnabled &&
-        _isHighlightAvailable) {
-      _highlightLineTokens = null;
-      _cachedDetailTextSpan = null;
-      _cachedDetailHighlightEnabled = null;
-      _isHighlightComputing = true;
-      final itemType = AppState().getClipboardItemType(widget.item);
-      _startHighlightCompute(widget.item.content, itemType);
-    }
-  }
-
   void _handleImageTransformChanged() {
     widget.onImageTransformChanged?.call(_transformationController.value);
   }
@@ -1501,39 +1247,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       factor,
       Offset(_lastImageViewportWidth / 2, _lastImageViewportHeight / 2),
     );
-  }
-
-  /// Returns the TextSpan for ONE visible line (called lazily from ListView).
-  TextSpan _getLineSpan(int lineIndex, TextStyle textStyle) {
-    if (_highlightEnabled && _highlightLineTokens != null) {
-      final lineTokens = lineIndex < _highlightLineTokens!.length
-          ? _highlightLineTokens![lineIndex]
-          : const <List<Object?>>[];
-      return _buildLineSpan(lineTokens, textStyle);
-    }
-    final txt = lineIndex < _displayLines.length
-        ? _displayLines[lineIndex]
-        : '';
-    return TextSpan(text: txt, style: textStyle);
-  }
-
-  /// Kicks off background-isolate tokenization and updates state when done.
-  Future<void> _startHighlightCompute(String text, String itemType) {
-    return compute(_computeHighlightTokensByLine, {
-          'text': text,
-          'itemType': itemType,
-          'isDark': widget.isDark,
-        })
-        .then((lineTokens) {
-          if (!mounted || !_highlightEnabled) return;
-          setState(() {
-            _highlightLineTokens = lineTokens;
-            _isHighlightComputing = false;
-          });
-        })
-        .catchError((_) {
-          if (mounted) setState(() => _isHighlightComputing = false);
-        });
   }
 
   void _reset() {
@@ -1593,7 +1306,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
     final hasDimension = _imgWidth != null && _imgHeight != null;
     final infoText = hasDimension
-        ? '${_imgWidth}×${_imgHeight} ($_fileSizeStr)'
+        ? '$_imgWidth×$_imgHeight ($_fileSizeStr)'
         : _fileSizeStr;
 
     final displayText = widget.item.content;
@@ -1687,65 +1400,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                       ),
                       const SizedBox(width: 8),
                     ],
-                    // Code highlight toggle
-                    if (_isHighlightAvailable) ...[
-                      Text(
-                        '代码高亮',
-                        style: TextStyle(fontSize: 9, color: subColor),
-                      ),
-                      // Fixed-size placeholder: always 3+8 px wide so the
-                      // switch never shifts when the spinner shows/hides.
-                      const SizedBox(width: 3),
-                      SizedBox(
-                        width: 8,
-                        height: 8,
-                        // child: (_isHighlightComputing && _highlightEnabled)
-                        //     ? CircularProgressIndicator(
-                        //         strokeWidth: 1.2,
-                        //         color: subColor,
-                        //       )
-                        //     : null,
-                      ),
-                      const SizedBox(width: 2),
-                      SizedBox(
-                        width: 36,
-                        height: 22,
-                        child: Transform.scale(
-                          scale: 0.6,
-                          child: OverflowBox(
-                            minWidth: 60,
-                            maxWidth: 60,
-                            minHeight: 40,
-                            maxHeight: 40,
-                            child: Switch(
-                              value: _highlightEnabled,
-                              activeColor: themeAccent,
-                              materialTapTargetSize:
-                                  MaterialTapTargetSize.shrinkWrap,
-                              onChanged: (val) {
-                                setState(() {
-                                  _highlightEnabled = val;
-                                  _highlightLineTokens = null;
-                                  _cachedDetailTextSpan = null;
-                                  _cachedDetailHighlightEnabled = null;
-                                  _isHighlightComputing = val;
-                                });
-                                if (val) {
-                                  final tp = AppState().getClipboardItemType(
-                                    widget.item,
-                                  );
-                                  _startHighlightCompute(
-                                    widget.item.content,
-                                    tp,
-                                  );
-                                }
-                              },
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                    ],
+
                     if (!isImage) ...[
                       _ToolbarButton(
                         icon: _wrapCodeLines
@@ -1766,6 +1421,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         },
                       ),
                       const SizedBox(width: 4),
+
                     ],
                     // Open URL button
                     if (itemType == 'URL') ...[
@@ -1874,25 +1530,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         behavior: HitTestBehavior.translucent,
         onPointerDown: _handleBackMouseButton,
         onPointerSignal: _handleBackPointerSignal,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: (_) => _swipeDistance = 0,
-          onHorizontalDragUpdate: (details) {
-            _swipeDistance += details.delta.dx;
-          },
-          onHorizontalDragEnd: (details) {
-            final velocity = details.primaryVelocity ?? 0;
-            if (!_hasHorizontalOverflow &&
-                (_swipeDistance > 80 || velocity > 520)) {
-              widget.onBack?.call();
-            }
-            _swipeDistance = 0;
-          },
-          onHorizontalDragCancel: () {
-            _swipeDistance = 0;
-          },
-          child: detailWithEsc,
-        ),
+        child: detailWithEsc,
       );
     }
 
@@ -1918,6 +1556,215 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: dialogWithEsc,
+    );
+  }
+
+  Widget _buildFormatCopyRow(String label, String value, Color themeAccent, Color textColor) {
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 4.0),
+      padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
+      decoration: BoxDecoration(
+        color: widget.isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(
+          color: widget.isDark ? Colors.white10 : Colors.black12,
+          width: 0.5,
+        ),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 72,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontFamily: 'Menlo',
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                color: widget.isDark ? Colors.white30 : Colors.black45,
+              ),
+            ),
+          ),
+          Expanded(
+            child: SelectableText(
+              value,
+              style: TextStyle(
+                fontFamily: 'Menlo',
+                fontSize: 11,
+                color: textColor,
+              ),
+            ),
+          ),
+          _CopyButton(value: value, themeAccent: themeAccent),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildColorDetailDashboard(
+    String text,
+    Color themeAccent,
+    Color textColor,
+    double contentMaxHeight,
+  ) {
+    final parsedColor = AppState().parseColor(text) ?? Colors.transparent;
+    final r = parsedColor.red;
+    final g = parsedColor.green;
+    final b = parsedColor.blue;
+    final opacity = parsedColor.opacity;
+    
+    final hexStr = '#${parsedColor.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+    final rgbStr = 'rgb($r, $g, $b)';
+    final rgbaStr = 'rgba($r, $g, $b, ${opacity.toStringAsFixed(2)})';
+    final flutterStr = 'Color(0x${parsedColor.value.toRadixString(16).toUpperCase()})';
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: contentMaxHeight),
+      padding: const EdgeInsets.all(12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 72,
+                height: 72,
+                decoration: BoxDecoration(
+                  color: parsedColor,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: widget.isDark ? Colors.white24 : Colors.black12,
+                    width: 1.0,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: parsedColor.withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: themeAccent.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  opacity < 1.0 ? '透明色' : '不透明',
+                  style: TextStyle(
+                    fontSize: 9,
+                    color: themeAccent,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                children: [
+                  _buildFormatCopyRow('HEX', hexStr, themeAccent, textColor),
+                  _buildFormatCopyRow('RGB', rgbStr, themeAccent, textColor),
+                  _buildFormatCopyRow('RGBA', rgbaStr, themeAccent, textColor),
+                  _buildFormatCopyRow('Flutter', flutterStr, themeAccent, textColor),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDatetimeDetailDashboard(
+    String text,
+    Color themeAccent,
+    Color textColor,
+    double contentMaxHeight,
+  ) {
+    final dt = AppState().parseTimestamp(text);
+    if (dt == null) return const SizedBox.shrink();
+    
+    final localStr = DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt);
+    final utcStr = DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt.toUtc()) + ' UTC';
+    final isoStr = dt.toIso8601String();
+    
+    final weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+    final weekdayStr = weekdays[dt.weekday - 1];
+    
+    final tzOffset = dt.timeZoneOffset;
+    final tzSign = tzOffset.isNegative ? '-' : '+';
+    final tzHours = tzOffset.inHours.abs().toString().padLeft(2, '0');
+    final tzMins = (tzOffset.inMinutes.abs() % 60).toString().padLeft(2, '0');
+    final tzStr = 'GMT$tzSign$tzHours:$tzMins';
+
+    return Container(
+      constraints: BoxConstraints(maxHeight: contentMaxHeight),
+      padding: const EdgeInsets.all(12.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 76,
+            padding: const EdgeInsets.all(8.0),
+            decoration: BoxDecoration(
+              color: widget.isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: widget.isDark ? Colors.white10 : Colors.black12,
+                width: 0.5,
+              ),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  Icons.calendar_today_rounded,
+                  size: 20,
+                  color: themeAccent,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  weekdayStr,
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: textColor,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  tzStr,
+                  style: TextStyle(
+                    fontSize: 8,
+                    color: widget.isDark ? Colors.white30 : Colors.black45,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: SingleChildScrollView(
+              physics: const BouncingScrollPhysics(),
+              child: Column(
+                children: [
+                  _buildFormatCopyRow('本地时间', localStr, themeAccent, textColor),
+                  _buildFormatCopyRow('UTC 时间', utcStr, themeAccent, textColor),
+                  _buildFormatCopyRow('ISO 8601', isoStr, themeAccent, textColor),
+                  _buildFormatCopyRow('原始戳', text, themeAccent, textColor),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -2001,101 +1848,244 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                 );
               },
             )
-          : LayoutBuilder(
-              builder: (context, constraints) {
-                final viewportWidth = constraints.maxWidth;
-                final viewportHeight = constraints.hasBoundedHeight
-                    ? constraints.maxHeight
-                    : contentMaxHeight;
-                final textStyle = TextStyle(
-                  fontSize: 10.5,
-                  height: 1.32,
-                  fontFamily: 'Menlo',
-                  color: itemType == 'URL' ? themeAccent : textColor,
-                  decoration: itemType == 'URL'
-                      ? TextDecoration.underline
-                      : null,
-                );
+          : (itemType == 'COLOR'
+              ? _buildColorDetailDashboard(displayText, themeAccent, textColor, contentMaxHeight)
+              : (itemType == 'DATETIME'
+                  ? _buildDatetimeDetailDashboard(displayText, themeAccent, textColor, contentMaxHeight)
+                  : LayoutBuilder(
+                      builder: (context, constraints) {
+                        final viewportHeight = constraints.hasBoundedHeight
+                            ? constraints.maxHeight
+                            : contentMaxHeight;
+                        final textStyle = TextStyle(
+                          fontSize: 10.5,
+                          height: 1.32,
+                          fontFamily: 'Menlo',
+                          color: itemType == 'URL' ? themeAccent : textColor,
+                          decoration: itemType == 'URL'
+                              ? TextDecoration.underline
+                              : null,
+                        );
 
-                final lineCount =
-                    (_highlightEnabled && _highlightLineTokens != null)
-                    ? _highlightLineTokens!.length
-                    : _displayLines.length;
+                        final scrollBehavior = ScrollConfiguration.of(context).copyWith(scrollbars: false);
 
-                // Line-virtualized builder: Flutter only lays out visible
-                // lines (~20), so even 50K-line files never freeze the UI.
-                Widget lineListView = ListView.builder(
-                  controller: _scrollController,
-                  physics: const BouncingScrollPhysics(),
-                  itemCount: lineCount,
-                  itemBuilder: (_, i) => Text.rich(
-                    _getLineSpan(i, textStyle),
-                    softWrap: _wrapCodeLines,
-                    overflow: _wrapCodeLines
-                        ? TextOverflow.visible
-                        : TextOverflow.clip,
-                  ),
-                );
-
-                final scrollBehavior = ScrollConfiguration.of(
-                  context,
-                ).copyWith(scrollbars: false);
-
-                if (_wrapCodeLines) {
-                  return SelectionArea(
-                    child: Scrollbar(
-                      controller: _scrollController,
-                      notificationPredicate: (n) =>
-                          n.metrics.axis == Axis.vertical,
-                      thumbVisibility: true,
-                      thickness: 4,
-                      radius: const Radius.circular(999),
-                      child: ScrollConfiguration(
-                        behavior: scrollBehavior,
-                        child: SizedBox(
-                          height: viewportHeight,
-                          child: lineListView,
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                return SelectionArea(
-                  child: Scrollbar(
-                    controller: _scrollController,
-                    notificationPredicate: (n) =>
-                        n.metrics.axis == Axis.vertical,
-                    thumbVisibility: true,
-                    thickness: 4,
-                    radius: const Radius.circular(999),
-                    child: Scrollbar(
-                      controller: _horizontalScrollController,
-                      notificationPredicate: (n) =>
-                          n.metrics.axis == Axis.horizontal,
-                      thumbVisibility: false,
-                      thickness: 3,
-                      radius: const Radius.circular(999),
-                      child: ScrollConfiguration(
-                        behavior: scrollBehavior,
-                        child: SizedBox(
-                          height: viewportHeight,
-                          child: SingleChildScrollView(
-                            controller: _horizontalScrollController,
-                            scrollDirection: Axis.horizontal,
-                            physics: const BouncingScrollPhysics(),
-                            child: SizedBox(
-                              width: viewportWidth * 4,
-                              child: lineListView,
+                        Widget finalContainer;
+                        if (displayText.length > 30000) {
+                          finalContainer = SizedBox(
+                            height: viewportHeight,
+                            child: _LargeTextDetailView(
+                              text: displayText,
+                              style: textStyle,
+                              wrapLines: _wrapCodeLines,
+                              verticalController: _scrollController,
+                              horizontalController: _horizontalScrollController,
                             ),
+                          );
+                        } else if (_wrapCodeLines) {
+                          finalContainer = ScrollConfiguration(
+                            behavior: scrollBehavior,
+                            child: SizedBox(
+                              height: viewportHeight,
+                              child: SingleChildScrollView(
+                                controller: _scrollController,
+                                physics: const BouncingScrollPhysics(),
+                                child: Padding(
+                                  padding: const EdgeInsets.all(8.0),
+                                  child: SelectableText(
+                                    displayText,
+                                    style: textStyle,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        } else {
+                          finalContainer = ScrollConfiguration(
+                            behavior: scrollBehavior,
+                            child: SizedBox(
+                              height: viewportHeight,
+                              child: SingleChildScrollView(
+                                controller: _scrollController,
+                                physics: const BouncingScrollPhysics(),
+                                child: SingleChildScrollView(
+                                  controller: _horizontalScrollController,
+                                  scrollDirection: Axis.horizontal,
+                                  physics: const BouncingScrollPhysics(),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(8.0),
+                                    child: SelectableText(
+                                      displayText,
+                                      style: textStyle,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          );
+                        }
+
+                        if (_wrapCodeLines) {
+                          return Scrollbar(
+                            controller: _scrollController,
+                            notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
+                            thumbVisibility: true,
+                            thickness: 4,
+                            radius: const Radius.circular(999),
+                            child: finalContainer,
+                          );
+                        }
+
+                        return Scrollbar(
+                          controller: _scrollController,
+                          notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
+                          thumbVisibility: true,
+                          thickness: 4,
+                          radius: const Radius.circular(999),
+                          child: Scrollbar(
+                            controller: _horizontalScrollController,
+                            notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
+                            thumbVisibility: false,
+                            thickness: 3,
+                            radius: const Radius.circular(999),
+                            child: finalContainer,
                           ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-              },
-            ),
+                        );
+                      },
+                    ))),
     );
   }
 }
+
+class _CopyButton extends StatefulWidget {
+  final String value;
+  final Color themeAccent;
+  const _CopyButton({required this.value, required this.themeAccent});
+
+  @override
+  State<_CopyButton> createState() => _CopyButtonState();
+}
+
+class _CopyButtonState extends State<_CopyButton> {
+  bool _copied = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      child: GestureDetector(
+        onTap: () async {
+          await Clipboard.setData(ClipboardData(text: widget.value));
+          if (mounted) {
+            setState(() => _copied = true);
+            Future.delayed(const Duration(seconds: 1), () {
+              if (mounted) setState(() => _copied = false);
+            });
+          }
+        },
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: _copied ? Colors.green.withOpacity(0.15) : widget.themeAccent.withOpacity(0.08),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Icon(
+            _copied ? Icons.check_rounded : Icons.copy_all_rounded,
+            size: 11,
+            color: _copied ? Colors.green : widget.themeAccent,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LargeTextDetailView extends StatefulWidget {
+  final String text;
+  final TextStyle style;
+  final bool wrapLines;
+  final ScrollController verticalController;
+  final ScrollController horizontalController;
+
+  const _LargeTextDetailView({
+    required this.text,
+    required this.style,
+    required this.wrapLines,
+    required this.verticalController,
+    required this.horizontalController,
+  });
+
+  @override
+  State<_LargeTextDetailView> createState() => _LargeTextDetailViewState();
+}
+
+class _LargeTextDetailViewState extends State<_LargeTextDetailView> {
+  late List<String> _lines;
+
+  @override
+  void initState() {
+    super.initState();
+    _lines = widget.text.split('\n');
+  }
+
+  @override
+  void didUpdateWidget(_LargeTextDetailView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.text != widget.text) {
+      _lines = widget.text.split('\n');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scrollBehavior = ScrollConfiguration.of(context).copyWith(scrollbars: false);
+
+    if (widget.wrapLines) {
+      return SelectionArea(
+        child: ScrollConfiguration(
+          behavior: scrollBehavior,
+          child: ListView.builder(
+            controller: widget.verticalController,
+            physics: const BouncingScrollPhysics(),
+            itemCount: _lines.length,
+            padding: const EdgeInsets.all(8.0),
+            itemBuilder: (context, index) {
+              return Text(
+                _lines[index],
+                style: widget.style,
+              );
+            },
+          ),
+        ),
+      );
+    } else {
+      return SelectionArea(
+        child: ScrollConfiguration(
+          behavior: scrollBehavior,
+          child: SingleChildScrollView(
+            controller: widget.horizontalController,
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: SizedBox(
+              width: 10000,
+              child: ListView.builder(
+                controller: widget.verticalController,
+                physics: const BouncingScrollPhysics(),
+                itemCount: _lines.length,
+                padding: const EdgeInsets.all(8.0),
+                itemBuilder: (context, index) {
+                  return Text(
+                    _lines[index],
+                    style: widget.style,
+                    softWrap: false,
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+  }
+}
+
+

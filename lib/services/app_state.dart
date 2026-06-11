@@ -147,355 +147,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return '${bytes.length}:$hash';
   }
 
-  String _stripMarkdownBlock(String text) {
-    var trimmed = text.trim();
-    final regExp = RegExp(
-      r'^```[a-zA-Z0-9_-]*\s*\n?([\s\S]*?)\n?```$',
-      multiLine: true,
-    );
-    final match = regExp.firstMatch(trimmed);
-    if (match != null) {
-      return match.group(1)?.trim() ?? trimmed;
-    }
-    return trimmed;
-  }
-
-  dynamic _decodeLooseJson(String jsonStr) {
-    var s = jsonStr.trim();
-    // 1. Replace single quotes wrapping keys/values with double quotes
-    s = s.replaceAllMapped(RegExp(r"'([^'\\]*(?:\\.[^'\\]*)*)'"), (match) {
-      final content = match.group(1) ?? '';
-      final safeContent = content.replaceAll('"', '\\"');
-      return '"$safeContent"';
-    });
-    // 2. Add double quotes to unquoted keys, e.g. {a: 1} -> {"a": 1}
-    s = s.replaceAllMapped(
-      RegExp(r'([{\s,])([a-zA-Z_$.][a-zA-Z0-9_$.]*)\s*:'),
-      (match) {
-        final prefix = match.group(1) ?? '';
-        final key = match.group(2) ?? '';
-        return '$prefix"$key":';
-      },
-    );
-    // 3. Remove trailing commas, e.g. {"a": 1,} -> {"a": 1}
-    s = s.replaceAll(RegExp(r',\s*}'), '}');
-    s = s.replaceAll(RegExp(r',\s*]'), ']');
-    try {
-      return jsonDecode(s);
-    } catch (_) {
-      return null;
-    }
-  }
-
-  String? tryFormatJson(String text) {
-    var trimmed = text.trim();
-    trimmed = _stripMarkdownBlock(trimmed);
-    if (trimmed.endsWith(';')) {
-      trimmed = trimmed.substring(0, trimmed.length - 1).trim();
-    }
-    if ((trimmed.startsWith('{') && trimmed.endsWith('}')) ||
-        (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
-      try {
-        final parsed = jsonDecode(trimmed);
-        final encoder = const JsonEncoder.withIndent('  ');
-        return encoder.convert(parsed);
-      } catch (_) {
-        // Fallback to loose decode for standard-wrapped text
-      }
-    }
-
-    // Attempt to extract the JSON payload, e.g. "const data = { ... };"
-    int firstBrace = trimmed.indexOf('{');
-    int firstBracket = trimmed.indexOf('[');
-    int startIdx = -1;
-    int endIdx = -1;
-    if (firstBrace != -1 && (firstBracket == -1 || firstBrace < firstBracket)) {
-      startIdx = firstBrace;
-      endIdx = trimmed.lastIndexOf('}');
-    } else if (firstBracket != -1) {
-      startIdx = firstBracket;
-      endIdx = trimmed.lastIndexOf(']');
-    }
-
-    if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
-      final substring = trimmed.substring(startIdx, endIdx + 1);
-      try {
-        final parsed = jsonDecode(substring);
-        final encoder = const JsonEncoder.withIndent('  ');
-        return encoder.convert(parsed);
-      } catch (_) {
-        try {
-          final looseDecoded = _decodeLooseJson(substring);
-          if (looseDecoded != null) {
-            final encoder = const JsonEncoder.withIndent('  ');
-            return encoder.convert(looseDecoded);
-          }
-        } catch (_) {}
-      }
-    }
-    return null;
-  }
-
-  String? tryFormatXml(String text) {
-    var trimmed = text.trim();
-    trimmed = _stripMarkdownBlock(trimmed);
-    if (trimmed.startsWith('<') && trimmed.endsWith('>')) {
-      if (!trimmed.contains('</') && !trimmed.contains('/>')) return null;
-      try {
-        return _formatXmlString(trimmed);
-      } catch (_) {
-        return null;
-      }
-    }
-    return null;
-  }
-
-  bool _looksLikeCode(String text) {
-    final trimmed = _stripMarkdownBlock(text).trim();
-    if (trimmed.isEmpty) return false;
-    final codeTraits = RegExp(
-      r'''(^|\n)\s*(import|export|part)\s+['"]|'''
-      r'\b(class|enum|mixin|extension|void|final|const|var|return|if|else|for|while|switch|case|try|catch|finally|async|await|typedef|static)\b|'
-      r'=>|;\s*(\n|$)',
-      multiLine: true,
-    );
-    if (!codeTraits.hasMatch(trimmed)) return false;
-    final openBraceCount = '{'.allMatches(trimmed).length;
-    final closeBraceCount = '}'.allMatches(trimmed).length;
-    return openBraceCount == closeBraceCount;
-  }
-
-  String? tryFormatCode(String text) {
-    var trimmed = text.trim();
-    trimmed = _stripMarkdownBlock(trimmed);
-
-    final openBraceCount = '{'.allMatches(trimmed).length;
-    final closeBraceCount = '}'.allMatches(trimmed).length;
-    final hasLineBreak = '\n'.allMatches(trimmed).isNotEmpty;
-
-    if (openBraceCount == closeBraceCount &&
-        (openBraceCount >= 1 || hasLineBreak || trimmed.contains(';')) &&
-        _looksLikeCode(trimmed)) {
-      return _formatCurlyBraceCode(trimmed);
-    }
-    return null;
-  }
-
-  String _formatCurlyBraceCode(String code) {
-    final normalized = code.replaceAll('\r\n', '\n').replaceAll('\r', '\n');
-    final rawLines = <String>[];
-    final current = StringBuffer();
-    int indent = 0;
-    String? stringQuote;
-    bool escape = false;
-    bool inLineComment = false;
-    bool inBlockComment = false;
-    bool lastOutsideWasWhitespace = false;
-
-    void emitLine({int? forcedIndent}) {
-      final text = current.toString().trim();
-      current.clear();
-      lastOutsideWasWhitespace = false;
-      if (text.isEmpty) return;
-      rawLines.add('${'  ' * (forcedIndent ?? indent)}$text');
-    }
-
-    String nextNonWhitespace(int index) {
-      for (var i = index + 1; i < normalized.length; i++) {
-        final char = normalized[i];
-        if (!RegExp(r'\s').hasMatch(char)) return char;
-      }
-      return '';
-    }
-
-    for (var i = 0; i < normalized.length; i++) {
-      final char = normalized[i];
-      final next = i + 1 < normalized.length ? normalized[i + 1] : '';
-
-      if (inLineComment) {
-        if (char == '\n') {
-          emitLine();
-          inLineComment = false;
-        } else {
-          current.write(char);
-        }
-        continue;
-      }
-
-      if (inBlockComment) {
-        current.write(char);
-        if (char == '*' && next == '/') {
-          current.write(next);
-          i++;
-          inBlockComment = false;
-        }
-        continue;
-      }
-
-      if (stringQuote != null) {
-        current.write(char);
-        if (escape) {
-          escape = false;
-        } else if (char == '\\') {
-          escape = true;
-        } else if (char == stringQuote) {
-          stringQuote = null;
-        }
-        continue;
-      }
-
-      if (char == '"' || char == "'" || char == '`') {
-        stringQuote = char;
-        current.write(char);
-        lastOutsideWasWhitespace = false;
-        continue;
-      }
-
-      if (char == '/' && next == '/') {
-        if (current.toString().trim().isNotEmpty &&
-            !current.toString().endsWith(' ')) {
-          current.write(' ');
-        }
-        current.write('//');
-        i++;
-        inLineComment = true;
-        continue;
-      }
-
-      if (char == '/' && next == '*') {
-        if (current.toString().trim().isNotEmpty &&
-            !current.toString().endsWith(' ')) {
-          current.write(' ');
-        }
-        current.write('/*');
-        i++;
-        inBlockComment = true;
-        continue;
-      }
-
-      if (char == '\n') {
-        emitLine();
-        continue;
-      }
-
-      if (RegExp(r'\s').hasMatch(char)) {
-        if (!lastOutsideWasWhitespace && current.toString().trim().isNotEmpty) {
-          current.write(' ');
-          lastOutsideWasWhitespace = true;
-        }
-        continue;
-      }
-
-      lastOutsideWasWhitespace = false;
-
-      if (char == '{') {
-        final before = current.toString().trimRight();
-        current.clear();
-        current.write(before);
-        if (before.isNotEmpty &&
-            !before.endsWith(' ') &&
-            !before.endsWith('{') &&
-            !before.endsWith('[') &&
-            !before.endsWith('(')) {
-          current.write(' ');
-        }
-        current.write('{');
-        emitLine();
-        indent++;
-        continue;
-      }
-
-      if (char == '}') {
-        emitLine();
-        indent = (indent - 1).clamp(0, 100);
-        current.write('}');
-        final nextChar = nextNonWhitespace(i);
-        if (nextChar == ';' || nextChar == ',' || nextChar == ')') {
-          continue;
-        }
-        emitLine();
-        continue;
-      }
-
-      if (char == ';') {
-        current.write(';');
-        emitLine();
-        continue;
-      }
-
-      if (char == ',') {
-        current.write(',');
-        if (next != '\n' && next != '\r' && next != ' ') {
-          current.write(' ');
-        }
-        continue;
-      }
-
-      if (char == ':' && next != '/') {
-        current.write(':');
-        if (next != ' ' && next != '\n' && next != '\r') {
-          current.write(' ');
-        }
-        continue;
-      }
-
-      current.write(char);
-    }
-
-    emitLine();
-
-    final merged = <String>[];
-    for (final line in rawLines) {
-      final trimmed = line.trimLeft();
-      if (merged.isNotEmpty &&
-          merged.last.trim() == '}' &&
-          RegExp(r'^(else|catch|finally)\b').hasMatch(trimmed)) {
-        final previousIndent =
-            merged.last.length - merged.last.trimLeft().length;
-        merged[merged.length - 1] =
-            '${' ' * previousIndent}} ${trimmed.trim()}';
-      } else {
-        merged.add(line);
-      }
-    }
-
-    return merged.join('\n').trim();
-  }
-
-  String _formatXmlString(String xml) {
-    final regExp = RegExp(r'(<[^>]+>)|([^<]+)');
-    final matches = regExp.allMatches(xml);
-    final sb = StringBuffer();
-    int indent = 0;
-    for (final match in matches) {
-      final token = match.group(0)?.trim() ?? '';
-      if (token.isEmpty) continue;
-      if (token.startsWith('</')) {
-        indent = (indent - 1).clamp(0, 100);
-        sb.write('\n${'  ' * indent}$token');
-      } else if (token.startsWith('<') &&
-          (token.endsWith('/>') ||
-              token.startsWith('<?') ||
-              token.startsWith('<!'))) {
-        sb.write('\n${'  ' * indent}$token');
-      } else if (token.startsWith('<')) {
-        sb.write('\n${'  ' * indent}$token');
-        indent++;
-      } else {
-        sb.write('\n${'  ' * indent}$token');
-      }
-    }
-    return sb.toString().trim();
-  }
 
   bool isUrl(String text) {
+    if (text.length > 2048) return false;
     final trimmed = text.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       return false;
     }
+    if (trimmed.contains(' ') || trimmed.contains('\n') || trimmed.contains('\r')) {
+      return false;
+    }
     try {
       final uri = Uri.parse(trimmed);
-      return uri.isAbsolute;
+      return uri.scheme.isNotEmpty && uri.host.isNotEmpty;
     } catch (_) {
       return false;
     }
@@ -512,6 +176,100 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  static final RegExp _hexColorRegExp = RegExp(
+    r'^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$',
+  );
+  static final RegExp _rgbColorRegExp = RegExp(
+    r'^(rgb|rgba)\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*(,\s*(0?\.\d+|\d+|\d*\.\d+)\s*)?\)$',
+    caseSensitive: false,
+  );
+  static final RegExp _hslColorRegExp = RegExp(
+    r'^(hsl|hsla)\(\s*\d+\s*,\s*\d+%\s*,\s*\d+%\s*(,\s*(0?\.\d+|\d+|\d*\.\d+)\s*)?\)$',
+    caseSensitive: false,
+  );
+
+  Color? parseColor(String text) {
+    if (text.length > 100) return null;
+    final input = text.trim();
+    if (_hexColorRegExp.hasMatch(input)) {
+      String hex = input.substring(1);
+      if (hex.length == 3) {
+        final r = hex[0];
+        final g = hex[1];
+        final b = hex[2];
+        hex = 'FF$r$r$g$g$b$b';
+      } else if (hex.length == 4) {
+        final a = hex[0];
+        final r = hex[1];
+        final g = hex[2];
+        final b = hex[3];
+        hex = '$a$a$r$r$g$g$b$b';
+      } else if (hex.length == 6) {
+        hex = 'FF$hex';
+      } else if (hex.length == 8) {
+        final rr = hex.substring(0, 2);
+        final gg = hex.substring(2, 4);
+        final bb = hex.substring(4, 6);
+        final aa = hex.substring(6, 8);
+        hex = '$aa$rr$gg$bb';
+      }
+      final val = int.tryParse(hex, radix: 16);
+      if (val != null) return Color(val);
+    } else if (_rgbColorRegExp.hasMatch(input)) {
+      final match = RegExp(r'\d*\.?\d+').allMatches(input).map((m) => m.group(0)!).toList();
+      if (match.length >= 3) {
+        final r = int.tryParse(match[0]) ?? 0;
+        final g = int.tryParse(match[1]) ?? 0;
+        final b = int.tryParse(match[2]) ?? 0;
+        double a = 1.0;
+        if (match.length >= 4) {
+          a = double.tryParse(match[3]) ?? 1.0;
+        }
+        return Color.fromARGB(
+          (a * 255).round().clamp(0, 255),
+          r.clamp(0, 255),
+          g.clamp(0, 255),
+          b.clamp(0, 255),
+        );
+      }
+    } else if (_hslColorRegExp.hasMatch(input)) {
+      final match = RegExp(r'\d*\.?\d+').allMatches(input).map((m) => m.group(0)!).toList();
+      if (match.length >= 3) {
+        final h = double.tryParse(match[0]) ?? 0.0;
+        final s = (double.tryParse(match[1]) ?? 0.0) / 100.0;
+        final l = (double.tryParse(match[2]) ?? 0.0) / 100.0;
+        double a = 1.0;
+        if (match.length >= 4) {
+          a = double.tryParse(match[3]) ?? 1.0;
+        }
+        return HSLColor.fromAHSL(
+          a.clamp(0.0, 1.0),
+          h.clamp(0.0, 360.0),
+          s.clamp(0.0, 1.0),
+          l.clamp(0.0, 1.0),
+        ).toColor();
+      }
+    }
+    return null;
+  }
+
+  DateTime? parseTimestamp(String text) {
+    if (text.length > 50) return null;
+    final input = text.trim();
+    if (RegExp(r'^\d{10}$').hasMatch(input)) {
+      final sec = int.tryParse(input);
+      if (sec != null && sec >= 1000000000 && sec <= 2500000000) {
+        return DateTime.fromMillisecondsSinceEpoch(sec * 1000);
+      }
+    } else if (RegExp(r'^\d{13}$').hasMatch(input)) {
+      final ms = int.tryParse(input);
+      if (ms != null && ms >= 1000000000000 && ms <= 2500000000000) {
+        return DateTime.fromMillisecondsSinceEpoch(ms);
+      }
+    }
+    return null;
+  }
+
   String getClipboardItemType(ClipboardItem item) {
     final cached = _itemTypeCache[item.id];
     if (cached != null) return cached;
@@ -521,14 +279,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       type = 'IMAGE';
     } else {
       final text = item.content;
-      if (isUrl(text)) {
-        type = 'URL';
-      } else if (tryFormatJson(text) != null) {
-        type = 'JSON';
-      } else if (tryFormatCode(text) != null) {
-        type = 'CODE';
-      } else if (tryFormatXml(text) != null) {
-        type = 'XML';
+      if (text.length < 2048) {
+        if (isUrl(text)) {
+          type = 'URL';
+        } else if (parseColor(text) != null) {
+          type = 'COLOR';
+        } else if (parseTimestamp(text) != null) {
+          type = 'DATETIME';
+        }
       }
     }
     _itemTypeCache[item.id] = type;
@@ -541,8 +299,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   List<ClipboardItem> get filteredClipboardHistory {
     if (_searchClipboardQuery.isEmpty) {
-      return List.from(clipboardHistory)
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return clipboardHistory;
     }
     final query = _searchClipboardQuery.toLowerCase();
     return clipboardHistory
@@ -552,14 +309,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               (item.appName != null &&
                   item.appName!.toLowerCase().contains(query)),
         )
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        .toList();
   }
 
   List<ClipboardItem> get filteredClipboardFavorites {
     if (_searchClipboardQuery.isEmpty) {
-      return List.from(clipboardFavorites)
-        ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      return clipboardFavorites;
     }
     final query = _searchClipboardQuery.toLowerCase();
     return clipboardFavorites
@@ -569,14 +324,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               (item.appName != null &&
                   item.appName!.toLowerCase().contains(query)),
         )
-        .toList()
-      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        .toList();
   }
 
   List<Note> get filteredNotes {
     if (_searchNotesQuery.isEmpty) {
-      return List.from(notes)
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      return notes;
     }
     final query = _searchNotesQuery.toLowerCase();
     return notes
@@ -585,8 +338,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               n.title.toLowerCase().contains(query) ||
               n.content.toLowerCase().contains(query),
         )
-        .toList()
-      ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        .toList();
   }
 
   String get searchClipboardQuery => _searchClipboardQuery;
@@ -634,23 +386,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // Background cleanup of orphaned images
     _cleanupUnusedClipboardImages();
 
-    if (Platform.isMacOS || Platform.isWindows) {
-      _menuBarScrollChannel.setMethodCallHandler((call) async {
-        if (call.method == 'onMenuBarScroll') {
-          final args = call.arguments;
-          if (args is Map) {
-            final double dy = (args['dy'] as num).toDouble();
-            // Capture screen info as a local snapshot to avoid race conditions
-            final screenInfo = Map<String, double>.from(
-              args.map((k, v) => MapEntry(k as String, (v as num).toDouble())),
-            );
-            _nativeScreenInfo = screenInfo;
-            _handleMenuBarScroll(dy);
-          } else {
-            _handleMenuBarScroll((args as num).toDouble());
-          }
-        }
-      });
+    if (Platform.isMacOS) {
+      _menuBarScrollChannel.setMethodCallHandler(_onMenuBarScrollMethodCall);
+    } else if (Platform.isWindows) {
+      _menuBarScrollChannel.setMethodCallHandler(_onMenuBarScrollMethodCall);
     }
 
     // Position window
@@ -831,6 +570,24 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         collapsePanel(duration: const Duration(milliseconds: 250));
       }
     }
+  }
+
+  Future<dynamic> _onMenuBarScrollMethodCall(MethodCall call) async {
+    if (call.method == 'onMenuBarScroll') {
+      final args = call.arguments;
+      if (args is Map) {
+        final double dy = (args['dy'] as num).toDouble();
+        // Capture screen info as a local snapshot to avoid race conditions
+        final screenInfo = Map<String, double>.from(
+          args.map((k, v) => MapEntry(k as String, (v as num).toDouble())),
+        );
+        _nativeScreenInfo = screenInfo;
+        _handleMenuBarScroll(dy);
+      } else {
+        _handleMenuBarScroll((args as num).toDouble());
+      }
+    }
+    return null;
   }
 
   // --- Expand / Collapse Actions ---
@@ -2344,7 +2101,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final decoded = jsonDecode(listJson) as List;
         clipboardHistory = decoded
             .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
-            .toList();
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       } catch (e) {
         clipboardHistory = [];
       }
@@ -2386,7 +2144,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final decoded = jsonDecode(favJson) as List;
         clipboardFavorites = decoded
             .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
-            .toList();
+            .toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       } catch (e) {
         clipboardFavorites = [];
       }
@@ -2677,7 +2436,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final decoded = jsonDecode(content) as List;
       notes = decoded
           .map((item) => Note.fromJson(item as Map<String, dynamic>))
-          .toList();
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
       // Keep activeNote synced
       if (activeNote != null) {
@@ -2713,7 +2473,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               .map(
                 (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
               )
-              .toList();
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
           if (_trimClipboardHistoryToLimit()) {
             await _saveClipboardHistory();
           }
@@ -2737,7 +2498,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               .map(
                 (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
               )
-              .toList();
+              .toList()
+            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
           favoritesChanged = true;
         }
       } catch (e) {
@@ -3059,7 +2821,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final decoded = jsonDecode(notesJson) as List;
         notes = decoded
             .map((item) => Note.fromJson(item as Map<String, dynamic>))
-            .toList();
+            .toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       } catch (e) {
         notes = [];
       }
@@ -3151,7 +2914,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         content: content,
         updatedAt: DateTime.now(),
       );
-      notes[idx] = updated;
+      notes.removeAt(idx);
+      notes.insert(0, updated);
       activeNote = updated;
 
       // Debounce saving to disk
@@ -3172,7 +2936,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         title: title.isEmpty ? '无标题便签' : title,
         updatedAt: DateTime.now(),
       );
-      notes[idx] = updated;
+      notes.removeAt(idx);
+      notes.insert(0, updated);
       activeNote = updated;
 
       await _saveNotes();

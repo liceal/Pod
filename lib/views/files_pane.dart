@@ -34,7 +34,7 @@ class _FilesPaneState extends State<FilesPane> {
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
     });
-    Future.delayed(const Duration(milliseconds: 5000), () {
+    Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
         setState(() {
           _isDragDropReady = true;
@@ -742,7 +742,17 @@ class _FilesPaneState extends State<FilesPane> {
   }
 
   Widget _buildGridView(List<FileSystemEntity> files) {
-    return GridView.builder(
+    return NotificationListener<OverscrollNotification>(
+      onNotification: (notification) {
+        if (notification.overscroll < 0) {
+          if (widget.state.isExpanded && !widget.state.isAnimating) {
+            widget.state.collapsePanel();
+            return true;
+          }
+        }
+        return false;
+      },
+      child: GridView.builder(
       key: const PageStorageKey('files_grid_view'),
       controller: _gridScrollController,
       padding: EdgeInsets.zero,
@@ -778,7 +788,7 @@ class _FilesPaneState extends State<FilesPane> {
           ),
         );
       },
-    );
+    ),);
   }
 
   Widget _buildDetailsView(List<FileSystemEntity> files) {
@@ -832,7 +842,17 @@ class _FilesPaneState extends State<FilesPane> {
         const Divider(height: 1, thickness: 1, color: Colors.grey),
         // List items
         Expanded(
-          child: ListView.builder(
+          child: NotificationListener<OverscrollNotification>(
+            onNotification: (notification) {
+              if (notification.overscroll < 0) {
+                if (widget.state.isExpanded && !widget.state.isAnimating) {
+                  widget.state.collapsePanel();
+                  return true;
+                }
+              }
+              return false;
+            },
+            child: ListView.builder(
             key: const PageStorageKey('files_details_view'),
             controller: _detailsScrollController,
             itemCount: files.length,
@@ -877,7 +897,7 @@ class _FilesPaneState extends State<FilesPane> {
                 ),
               );
             },
-          ),
+          ),),
         ),
       ],
     );

@@ -29,7 +29,6 @@ class _NotesPaneState extends State<NotesPane> {
   final FocusNode _editorFocusNode = FocusNode();
   String _activeNoteId = '';
   bool _showList = true;
-  double _swipeDistance = 0;
 
   @override
   void initState() {
@@ -39,7 +38,6 @@ class _NotesPaneState extends State<NotesPane> {
     _searchController.text = widget.state.searchNotesQuery;
     _searchController.addListener(() {
       widget.state.searchNotesQuery = _searchController.text;
-      setState(() {});
     });
     _syncActiveNote();
   }
@@ -116,22 +114,7 @@ class _NotesPaneState extends State<NotesPane> {
           _showListView();
         }
       },
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) => _swipeDistance = 0,
-        onHorizontalDragUpdate: (details) {
-          _swipeDistance += details.delta.dx;
-        },
-        onHorizontalDragEnd: (details) {
-          final velocity = details.primaryVelocity ?? 0;
-          if (_swipeDistance > 80 || velocity > 520) {
-            _showListView();
-          }
-          _swipeDistance = 0;
-        },
-        onHorizontalDragCancel: () => _swipeDistance = 0,
-        child: child,
-      ),
+      child: child,
     );
   }
 
@@ -182,9 +165,20 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   Widget _buildList(List<Note> allNotes) {
-    return ListView.builder(
-      itemCount: allNotes.length,
-      itemBuilder: (context, index) {
+    return NotificationListener<OverscrollNotification>(
+      onNotification: (notification) {
+        if (notification.overscroll < 0) {
+          if (widget.state.isExpanded && !widget.state.isAnimating) {
+            widget.state.collapsePanel();
+            return true;
+          }
+        }
+        return false;
+      },
+      child: ListView.builder(
+        physics: const BouncingScrollPhysics(),
+        itemCount: allNotes.length,
+        itemBuilder: (context, index) {
         final note = allNotes[index];
         final snippet = _getSnippet(note.content);
         final dateStr =
@@ -260,7 +254,7 @@ class _NotesPaneState extends State<NotesPane> {
           ),
         );
       },
-    );
+    ),);
   }
 
   void _insertTab() {
@@ -333,11 +327,19 @@ class _NotesPaneState extends State<NotesPane> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Header with search input & buttons
-          SizedBox(
-            height: 26,
-            child: Row(
-              children: [
-                if (_showList)
+          Listener(
+            onPointerSignal: (event) {
+              if (event is PointerScrollEvent && event.scrollDelta.dy < 0) {
+                if (widget.state.isExpanded && !widget.state.isAnimating) {
+                  widget.state.collapsePanel();
+                }
+              }
+            },
+            child: SizedBox(
+              height: 26,
+              child: Row(
+                children: [
+                  if (_showList)
                   Expanded(
                     child: Container(
                       height: 26,
@@ -530,7 +532,8 @@ class _NotesPaneState extends State<NotesPane> {
               ],
             ),
           ),
-          const SizedBox(height: 2),
+        ),
+        const SizedBox(height: 2),
 
           // Main Content Area with Transition
           Expanded(

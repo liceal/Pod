@@ -5,10 +5,10 @@ class AnimatedPress extends StatefulWidget {
   final VoidCallback? onTap;
 
   const AnimatedPress({
-    Key? key,
+    super.key,
     required this.child,
     this.onTap,
-  }) : super(key: key);
+  });
 
   @override
   State<AnimatedPress> createState() => _AnimatedPressState();

@@ -74,7 +74,7 @@ class _PodPanelState extends State<PodPanel>
       _animationController.value = 1.0;
     }
 
-    Future.delayed(const Duration(milliseconds: 5000), () {
+    Future.delayed(const Duration(milliseconds: 500), () {
       if (mounted) {
         setState(() {
           _isDragDropReady = true;
@@ -305,16 +305,14 @@ class _PodPanelState extends State<PodPanel>
                             child: SlideTransition(
                               position: _slideAnimation,
                               child: RepaintBoundary(
-                                child: AnimatedContainer(
-                                  duration: const Duration(milliseconds: 250),
-                                  curve: Curves.easeInOut,
+                                child: Container(
                                   height: 350,
                                   margin: EdgeInsets.zero,
                                   decoration: AppTheme.getFrostedDecoration(
                                     isDark: animatedIsDark,
                                     color: currentTheme.scaffoldBackgroundColor
-                                        .withOpacity(
-                                          widget.state.settings.backdropOpacity,
+                                        .withValues(
+                                          alpha: widget.state.settings.backdropOpacity,
                                         ),
                                     borderColor:
                                         currentTheme.colorScheme.outline,
@@ -455,13 +453,13 @@ class _PodPanelState extends State<PodPanel>
                                             _handleTopScrollSignal, // 直接复用统一方法
                                         child: Container(
                                           color: Platform.isMacOS
-                                              ? Colors.white.withOpacity(0.01)
+                                              ? Colors.white.withValues(alpha: 0.01)
                                               : (animatedIsDark
-                                                    ? Colors.white.withOpacity(
-                                                        0.1,
+                                                    ? Colors.white.withValues(
+                                                        alpha: 0.1,
                                                       )
-                                                    : Colors.black.withOpacity(
-                                                        0.05,
+                                                    : Colors.black.withValues(
+                                                        alpha: 0.05,
                                                       )),
                                         ),
                                       ),
@@ -477,13 +475,13 @@ class _PodPanelState extends State<PodPanel>
                                           _handleTopScrollSignal, // 直接复用统一方法
                                       child: Container(
                                         color: Platform.isMacOS
-                                            ? Colors.white.withOpacity(0.01)
+                                            ? Colors.white.withValues(alpha: 0.01)
                                             : (animatedIsDark
-                                                  ? Colors.white.withOpacity(
-                                                      0.1,
+                                                  ? Colors.white.withValues(
+                                                      alpha: 0.1,
                                                     )
-                                                  : Colors.black.withOpacity(
-                                                      0.05,
+                                                  : Colors.black.withValues(
+                                                      alpha: 0.05,
                                                     )),
                                       ),
                                     ),
