@@ -49,6 +49,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool isAnimating = false;
   bool isDialogOpen = false;
   bool isMouseInside = false;
+  bool _isNoteEditorFocused = false;
   int panelActivationVersion = 0;
   double lastCalculatedWidth = 800.0;
   double fileDisplaySize = 110.0;
@@ -150,14 +151,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return '${bytes.length}:$hash';
   }
 
-
   bool isUrl(String text) {
     if (text.length > 2048) return false;
     final trimmed = text.trim();
     if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
       return false;
     }
-    if (trimmed.contains(' ') || trimmed.contains('\n') || trimmed.contains('\r')) {
+    if (trimmed.contains(' ') ||
+        trimmed.contains('\n') ||
+        trimmed.contains('\r')) {
       return false;
     }
     try {
@@ -219,7 +221,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final val = int.tryParse(hex, radix: 16);
       if (val != null) return Color(val);
     } else if (_rgbColorRegExp.hasMatch(input)) {
-      final match = RegExp(r'\d*\.?\d+').allMatches(input).map((m) => m.group(0)!).toList();
+      final match = RegExp(
+        r'\d*\.?\d+',
+      ).allMatches(input).map((m) => m.group(0)!).toList();
       if (match.length >= 3) {
         final r = int.tryParse(match[0]) ?? 0;
         final g = int.tryParse(match[1]) ?? 0;
@@ -236,7 +240,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         );
       }
     } else if (_hslColorRegExp.hasMatch(input)) {
-      final match = RegExp(r'\d*\.?\d+').allMatches(input).map((m) => m.group(0)!).toList();
+      final match = RegExp(
+        r'\d*\.?\d+',
+      ).allMatches(input).map((m) => m.group(0)!).toList();
       if (match.length >= 3) {
         final h = double.tryParse(match[0]) ?? 0.0;
         final s = (double.tryParse(match[1]) ?? 0.0) / 100.0;
@@ -368,7 +374,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // Load Local Data
     _loadSettings();
     await _migrateLegacyDirectories();
-    
+
     // Load historical items, notes and stored files in parallel
     await Future.wait([
       _loadClipboardHistory(),
@@ -383,7 +389,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _startWatchingImagesDirectory(),
       _startWatchingDataDirectory(),
     ]);
-    
+
     _startClipboardMonitoring();
 
     // Background cleanup of orphaned images
@@ -484,7 +490,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         w = settings.panelWidth;
       }
       lastCalculatedWidth = w;
-      final double wCollapsed = screenWidth; // Both macOS and Windows collapsed strip span 100% screen width
+      final double wCollapsed =
+          screenWidth; // Both macOS and Windows collapsed strip span 100% screen width
       final double hCollapsed = Platform.isMacOS ? 350.0 : 3.0;
 
       if (isStartup) {
@@ -518,9 +525,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               await _menuBarScrollChannel.invokeMethod('showInactive');
             } else {
               final x = screenPosition.dx + (screenWidth - wCollapsed) / 2;
-              windowManager.setBounds(
-                Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
-              ).catchError((e) => debugPrint('Failed to set startup bounds: $e'));
+              windowManager
+                  .setBounds(
+                    Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
+                  )
+                  .catchError(
+                    (e) => debugPrint('Failed to set startup bounds: $e'),
+                  );
               await windowManager.show();
             }
           }
@@ -539,9 +550,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           } else {
             // Windows: position collapsed bar on the correct screen
             final x = screenPosition.dx + (screenWidth - wCollapsed) / 2;
-            windowManager.setBounds(
-              Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
-            ).catchError((e) => debugPrint('Failed to set collapsed bounds: $e'));
+            windowManager
+                .setBounds(
+                  Rect.fromLTWH(x, screenPosition.dy, wCollapsed, hCollapsed),
+                )
+                .catchError(
+                  (e) => debugPrint('Failed to set collapsed bounds: $e'),
+                );
             await windowManager.setIgnoreMouseEvents(false);
             if (!await windowManager.isVisible()) {
               await windowManager.show();
@@ -642,7 +657,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           'height': 350.0,
           'focus': shouldFocus,
         });
-        // Wait 10ms to let the OS map the window and perform the initial frame layout 
+        // Wait 10ms to let the OS map the window and perform the initial frame layout
         // before starting the slide transition.
         await Future.delayed(const Duration(milliseconds: 10));
       } else {
@@ -667,9 +682,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         lastCalculatedWidth = w;
         await windowManager.setIgnoreMouseEvents(false);
         final targetX = screenX + (screenWidth - w) / 2;
-        windowManager.setBounds(Rect.fromLTWH(targetX, screenY, w, 350)).catchError((e) {
-          debugPrint('Failed to set expand bounds: $e');
-        });
+        windowManager
+            .setBounds(Rect.fromLTWH(targetX, screenY, w, 350))
+            .catchError((e) {
+              debugPrint('Failed to set expand bounds: $e');
+            });
         await windowManager.setHasShadow(true);
         if (shouldFocus) {
           _focusManagerChannel.invokeMethod('savePreviousApp');
@@ -678,7 +695,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         } else {
           await windowManager.show(inactive: true);
         }
-        // Wait 10ms to let the OS map the window and perform the initial frame layout 
+        // Wait 10ms to let the OS map the window and perform the initial frame layout
         // before starting the slide transition.
         await Future.delayed(const Duration(milliseconds: 10));
       }
@@ -759,9 +776,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final screenWidth = display.size.width;
         final position = display.visiblePosition ?? Offset.zero;
         final x = position.dx;
-        windowManager.setBounds(
-          Rect.fromLTWH(x, position.dy, screenWidth, 3),
-        ).catchError((e) => debugPrint('Failed to set collapsed bounds: $e'));
+        windowManager
+            .setBounds(Rect.fromLTWH(x, position.dy, screenWidth, 3))
+            .catchError(
+              (e) => debugPrint('Failed to set collapsed bounds: $e'),
+            );
         await windowManager.setIgnoreMouseEvents(false);
       } catch (e) {
         debugPrint('Failed to resize collapsed window: $e');
@@ -825,27 +844,43 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  void setNoteEditorFocused(bool focused) {
+    _isNoteEditorFocused = focused;
+  }
+
   void updateFileDisplaySize(double value) {
     fileDisplaySize = value;
     notifyListeners();
   }
 
-  void startAutoCollapseTimer({bool ignoreEditableFocus = false}) {
+  void startAutoCollapseTimer({
+    bool ignoreEditableFocus = false,
+    bool collapseImmediatelyWhenZero = false,
+  }) {
     _autoCollapseTimer?.cancel();
     if (isDialogOpen || isMouseInside) return;
     final delay = settings.autoCollapseDelay;
-    if (delay <= 0) return;
+    if (delay >= AppSettings.maxAutoCollapseDelay) return;
     if (!isExpanded || isAnimating) return;
-    if (!ignoreEditableFocus && _hasEditableTextFocus) return;
+    if (!ignoreEditableFocus && _isNoteEditorFocused) return;
     if (ignoreEditableFocus) {
+      _isNoteEditorFocused = false;
       FocusManager.instance.primaryFocus?.unfocus();
+    }
+    if (delay <= 0) {
+      // 0 seconds means only an explicit external focus change can collapse it.
+      // Mouse-exit callers leave collapseImmediatelyWhenZero as false.
+      if (collapseImmediatelyWhenZero) {
+        collapsePanel();
+      }
+      return;
     }
     _autoCollapseTimer = Timer(Duration(seconds: delay), () {
       if (isExpanded &&
           !isAnimating &&
           !isDialogOpen &&
           !isMouseInside &&
-          (ignoreEditableFocus || !_hasEditableTextFocus)) {
+          (ignoreEditableFocus || !_isNoteEditorFocused)) {
         collapsePanel();
       }
     });
@@ -855,34 +890,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _autoCollapseTimer?.cancel();
   }
 
-  bool get _hasEditableTextFocus {
-    final context = FocusManager.instance.primaryFocus?.context;
-    if (context == null) return false;
-
-    try {
-      if (context.widget is EditableText) return true;
-
-      var found = false;
-      context.visitAncestorElements((element) {
-        if (element.widget is EditableText) {
-          found = true;
-          return false;
-        }
-        return true;
-      });
-      return found;
-    } catch (_) {
-      return false;
-    }
-  }
-
   // --- Window Listeners ---
   @override
   void onWindowBlur() {
     // 失去焦点时启动自动收起计时器
     if (Platform.isMacOS) {
       isMouseInside = false;
-      startAutoCollapseTimer(ignoreEditableFocus: true);
+      startAutoCollapseTimer(
+        ignoreEditableFocus: true,
+        collapseImmediatelyWhenZero: true,
+      );
     }
     // User clicked away — don't restore focus when auto-collapsing later
     _didGrabFocus = false;
@@ -1248,7 +1265,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return null;
   }
 
-  Future<String?> _migrateClipboardHistoryFilenameIfNeeded(String dataDir) async {
+  Future<String?> _migrateClipboardHistoryFilenameIfNeeded(
+    String dataDir,
+  ) async {
     final currentFile = File('$dataDir/${_getClipboardHistoryFilename()}');
     String? mergedJson;
     if (await currentFile.exists()) {
@@ -1755,9 +1774,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final methodName = Platform.isWindows
           ? 'getClipboardSequenceNumber'
           : 'getClipboardChangeCount';
-      return await _clipboardOwnerChannel.invokeMethod<int>(
-        methodName,
-      );
+      return await _clipboardOwnerChannel.invokeMethod<int>(methodName);
     } on MissingPluginException catch (e) {
       _nativeClipboardSequenceUnavailable = true;
       debugPrint('Clipboard sequence API unavailable: $e');
@@ -2198,10 +2215,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastHistoryJsonCache = listJson;
       try {
         final decoded = jsonDecode(listJson) as List;
-        clipboardHistory = decoded
-            .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        clipboardHistory =
+            decoded
+                .map(
+                  (item) =>
+                      ClipboardItem.fromJson(item as Map<String, dynamic>),
+                )
+                .toList()
+              ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       } catch (e) {
         clipboardHistory = [];
       }
@@ -2241,10 +2262,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastFavoritesJsonCache = favJson;
       try {
         final decoded = jsonDecode(favJson) as List;
-        clipboardFavorites = decoded
-            .map((item) => ClipboardItem.fromJson(item as Map<String, dynamic>))
-            .toList()
-          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        clipboardFavorites =
+            decoded
+                .map(
+                  (item) =>
+                      ClipboardItem.fromJson(item as Map<String, dynamic>),
+                )
+                .toList()
+              ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
       } catch (e) {
         clipboardFavorites = [];
       }
@@ -2255,12 +2280,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     bool needsSaveHistory = false;
     final originalHistoryCount = clipboardHistory.length;
-    final historyExistence = await Future.wait(clipboardHistory.map((item) async {
-      if (item.imagePath != null) {
-        return await File(getImagePath(item)).exists();
-      }
-      return true;
-    }));
+    final historyExistence = await Future.wait(
+      clipboardHistory.map((item) async {
+        if (item.imagePath != null) {
+          return await File(getImagePath(item)).exists();
+        }
+        return true;
+      }),
+    );
     final newHistory = <ClipboardItem>[];
     for (int i = 0; i < clipboardHistory.length; i++) {
       if (historyExistence[i]) {
@@ -2277,12 +2304,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     bool needsSaveFavorites = false;
     final originalFavCount = clipboardFavorites.length;
-    final favExistence = await Future.wait(clipboardFavorites.map((item) async {
-      if (item.imagePath != null) {
-        return await File(getImagePath(item)).exists();
-      }
-      return true;
-    }));
+    final favExistence = await Future.wait(
+      clipboardFavorites.map((item) async {
+        if (item.imagePath != null) {
+          return await File(getImagePath(item)).exists();
+        }
+        return true;
+      }),
+    );
     final newFavorites = <ClipboardItem>[];
     for (int i = 0; i < clipboardFavorites.length; i++) {
       if (favExistence[i]) {
@@ -2387,7 +2416,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         await _startWatchingFilesDirectory(path);
         return;
       }
-      
+
       final List<FileSystemEntity> entities = [];
       await for (final entity in dir.list(recursive: false)) {
         if (entity is File || entity is Directory) {
@@ -2400,18 +2429,20 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final Map<String, FileStat> newStats = {};
       final Map<String, bool> newDirs = {};
 
-      await Future.wait(entities.map((entity) async {
-        try {
-          final isDir = await FileSystemEntity.isDirectory(entity.path);
-          newDirs[entity.path] = isDir;
-          final stat = await entity.stat();
-          newStats[entity.path] = stat;
-          final time = Platform.isWindows ? stat.changed : stat.modified;
-          entitiesWithTime.add(MapEntry(entity, time));
-        } catch (_) {
-          entitiesWithTime.add(MapEntry(entity, DateTime(0)));
-        }
-      }));
+      await Future.wait(
+        entities.map((entity) async {
+          try {
+            final isDir = await FileSystemEntity.isDirectory(entity.path);
+            newDirs[entity.path] = isDir;
+            final stat = await entity.stat();
+            newStats[entity.path] = stat;
+            final time = Platform.isWindows ? stat.changed : stat.modified;
+            entitiesWithTime.add(MapEntry(entity, time));
+          } catch (_) {
+            entitiesWithTime.add(MapEntry(entity, DateTime(0)));
+          }
+        }),
+      );
 
       // Sort
       entitiesWithTime.sort((a, b) => b.value.compareTo(a.value));
@@ -2533,10 +2564,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastNotesJsonCache = content;
 
       final decoded = jsonDecode(content) as List;
-      notes = decoded
-          .map((item) => Note.fromJson(item as Map<String, dynamic>))
-          .toList()
-        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+      notes =
+          decoded
+              .map((item) => Note.fromJson(item as Map<String, dynamic>))
+              .toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
       // Keep activeNote synced
       if (activeNote != null) {
@@ -2568,12 +2600,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (content != _lastHistoryJsonCache) {
           _lastHistoryJsonCache = content;
           final decoded = jsonDecode(content) as List;
-          clipboardHistory = decoded
-              .map(
-                (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
-              )
-              .toList()
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          clipboardHistory =
+              decoded
+                  .map(
+                    (item) =>
+                        ClipboardItem.fromJson(item as Map<String, dynamic>),
+                  )
+                  .toList()
+                ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
           if (_trimClipboardHistoryToLimit()) {
             await _saveClipboardHistory();
           }
@@ -2593,12 +2627,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (content != _lastFavoritesJsonCache) {
           _lastFavoritesJsonCache = content;
           final decoded = jsonDecode(content) as List;
-          clipboardFavorites = decoded
-              .map(
-                (item) => ClipboardItem.fromJson(item as Map<String, dynamic>),
-              )
-              .toList()
-            ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+          clipboardFavorites =
+              decoded
+                  .map(
+                    (item) =>
+                        ClipboardItem.fromJson(item as Map<String, dynamic>),
+                  )
+                  .toList()
+                ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
           favoritesChanged = true;
         }
       } catch (e) {
@@ -2747,7 +2783,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final files = await Pasteboard.files();
       final existingFiles = files
           .where((path) => path.trim().isNotEmpty)
-          .where((path) => FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound)
+          .where(
+            (path) =>
+                FileSystemEntity.typeSync(path) !=
+                FileSystemEntityType.notFound,
+          )
           .toList();
       if (existingFiles.isNotEmpty) {
         await addDroppedFiles(existingFiles, targetDir: targetDir);
@@ -2985,10 +3025,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastNotesJsonCache = notesJson; // Populate cache on load
       try {
         final decoded = jsonDecode(notesJson) as List;
-        notes = decoded
-            .map((item) => Note.fromJson(item as Map<String, dynamic>))
-            .toList()
-          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+        notes =
+            decoded
+                .map((item) => Note.fromJson(item as Map<String, dynamic>))
+                .toList()
+              ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
       } catch (e) {
         notes = [];
       }

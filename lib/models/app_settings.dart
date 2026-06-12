@@ -9,6 +9,8 @@ class AppSettings {
   static const double defaultTextContentFontSize = 12.0;
   static const double minTextContentFontSize = 11.0;
   static const double maxTextContentFontSize = 22.0;
+  static const int defaultAutoCollapseDelay = 3;
+  static const int maxAutoCollapseDelay = 30;
   static const List<PanelPane> defaultPanelOrder = [
     PanelPane.clipboard,
     PanelPane.files,
@@ -25,7 +27,8 @@ class AppSettings {
   final String? _themeColorName;
   final bool? _closeOnBlur;
 
-  /// Seconds to wait after mouse leaves before auto-collapsing. 0 = disabled.
+  /// Seconds to wait after mouse leaves before auto-collapsing.
+  /// 0 = immediate when triggered, [maxAutoCollapseDelay] = disabled.
   final int autoCollapseDelay;
   final String? customFilesPath;
   final String? dataDirectory; // Unified data storage location
@@ -48,7 +51,7 @@ class AppSettings {
     this.panelWidthPercent = 100.0,
     String? themeColorName = 'blue',
     bool? closeOnBlur = false,
-    this.autoCollapseDelay = 3,
+    int autoCollapseDelay = defaultAutoCollapseDelay,
     this.customFilesPath,
     this.dataDirectory,
     this.backdropOpacity = 0.92,
@@ -61,6 +64,7 @@ class AppSettings {
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
          clipboardHistoryLimit,
        ),
+       autoCollapseDelay = normalizeAutoCollapseDelay(autoCollapseDelay),
        panelOrder = normalizePanelOrder(panelOrder),
        panelWeights = normalizePanelWeights(panelWeights),
        textContentFontSize = normalizeTextContentFontSize(textContentFontSize);
@@ -72,10 +76,15 @@ class AppSettings {
   }
 
   static double normalizeTextContentFontSize(double? value) {
-    return (value ?? defaultTextContentFontSize).clamp(
-      minTextContentFontSize,
-      maxTextContentFontSize,
-    ).toDouble();
+    return (value ?? defaultTextContentFontSize)
+        .clamp(minTextContentFontSize, maxTextContentFontSize)
+        .toDouble();
+  }
+
+  static int normalizeAutoCollapseDelay(int? value) {
+    return (value ?? defaultAutoCollapseDelay)
+        .clamp(0, maxAutoCollapseDelay)
+        .toInt();
   }
 
   static List<PanelPane> normalizePanelOrder(List<PanelPane>? value) {
@@ -231,7 +240,9 @@ class AppSettings {
           (json['panelWidthPercent'] as num?)?.toDouble() ?? 100.0,
       themeColorName: json['themeColorName'] as String?,
       closeOnBlur: json['closeOnBlur'] as bool? ?? false,
-      autoCollapseDelay: json['autoCollapseDelay'] as int? ?? 3,
+      autoCollapseDelay:
+          (json['autoCollapseDelay'] as num?)?.toInt() ??
+          defaultAutoCollapseDelay,
       customFilesPath: json['customFilesPath'] as String?,
       dataDirectory: json['dataDirectory'] as String?,
       backdropOpacity: (json['backdropOpacity'] as num?)?.toDouble() ?? 0.92,
