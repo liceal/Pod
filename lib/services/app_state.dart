@@ -830,18 +830,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
-  void startAutoCollapseTimer() {
+  void startAutoCollapseTimer({bool ignoreEditableFocus = false}) {
     _autoCollapseTimer?.cancel();
-    if (isDialogOpen || isMouseInside || _hasEditableTextFocus) return;
+    if (isDialogOpen || isMouseInside) return;
     final delay = settings.autoCollapseDelay;
     if (delay <= 0) return;
     if (!isExpanded || isAnimating) return;
+    if (!ignoreEditableFocus && _hasEditableTextFocus) return;
+    if (ignoreEditableFocus) {
+      FocusManager.instance.primaryFocus?.unfocus();
+    }
     _autoCollapseTimer = Timer(Duration(seconds: delay), () {
       if (isExpanded &&
           !isAnimating &&
           !isDialogOpen &&
           !isMouseInside &&
-          !_hasEditableTextFocus) {
+          (ignoreEditableFocus || !_hasEditableTextFocus)) {
         collapsePanel();
       }
     });
@@ -877,7 +881,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   void onWindowBlur() {
     // 失去焦点时启动自动收起计时器
     if (Platform.isMacOS) {
-      startAutoCollapseTimer();
+      isMouseInside = false;
+      startAutoCollapseTimer(ignoreEditableFocus: true);
     }
     // User clicked away — don't restore focus when auto-collapsing later
     _didGrabFocus = false;

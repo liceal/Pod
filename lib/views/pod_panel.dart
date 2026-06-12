@@ -152,7 +152,7 @@ class _PodPanelState extends State<PodPanel>
   void _onMouseExitedPanel() {
     _isMouseInside = false;
     widget.state.isMouseInside = false; // Sync to AppState
-    widget.state.startAutoCollapseTimer();
+    widget.state.startAutoCollapseTimer(ignoreEditableFocus: Platform.isMacOS);
   }
 
   // 顶部感应条/把手双向滚轮处理：上滑收起 / 下滑展开

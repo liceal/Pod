@@ -30,6 +30,7 @@ class _NotesPaneState extends State<NotesPane> {
   final FocusNode _editorFocusNode = FocusNode();
   String _activeNoteId = '';
   bool _showList = true;
+  double _swipeDistance = 0;
 
   @override
   void initState() {
@@ -139,7 +140,22 @@ class _NotesPaneState extends State<NotesPane> {
           _showListView();
         }
       },
-      child: child,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) => _swipeDistance = 0,
+        onHorizontalDragUpdate: (details) {
+          _swipeDistance += details.delta.dx;
+        },
+        onHorizontalDragEnd: (details) {
+          final velocity = details.primaryVelocity ?? 0;
+          if (_swipeDistance.abs() > 80 || velocity.abs() > 520) {
+            _showListView();
+          }
+          _swipeDistance = 0;
+        },
+        onHorizontalDragCancel: () => _swipeDistance = 0,
+        child: child,
+      ),
     );
   }
 

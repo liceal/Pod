@@ -1145,6 +1145,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   File? _imageFile;
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
+  double _swipeDistance = 0;
   bool _isImageDetail = false;
 
   @override
@@ -1269,8 +1270,8 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   bool _isRightSwipeSignal(double dx, double dy) {
     return widget.embedded &&
         !_hasHorizontalOverflow &&
-        dx.abs() > 28 &&
-        dx.abs() > dy.abs() * 1.4;
+        dx.abs() > 24 &&
+        dx.abs() > dy.abs() * 1.2;
   }
 
   void _handleBackPointerSignal(PointerSignalEvent event) {
@@ -1558,7 +1559,23 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         behavior: HitTestBehavior.translucent,
         onPointerDown: _handleBackMouseButton,
         onPointerSignal: _handleBackPointerSignal,
-        child: detailWithEsc,
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onHorizontalDragStart: (_) => _swipeDistance = 0,
+          onHorizontalDragUpdate: (details) {
+            _swipeDistance += details.delta.dx;
+          },
+          onHorizontalDragEnd: (details) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (!_hasHorizontalOverflow &&
+                (_swipeDistance.abs() > 80 || velocity.abs() > 520)) {
+              widget.onBack?.call();
+            }
+            _swipeDistance = 0;
+          },
+          onHorizontalDragCancel: () => _swipeDistance = 0,
+          child: detailWithEsc,
+        ),
       );
     }
 
