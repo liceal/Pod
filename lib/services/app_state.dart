@@ -2643,6 +2643,42 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     });
   }
 
+  String _fileNameFromPath(String path) {
+    final segments = path
+        .replaceAll('\\', '/')
+        .split('/')
+        .where((segment) => segment.isNotEmpty)
+        .toList();
+    return segments.isEmpty ? 'Untitled' : segments.last;
+  }
+
+  String _availableFilePath(
+    String directoryPath,
+    String fileName, {
+    bool isDirectory = false,
+  }) {
+    final safeName = fileName.trim().isEmpty ? 'Untitled' : fileName.trim();
+    final dotIndex = isDirectory ? -1 : safeName.lastIndexOf('.');
+    final baseName = dotIndex > 0 ? safeName.substring(0, dotIndex) : safeName;
+    final extension = dotIndex > 0 ? safeName.substring(dotIndex) : '';
+
+    var candidate = '$directoryPath/$safeName';
+    var counter = 2;
+    while (FileSystemEntity.typeSync(candidate) !=
+        FileSystemEntityType.notFound) {
+      candidate = '$directoryPath/$baseName ($counter)$extension';
+      counter++;
+    }
+    return candidate;
+  }
+
+  String _timestampForFileName() {
+    final now = DateTime.now();
+    String two(int value) => value.toString().padLeft(2, '0');
+    return '${now.year}${two(now.month)}${two(now.day)}_'
+        '${two(now.hour)}${two(now.minute)}${two(now.second)}';
+  }
+
   Future<void> addDroppedFiles(
     List<String> filePaths, {
     Directory? targetDir,
@@ -2653,13 +2689,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (FileSystemEntity.isDirectorySync(filePath)) {
           // If it is a directory, copy the directory recursively or copy its folder structure
           final srcDir = Directory(filePath);
-          final dirName = srcDir.uri.pathSegments
-              .where((s) => s.isNotEmpty)
-              .last;
-          final destDir = Directory('$destPath/$dirName');
-          if (!destDir.existsSync()) {
-            await destDir.create(recursive: true);
-          }
+          final dirName = _fileNameFromPath(srcDir.path);
+          final destDir = Directory(
+            _availableFilePath(destPath, dirName, isDirectory: true),
+          );
+          await destDir.create(recursive: true);
           // Copy files in folder (simple shallow copy for performance/safety)
           await for (final entity in srcDir.list(recursive: true)) {
             final relativePath = entity.path.substring(srcDir.path.length);
@@ -2676,8 +2710,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           final srcFile = File(filePath);
           if (srcFile.existsSync()) {
             // Extract file name
-            final fileName = srcFile.uri.pathSegments.last;
-            final destFile = File('$destPath/$fileName');
+            final fileName = _fileNameFromPath(srcFile.path);
+            final destFile = File(_availableFilePath(destPath, fileName));
 
             // Copy
             await srcFile.copy(destFile.path);
@@ -2701,6 +2735,39 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
     }
     await _scanStoredFiles();
+  }
+
+  Future<int> pasteClipboardIntoFiles({Directory? targetDir}) async {
+    try {
+      final files = await Pasteboard.files();
+      final existingFiles = files
+          .where((path) => path.trim().isNotEmpty)
+          .where((path) => FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound)
+          .toList();
+      if (existingFiles.isNotEmpty) {
+        await addDroppedFiles(existingFiles, targetDir: targetDir);
+        return existingFiles.length;
+      }
+    } catch (e) {
+      debugPrint('Failed to paste clipboard files: $e');
+    }
+
+    try {
+      final imageBytes = await Pasteboard.image;
+      if (imageBytes == null || imageBytes.isEmpty) return 0;
+
+      final destPath = targetDir?.path ?? await _getFilesDirectoryPath();
+      final filePath = _availableFilePath(
+        destPath,
+        'pasted_image_${_timestampForFileName()}.png',
+      );
+      await File(filePath).writeAsBytes(imageBytes);
+      await _scanStoredFiles();
+      return 1;
+    } catch (e) {
+      debugPrint('Failed to paste clipboard image: $e');
+      return 0;
+    }
   }
 
   Future<void> deleteFile(FileSystemEntity entity) async {

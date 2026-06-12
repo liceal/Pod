@@ -1,12 +1,17 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
 
 enum _ViewMode { grid, details }
+
+class _PasteFilesIntent extends Intent {
+  const _PasteFilesIntent();
+}
 
 class FilesPane extends StatefulWidget {
   final AppState state;
@@ -25,6 +30,7 @@ class _FilesPaneState extends State<FilesPane> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _gridScrollController = ScrollController();
   final ScrollController _detailsScrollController = ScrollController();
+  final FocusNode _paneFocusNode = FocusNode();
   bool _isDragDropReady = false;
   bool _showSizeSlider = false;
 
@@ -48,6 +54,7 @@ class _FilesPaneState extends State<FilesPane> {
     _searchController.dispose();
     _gridScrollController.dispose();
     _detailsScrollController.dispose();
+    _paneFocusNode.dispose();
     super.dispose();
   }
 
@@ -66,6 +73,19 @@ class _FilesPaneState extends State<FilesPane> {
     if (FileSystemEntity.isDirectorySync(path)) return false;
     final ext = path.split('.').last.toLowerCase();
     return _imageExts.contains(ext);
+  }
+
+  Future<void> _pasteFromClipboard() async {
+    final count = await widget.state.pasteClipboardIntoFiles();
+    if (!mounted) return;
+
+    final message = count > 0 ? '已粘贴到暂存区' : '剪贴板里没有可暂存的文件或图片';
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: const TextStyle(fontSize: 11)),
+        duration: const Duration(seconds: 1),
+      ),
+    );
   }
 
   void _showContextMenu(
@@ -357,6 +377,33 @@ class _FilesPaneState extends State<FilesPane> {
                       ),
                     ),
                     const SizedBox(width: 2),
+                    Tooltip(
+                      message: '粘贴文件或图片',
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: AnimatedPress(
+                          onTap: _pasteFromClipboard,
+                          child: Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(
+                              color: widget.isDark
+                                  ? Colors.white.withOpacity(0.06)
+                                  : Colors.black.withOpacity(0.04),
+                              borderRadius: BorderRadius.zero,
+                            ),
+                            child: Icon(
+                              Icons.content_paste_rounded,
+                              size: 15,
+                              color: widget.isDark
+                                  ? Colors.white60
+                                  : Colors.black54,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
                     if (_showSizeSlider) ...[
                       SizedBox(
                         width: 80,
@@ -464,6 +511,7 @@ class _FilesPaneState extends State<FilesPane> {
               Expanded(
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
+                  onTapDown: (_) => _paneFocusNode.requestFocus(),
                   onSecondaryTapUp: (details) => _showEmptySpaceContextMenu(
                     context,
                     details.globalPosition,
@@ -547,7 +595,7 @@ class _FilesPaneState extends State<FilesPane> {
       ],
     );
 
-    return _isDragDropReady
+    final paneContent = _isDragDropReady
         ? sdd.DropRegion(
             formats: const [sdd.Formats.fileUri],
             onDropEnter: (event) {
@@ -610,6 +658,29 @@ class _FilesPaneState extends State<FilesPane> {
             child: mainContent,
           )
         : mainContent;
+
+    return Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.keyV, control: true):
+            _PasteFilesIntent(),
+        SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+            _PasteFilesIntent(),
+      },
+      child: Actions(
+        actions: {
+          _PasteFilesIntent: CallbackAction<_PasteFilesIntent>(
+            onInvoke: (_) {
+              _pasteFromClipboard();
+              return null;
+            },
+          ),
+        },
+        child: Focus(
+          focusNode: _paneFocusNode,
+          child: paneContent,
+        ),
+      ),
+    );
   }
 
   void _showNewNameDialog(BuildContext context, bool isFolder) async {
@@ -686,6 +757,18 @@ class _FilesPaneState extends State<FilesPane> {
       ),
       items: [
         const PopupMenuItem<String>(
+          value: 'paste',
+          height: 32,
+          child: Row(
+            children: [
+              Icon(Icons.content_paste_rounded, size: 14),
+              SizedBox(width: 8),
+              Text('粘贴文件或图片', style: TextStyle(fontSize: 11)),
+            ],
+          ),
+        ),
+        const PopupMenuDivider(height: 1),
+        const PopupMenuItem<String>(
           value: 'new_file',
           height: 32,
           child: Row(
@@ -729,6 +812,9 @@ class _FilesPaneState extends State<FilesPane> {
     if (result == null) return;
 
     switch (result) {
+      case 'paste':
+        await _pasteFromClipboard();
+        break;
       case 'new_file':
         if (context.mounted) _showNewNameDialog(context, false);
         break;
