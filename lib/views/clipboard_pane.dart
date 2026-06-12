@@ -104,38 +104,38 @@ class _ClipboardPaneState extends State<ClipboardPane> {
               return false;
             },
             child: ListView.builder(
-                key: PageStorageKey<String>(
-                  _showFavoritesOnly ? 'favs_list' : 'all_list',
-                ),
-                controller: _scrollController,
-                itemCount: items.length,
-                physics: const BouncingScrollPhysics(),
-                itemBuilder: (context, index) {
-                  final item = items[index];
-
-                  return ClipboardItemCard(
-                    key: ValueKey(item.id),
-                    item: item,
-                    isDark: widget.isDark,
-                    accentColor: accentColor,
-                    isFavorite: widget.state.isItemFavorite(item.content),
-                    onCopy: () => widget.state.copyToClipboard(item),
-                    onOpenDetail: () => _openDetail(item),
-                    onFavoriteToggle: () =>
-                        widget.state.toggleFavoriteClipboardItem(item),
-                    onDelete: () {
-                      if (_detailItem?.id == item.id) {
-                        _detailItem = null;
-                      }
-                      _imageDetailTransforms.remove(item.id);
-                      widget.state.deleteClipboardItem(item.id);
-                      Future.delayed(Duration.zero, () {
-                        if (mounted) setState(() {});
-                      });
-                    },
-                  );
-                },
+              key: PageStorageKey<String>(
+                _showFavoritesOnly ? 'favs_list' : 'all_list',
               ),
+              controller: _scrollController,
+              itemCount: items.length,
+              physics: const BouncingScrollPhysics(),
+              itemBuilder: (context, index) {
+                final item = items[index];
+
+                return ClipboardItemCard(
+                  key: ValueKey(item.id),
+                  item: item,
+                  isDark: widget.isDark,
+                  accentColor: accentColor,
+                  isFavorite: widget.state.isItemFavorite(item.content),
+                  onCopy: () => widget.state.copyToClipboard(item),
+                  onOpenDetail: () => _openDetail(item),
+                  onFavoriteToggle: () =>
+                      widget.state.toggleFavoriteClipboardItem(item),
+                  onDelete: () {
+                    if (_detailItem?.id == item.id) {
+                      _detailItem = null;
+                    }
+                    _imageDetailTransforms.remove(item.id);
+                    widget.state.deleteClipboardItem(item.id);
+                    Future.delayed(Duration.zero, () {
+                      if (mounted) setState(() {});
+                    });
+                  },
+                );
+              },
+            ),
           );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
@@ -319,6 +319,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                       'clipboard-detail-${detailItem.id}-$detailKeyVersion-$_detailOpenVersion',
                     ),
                     item: detailItem,
+                    state: widget.state,
                     isDark: widget.isDark,
                     accentColor: accentColor,
                     onCopy: () => widget.state.copyToClipboard(detailItem),
@@ -434,12 +435,10 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
     final Color color = type == 'URL'
         ? Colors.indigo
         : (type == 'IMAGE'
-            ? Colors.teal
-            : (type == 'COLOR'
-                ? Colors.deepOrange
-                : (type == 'DATETIME'
-                    ? Colors.purple
-                    : Colors.blue)));
+              ? Colors.teal
+              : (type == 'COLOR'
+                    ? Colors.deepOrange
+                    : (type == 'DATETIME' ? Colors.purple : Colors.blue)));
     return Container(
       margin: const EdgeInsets.only(left: 4),
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
@@ -490,6 +489,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
 
     final themeAccent = widget.accentColor;
     final itemType = AppState().getClipboardItemType(widget.item);
+    final itemTextStyle = Theme.of(context).textTheme.bodySmall;
 
     return MouseRegion(
       onEnter: (_) {
@@ -572,10 +572,16 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 width: 10,
                                 height: 10,
                                 decoration: BoxDecoration(
-                                  color: AppState().parseColor(widget.item.content) ?? Colors.transparent,
+                                  color:
+                                      AppState().parseColor(
+                                        widget.item.content,
+                                      ) ??
+                                      Colors.transparent,
                                   shape: BoxShape.circle,
                                   border: Border.all(
-                                    color: widget.isDark ? Colors.white30 : Colors.black26,
+                                    color: widget.isDark
+                                        ? Colors.white30
+                                        : Colors.black26,
                                     width: 1.0,
                                   ),
                                 ),
@@ -585,7 +591,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 child: AnimatedDefaultTextStyle(
                                   duration: const Duration(milliseconds: 200),
                                   curve: Curves.easeOut,
-                                  style: TextStyle(
+                                  style: (itemTextStyle ?? const TextStyle()).copyWith(
                                     fontSize: 12,
                                     fontWeight: widget.isFavorite
                                         ? FontWeight.w500
@@ -613,14 +619,16 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                               Icon(
                                 Icons.access_time_rounded,
                                 size: 12,
-                                color: widget.isDark ? Colors.white30 : Colors.black38,
+                                color: widget.isDark
+                                    ? Colors.white30
+                                    : Colors.black38,
                               ),
                               const SizedBox(width: 6),
                               Expanded(
                                 child: AnimatedDefaultTextStyle(
                                   duration: const Duration(milliseconds: 200),
                                   curve: Curves.easeOut,
-                                  style: TextStyle(
+                                  style: (itemTextStyle ?? const TextStyle()).copyWith(
                                     fontSize: 12,
                                     fontWeight: widget.isFavorite
                                         ? FontWeight.w500
@@ -646,7 +654,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                           child: AnimatedDefaultTextStyle(
                             duration: const Duration(milliseconds: 200),
                             curve: Curves.easeOut,
-                            style: TextStyle(
+                            style: (itemTextStyle ?? const TextStyle()).copyWith(
                               fontSize: 12,
                               fontWeight: widget.isFavorite
                                   ? FontWeight.w500
@@ -1088,13 +1096,12 @@ class _HeaderCopyButtonState extends State<_HeaderCopyButton> {
   }
 }
 
-
-
 // ══════════════════════════════════════════════════
 // Text / Image Detail Content Component
 // ══════════════════════════════════════════════════
 class _DetailDialogContent extends StatefulWidget {
   final ClipboardItem item;
+  final AppState state;
   final bool isDark;
   final Color accentColor;
   final VoidCallback onCopy;
@@ -1108,6 +1115,7 @@ class _DetailDialogContent extends StatefulWidget {
   const _DetailDialogContent({
     super.key,
     required this.item,
+    required this.state,
     required this.isDark,
     required this.accentColor,
     required this.onCopy,
@@ -1266,12 +1274,33 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   }
 
   void _handleBackPointerSignal(PointerSignalEvent event) {
-    if (!widget.embedded || event is! PointerScrollEvent) return;
+    if (event is! PointerScrollEvent) return;
+
+    if (!_isImageDetail &&
+        _isTextZoomModifierPressed &&
+        event.scrollDelta.dy != 0) {
+      final direction = event.scrollDelta.dy < 0 ? 1.0 : -1.0;
+      widget.state.updateTextContentFontSize(
+        widget.state.settings.textContentFontSize + direction,
+      );
+      setState(() {});
+      return;
+    }
+
+    if (!widget.embedded) return;
     final dx = event.scrollDelta.dx;
     final dy = event.scrollDelta.dy;
     if (_isRightSwipeSignal(dx, dy)) {
       widget.onBack?.call();
     }
+  }
+
+  bool get _isTextZoomModifierPressed {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.controlRight) ||
+        pressed.contains(LogicalKeyboardKey.metaLeft) ||
+        pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
   void _handleBackMouseButton(PointerDownEvent event) {
@@ -1335,7 +1364,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     Text(
                       isImage ? '图片详情' : '内容详情',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         fontWeight: FontWeight.bold,
                         color: textColor,
                       ),
@@ -1343,13 +1372,13 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     const SizedBox(width: 4),
                     Text(
                       '($timeStr)',
-                      style: TextStyle(fontSize: 9, color: subColor),
+                      style: TextStyle(fontSize: 14, color: subColor),
                     ),
                     if (isImage && infoText.isNotEmpty) ...[
                       const SizedBox(width: 6),
                       Text(
                         infoText,
-                        style: TextStyle(fontSize: 9, color: subColor),
+                        style: TextStyle(fontSize: 14, color: subColor),
                       ),
                     ],
                     if (!isImage && isLargeText) ...[
@@ -1357,7 +1386,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                       Text(
                         '(超长文本已优化渲染性能)',
                         style: TextStyle(
-                          fontSize: 9,
+                          fontSize: 14,
                           color: themeAccent.withOpacity(0.8),
                           fontWeight: FontWeight.w500,
                         ),
@@ -1421,7 +1450,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         },
                       ),
                       const SizedBox(width: 4),
-
                     ],
                     // Open URL button
                     if (itemType == 'URL') ...[
@@ -1555,16 +1583,26 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       backgroundColor: bgColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: dialogWithEsc,
+      child: Listener(
+        onPointerSignal: _handleBackPointerSignal,
+        child: dialogWithEsc,
+      ),
     );
   }
 
-  Widget _buildFormatCopyRow(String label, String value, Color themeAccent, Color textColor) {
+  Widget _buildFormatCopyRow(
+    String label,
+    String value,
+    Color themeAccent,
+    Color textColor,
+  ) {
     return Container(
       margin: const EdgeInsets.symmetric(vertical: 4.0),
       padding: const EdgeInsets.symmetric(horizontal: 8.0, vertical: 6.0),
       decoration: BoxDecoration(
-        color: widget.isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+        color: widget.isDark
+            ? Colors.white.withOpacity(0.04)
+            : Colors.black.withOpacity(0.03),
         borderRadius: BorderRadius.circular(6),
         border: Border.all(
           color: widget.isDark ? Colors.white10 : Colors.black12,
@@ -1612,11 +1650,13 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     final g = parsedColor.green;
     final b = parsedColor.blue;
     final opacity = parsedColor.opacity;
-    
-    final hexStr = '#${parsedColor.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+
+    final hexStr =
+        '#${parsedColor.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
     final rgbStr = 'rgb($r, $g, $b)';
     final rgbaStr = 'rgba($r, $g, $b, ${opacity.toStringAsFixed(2)})';
-    final flutterStr = 'Color(0x${parsedColor.value.toRadixString(16).toUpperCase()})';
+    final flutterStr =
+        'Color(0x${parsedColor.value.toRadixString(16).toUpperCase()})';
 
     return Container(
       constraints: BoxConstraints(maxHeight: contentMaxHeight),
@@ -1672,7 +1712,12 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   _buildFormatCopyRow('HEX', hexStr, themeAccent, textColor),
                   _buildFormatCopyRow('RGB', rgbStr, themeAccent, textColor),
                   _buildFormatCopyRow('RGBA', rgbaStr, themeAccent, textColor),
-                  _buildFormatCopyRow('Flutter', flutterStr, themeAccent, textColor),
+                  _buildFormatCopyRow(
+                    'Flutter',
+                    flutterStr,
+                    themeAccent,
+                    textColor,
+                  ),
                 ],
               ),
             ),
@@ -1690,14 +1735,15 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   ) {
     final dt = AppState().parseTimestamp(text);
     if (dt == null) return const SizedBox.shrink();
-    
+
     final localStr = DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt);
-    final utcStr = DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt.toUtc()) + ' UTC';
+    final utcStr =
+        DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt.toUtc()) + ' UTC';
     final isoStr = dt.toIso8601String();
-    
+
     final weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
     final weekdayStr = weekdays[dt.weekday - 1];
-    
+
     final tzOffset = dt.timeZoneOffset;
     final tzSign = tzOffset.isNegative ? '-' : '+';
     final tzHours = tzOffset.inHours.abs().toString().padLeft(2, '0');
@@ -1714,7 +1760,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
             width: 76,
             padding: const EdgeInsets.all(8.0),
             decoration: BoxDecoration(
-              color: widget.isDark ? Colors.white.withOpacity(0.04) : Colors.black.withOpacity(0.03),
+              color: widget.isDark
+                  ? Colors.white.withOpacity(0.04)
+                  : Colors.black.withOpacity(0.03),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
                 color: widget.isDark ? Colors.white10 : Colors.black12,
@@ -1757,7 +1805,12 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                 children: [
                   _buildFormatCopyRow('本地时间', localStr, themeAccent, textColor),
                   _buildFormatCopyRow('UTC 时间', utcStr, themeAccent, textColor),
-                  _buildFormatCopyRow('ISO 8601', isoStr, themeAccent, textColor),
+                  _buildFormatCopyRow(
+                    'ISO 8601',
+                    isoStr,
+                    themeAccent,
+                    textColor,
+                  ),
                   _buildFormatCopyRow('原始戳', text, themeAccent, textColor),
                 ],
               ),
@@ -1849,109 +1902,131 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
               },
             )
           : (itemType == 'COLOR'
-              ? _buildColorDetailDashboard(displayText, themeAccent, textColor, contentMaxHeight)
-              : (itemType == 'DATETIME'
-                  ? _buildDatetimeDetailDashboard(displayText, themeAccent, textColor, contentMaxHeight)
-                  : LayoutBuilder(
-                      builder: (context, constraints) {
-                        final viewportHeight = constraints.hasBoundedHeight
-                            ? constraints.maxHeight
-                            : contentMaxHeight;
-                        final textStyle = TextStyle(
-                          fontSize: 12,
-                          height: 1.32,
-                          fontFamily: 'Menlo',
-                          color: itemType == 'URL' ? themeAccent : textColor,
-                          decoration: itemType == 'URL'
-                              ? TextDecoration.underline
-                              : null,
-                        );
+                ? _buildColorDetailDashboard(
+                    displayText,
+                    themeAccent,
+                    textColor,
+                    contentMaxHeight,
+                  )
+                : (itemType == 'DATETIME'
+                      ? _buildDatetimeDetailDashboard(
+                          displayText,
+                          themeAccent,
+                          textColor,
+                          contentMaxHeight,
+                        )
+                      : LayoutBuilder(
+                          builder: (context, constraints) {
+                            final viewportHeight = constraints.hasBoundedHeight
+                                ? constraints.maxHeight
+                                : contentMaxHeight;
+                            final contentFontSize =
+                                widget.state.settings.textContentFontSize;
+                            final textStyle =
+                                (Theme.of(context).textTheme.bodySmall ??
+                                        const TextStyle())
+                                    .copyWith(
+                              fontSize: contentFontSize,
+                              height: 1.32,
+                              color: itemType == 'URL'
+                                  ? themeAccent
+                                  : textColor,
+                              decoration: itemType == 'URL'
+                                  ? TextDecoration.underline
+                                  : null,
+                            );
 
-                        final scrollBehavior = ScrollConfiguration.of(context).copyWith(scrollbars: false);
+                            final scrollBehavior = ScrollConfiguration.of(
+                              context,
+                            ).copyWith(scrollbars: false);
 
-                        Widget finalContainer;
-                        if (displayText.length > 30000) {
-                          finalContainer = SizedBox(
-                            height: viewportHeight,
-                            child: _LargeTextDetailView(
-                              text: displayText,
-                              style: textStyle,
-                              wrapLines: _wrapCodeLines,
-                              verticalController: _scrollController,
-                              horizontalController: _horizontalScrollController,
-                            ),
-                          );
-                        } else if (_wrapCodeLines) {
-                          finalContainer = ScrollConfiguration(
-                            behavior: scrollBehavior,
-                            child: SizedBox(
-                              height: viewportHeight,
-                              child: SingleChildScrollView(
-                                controller: _scrollController,
-                                physics: const BouncingScrollPhysics(),
-                                child: Padding(
-                                  padding: const EdgeInsets.all(8.0),
-                                  child: SelectableText(
-                                    displayText,
-                                    style: textStyle,
-                                  ),
+                            Widget finalContainer;
+                            if (displayText.length > 30000) {
+                              finalContainer = SizedBox(
+                                height: viewportHeight,
+                                child: _LargeTextDetailView(
+                                  text: displayText,
+                                  style: textStyle,
+                                  wrapLines: _wrapCodeLines,
+                                  verticalController: _scrollController,
+                                  horizontalController:
+                                      _horizontalScrollController,
                                 ),
-                              ),
-                            ),
-                          );
-                        } else {
-                          finalContainer = ScrollConfiguration(
-                            behavior: scrollBehavior,
-                            child: SizedBox(
-                              height: viewportHeight,
-                              child: SingleChildScrollView(
-                                controller: _scrollController,
-                                physics: const BouncingScrollPhysics(),
-                                child: SingleChildScrollView(
-                                  controller: _horizontalScrollController,
-                                  scrollDirection: Axis.horizontal,
-                                  physics: const BouncingScrollPhysics(),
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(8.0),
-                                    child: SelectableText(
-                                      displayText,
-                                      style: textStyle,
+                              );
+                            } else if (_wrapCodeLines) {
+                              finalContainer = ScrollConfiguration(
+                                behavior: scrollBehavior,
+                                child: SizedBox(
+                                  height: viewportHeight,
+                                  child: SingleChildScrollView(
+                                    controller: _scrollController,
+                                    physics: const BouncingScrollPhysics(),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(8.0),
+                                      child: SelectableText(
+                                        displayText,
+                                        style: textStyle,
+                                      ),
                                     ),
                                   ),
                                 ),
+                              );
+                            } else {
+                              finalContainer = ScrollConfiguration(
+                                behavior: scrollBehavior,
+                                child: SizedBox(
+                                  height: viewportHeight,
+                                  child: SingleChildScrollView(
+                                    controller: _scrollController,
+                                    physics: const BouncingScrollPhysics(),
+                                    child: SingleChildScrollView(
+                                      controller: _horizontalScrollController,
+                                      scrollDirection: Axis.horizontal,
+                                      physics: const BouncingScrollPhysics(),
+                                      child: Padding(
+                                        padding: const EdgeInsets.all(8.0),
+                                        child: SelectableText(
+                                          displayText,
+                                          style: textStyle,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              );
+                            }
+
+                            if (_wrapCodeLines) {
+                              return Scrollbar(
+                                controller: _scrollController,
+                                notificationPredicate: (n) =>
+                                    n.metrics.axis == Axis.vertical,
+                                thumbVisibility: true,
+                                thickness: 4,
+                                radius: const Radius.circular(999),
+                                child: finalContainer,
+                              );
+                            }
+
+                            return Scrollbar(
+                              controller: _scrollController,
+                              notificationPredicate: (n) =>
+                                  n.metrics.axis == Axis.vertical,
+                              thumbVisibility: true,
+                              thickness: 4,
+                              radius: const Radius.circular(999),
+                              child: Scrollbar(
+                                controller: _horizontalScrollController,
+                                notificationPredicate: (n) =>
+                                    n.metrics.axis == Axis.horizontal,
+                                thumbVisibility: false,
+                                thickness: 3,
+                                radius: const Radius.circular(999),
+                                child: finalContainer,
                               ),
-                            ),
-                          );
-                        }
-
-                        if (_wrapCodeLines) {
-                          return Scrollbar(
-                            controller: _scrollController,
-                            notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
-                            thumbVisibility: true,
-                            thickness: 4,
-                            radius: const Radius.circular(999),
-                            child: finalContainer,
-                          );
-                        }
-
-                        return Scrollbar(
-                          controller: _scrollController,
-                          notificationPredicate: (n) => n.metrics.axis == Axis.vertical,
-                          thumbVisibility: true,
-                          thickness: 4,
-                          radius: const Radius.circular(999),
-                          child: Scrollbar(
-                            controller: _horizontalScrollController,
-                            notificationPredicate: (n) => n.metrics.axis == Axis.horizontal,
-                            thumbVisibility: false,
-                            thickness: 3,
-                            radius: const Radius.circular(999),
-                            child: finalContainer,
-                          ),
-                        );
-                      },
-                    ))),
+                            );
+                          },
+                        ))),
     );
   }
 }
@@ -1985,7 +2060,9 @@ class _CopyButtonState extends State<_CopyButton> {
         child: Container(
           padding: const EdgeInsets.all(4),
           decoration: BoxDecoration(
-            color: _copied ? Colors.green.withOpacity(0.15) : widget.themeAccent.withOpacity(0.08),
+            color: _copied
+                ? Colors.green.withOpacity(0.15)
+                : widget.themeAccent.withOpacity(0.08),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Icon(
@@ -2037,7 +2114,9 @@ class _LargeTextDetailViewState extends State<_LargeTextDetailView> {
 
   @override
   Widget build(BuildContext context) {
-    final scrollBehavior = ScrollConfiguration.of(context).copyWith(scrollbars: false);
+    final scrollBehavior = ScrollConfiguration.of(
+      context,
+    ).copyWith(scrollbars: false);
 
     if (widget.wrapLines) {
       return SelectionArea(
@@ -2049,10 +2128,7 @@ class _LargeTextDetailViewState extends State<_LargeTextDetailView> {
             itemCount: _lines.length,
             padding: const EdgeInsets.all(8.0),
             itemBuilder: (context, index) {
-              return Text(
-                _lines[index],
-                style: widget.style,
-              );
+              return Text(_lines[index], style: widget.style);
             },
           ),
         ),
@@ -2087,5 +2163,3 @@ class _LargeTextDetailViewState extends State<_LargeTextDetailView> {
     }
   }
 }
-
-

@@ -25,6 +25,7 @@ class NotesPane extends StatefulWidget {
 class _NotesPaneState extends State<NotesPane> {
   late TextEditingController _editorController;
   late TextEditingController _searchController;
+  final ScrollController _listScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _editorFocusNode = FocusNode();
   String _activeNoteId = '';
@@ -52,6 +53,7 @@ class _NotesPaneState extends State<NotesPane> {
   void dispose() {
     _editorController.dispose();
     _searchController.dispose();
+    _listScrollController.dispose();
     _scrollController.dispose();
     _editorFocusNode.dispose();
     super.dispose();
@@ -97,6 +99,29 @@ class _NotesPaneState extends State<NotesPane> {
   bool _isMouseBackButton(PointerDownEvent event) {
     return event.kind == PointerDeviceKind.mouse &&
         (event.buttons & kBackMouseButton) != 0;
+  }
+
+  bool get _isTextZoomModifierPressed {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.controlRight) ||
+        pressed.contains(LogicalKeyboardKey.metaLeft) ||
+        pressed.contains(LogicalKeyboardKey.metaRight);
+  }
+
+  void _handleEditorPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_isTextZoomModifierPressed) {
+      return;
+    }
+
+    if (event.scrollDelta.dy == 0) {
+      return;
+    }
+
+    final direction = event.scrollDelta.dy < 0 ? 1.0 : -1.0;
+    widget.state.updateTextContentFontSize(
+      widget.state.settings.textContentFontSize + direction,
+    );
   }
 
   Widget _wrapDetailBackGesture(Widget child) {
@@ -176,6 +201,8 @@ class _NotesPaneState extends State<NotesPane> {
         return false;
       },
       child: ListView.builder(
+        key: const PageStorageKey<String>('notes_list_view'),
+        controller: _listScrollController,
         physics: const BouncingScrollPhysics(),
         itemCount: allNotes.length,
         itemBuilder: (context, index) {
@@ -273,6 +300,18 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   Widget _buildDetail(Note active) {
+    final editorFontSize = widget.state.settings.textContentFontSize;
+    final editorTextStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+          fontSize: editorFontSize,
+          height: 1.4,
+          color: widget.isDark ? Colors.white : Colors.black87,
+        ) ??
+        TextStyle(
+          fontSize: editorFontSize,
+          height: 1.4,
+          color: widget.isDark ? Colors.white : Colors.black87,
+        );
+
     return Container(
       width: double.infinity,
       height: double.infinity,
@@ -286,27 +325,29 @@ class _NotesPaneState extends State<NotesPane> {
           }
           return KeyEventResult.ignored;
         },
-        child: TextField(
-          controller: _editorController,
-          focusNode: _editorFocusNode,
-          scrollController: _scrollController,
-          maxLines: null,
-          minLines: null,
-          expands: true,
-          textAlignVertical: TextAlignVertical.top,
-          keyboardType: TextInputType.multiline,
-          style: const TextStyle(fontSize: 13, height: 1.4),
-          decoration: InputDecoration(
-            hintText: '开始书写便签内容...',
-            hintStyle: TextStyle(
-              fontSize: 13,
-              color: widget.isDark ? Colors.white24 : Colors.black26,
+        child: Listener(
+          onPointerSignal: _handleEditorPointerSignal,
+          child: TextField(
+            controller: _editorController,
+            focusNode: _editorFocusNode,
+            scrollController: _scrollController,
+            maxLines: null,
+            minLines: null,
+            expands: true,
+            textAlignVertical: TextAlignVertical.top,
+            keyboardType: TextInputType.multiline,
+            style: editorTextStyle,
+            decoration: InputDecoration(
+              hintText: '开始书写便签内容...',
+              hintStyle: editorTextStyle.copyWith(
+                color: widget.isDark ? Colors.white24 : Colors.black26,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.only(left: 10, right: 2),
+              isDense: true,
             ),
-            border: InputBorder.none,
-            contentPadding: const EdgeInsets.only(left: 10, right: 2),
-            isDense: true,
+            onChanged: _onContentChanged,
           ),
-          onChanged: _onContentChanged,
         ),
       ),
     );

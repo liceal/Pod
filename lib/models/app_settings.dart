@@ -6,6 +6,9 @@ class AppSettings {
   static const int defaultClipboardHistoryLimit = 50;
   static const int minClipboardHistoryLimit = 10;
   static const int maxClipboardHistoryLimit = 500;
+  static const double defaultTextContentFontSize = 12.0;
+  static const double minTextContentFontSize = 11.0;
+  static const double maxTextContentFontSize = 22.0;
   static const List<PanelPane> defaultPanelOrder = [
     PanelPane.clipboard,
     PanelPane.files,
@@ -30,6 +33,7 @@ class AppSettings {
   final int clipboardHistoryLimit;
   final List<PanelPane> panelOrder;
   final Map<PanelPane, double> panelWeights;
+  final double textContentFontSize;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -51,18 +55,27 @@ class AppSettings {
     int clipboardHistoryLimit = defaultClipboardHistoryLimit,
     List<PanelPane>? panelOrder,
     Map<PanelPane, double>? panelWeights,
+    double? textContentFontSize,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
          clipboardHistoryLimit,
        ),
        panelOrder = normalizePanelOrder(panelOrder),
-       panelWeights = normalizePanelWeights(panelWeights);
+       panelWeights = normalizePanelWeights(panelWeights),
+       textContentFontSize = normalizeTextContentFontSize(textContentFontSize);
 
   static int normalizeClipboardHistoryLimit(int? value) {
     return (value ?? defaultClipboardHistoryLimit)
         .clamp(minClipboardHistoryLimit, maxClipboardHistoryLimit)
         .toInt();
+  }
+
+  static double normalizeTextContentFontSize(double? value) {
+    return (value ?? defaultTextContentFontSize).clamp(
+      minTextContentFontSize,
+      maxTextContentFontSize,
+    ).toDouble();
   }
 
   static List<PanelPane> normalizePanelOrder(List<PanelPane>? value) {
@@ -115,6 +128,7 @@ class AppSettings {
     int? clipboardHistoryLimit,
     List<PanelPane>? panelOrder,
     Map<PanelPane, double>? panelWeights,
+    double? textContentFontSize,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -134,6 +148,7 @@ class AppSettings {
           clipboardHistoryLimit ?? this.clipboardHistoryLimit,
       panelOrder: panelOrder ?? this.panelOrder,
       panelWeights: panelWeights ?? this.panelWeights,
+      textContentFontSize: textContentFontSize ?? this.textContentFontSize,
     );
   }
 
@@ -155,6 +170,7 @@ class AppSettings {
       'clipboardHistoryLimit': clipboardHistoryLimit,
       'panelOrder': panelOrder.map((pane) => pane.name).toList(),
       'panelWeights': panelWeights.map((pane, w) => MapEntry(pane.name, w)),
+      'textContentFontSize': textContentFontSize,
     };
   }
 
@@ -224,6 +240,9 @@ class AppSettings {
       ),
       panelOrder: parsePanelOrder(json['panelOrder']),
       panelWeights: parsePanelWeights(json['panelWeights']),
+      textContentFontSize:
+          (json['textContentFontSize'] as num?)?.toDouble() ??
+          (json['noteEditorFontSize'] as num?)?.toDouble(),
     );
   }
 }

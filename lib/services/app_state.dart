@@ -68,6 +68,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Timer? _autoCollapseTimer;
   Timer? _panelActivationRefreshTimer;
   Timer? _fileWatchDebounce;
+  Timer? _settingsSaveDebounce;
 
   String _trayIconPath = '';
   StreamSubscription<FileSystemEvent>? _dirWatcher;
@@ -404,6 +405,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _isShuttingDown = true;
     windowManager.removeListener(this);
     trayManager.removeListener(this);
+    unawaited(forceSaveSettingsIfPending());
     _cancelRuntimeTimers();
     _menuBarScrollChannel.setMethodCallHandler(null);
     _dirWatcher?.cancel();
@@ -419,6 +421,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _autoCollapseTimer?.cancel();
     _panelActivationRefreshTimer?.cancel();
     _fileWatchDebounce?.cancel();
+    _settingsSaveDebounce?.cancel();
     _reloadNotesDebounce?.cancel();
     _reloadHistoryDebounce?.cancel();
   }
@@ -437,6 +440,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     windowManager.removeListener(this);
     trayManager.removeListener(this);
     await forceSaveNotesIfPending();
+    await forceSaveSettingsIfPending();
     _cancelRuntimeTimers();
     _menuBarScrollChannel.setMethodCallHandler(null);
 
@@ -698,6 +702,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Future<void> forceSaveSettingsIfPending() async {
+    if (_settingsSaveDebounce?.isActive ?? false) {
+      _settingsSaveDebounce?.cancel();
+      await _prefs.setString('settings', jsonEncode(settings.toJson()));
+    }
+  }
+
   Future<void> collapsePanel({
     Duration duration = const Duration(milliseconds: 230),
   }) async {
@@ -821,12 +832,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void startAutoCollapseTimer() {
     _autoCollapseTimer?.cancel();
-    if (isDialogOpen || isMouseInside) return;
+    if (isDialogOpen || isMouseInside || _hasEditableTextFocus) return;
     final delay = settings.autoCollapseDelay;
     if (delay <= 0) return;
     if (!isExpanded || isAnimating) return;
     _autoCollapseTimer = Timer(Duration(seconds: delay), () {
-      if (isExpanded && !isAnimating) {
+      if (isExpanded &&
+          !isAnimating &&
+          !isDialogOpen &&
+          !isMouseInside &&
+          !_hasEditableTextFocus) {
         collapsePanel();
       }
     });
@@ -834,6 +849,27 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void cancelAutoCollapseTimer() {
     _autoCollapseTimer?.cancel();
+  }
+
+  bool get _hasEditableTextFocus {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+
+    try {
+      if (context.widget is EditableText) return true;
+
+      var found = false;
+      context.visitAncestorElements((element) {
+        if (element.widget is EditableText) {
+          found = true;
+          return false;
+        }
+        return true;
+      });
+      return found;
+    } catch (_) {
+      return false;
+    }
   }
 
   // --- Window Listeners ---
@@ -869,6 +905,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> updateSettings(AppSettings newSettings) async {
     final oldPath = settings.customFilesPath;
+    _settingsSaveDebounce?.cancel();
     settings = newSettings;
     final didTrimClipboardHistory = _trimClipboardHistoryToLimit();
     await _prefs.setString('settings', jsonEncode(settings.toJson()));
@@ -883,6 +920,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (oldPath != newSettings.customFilesPath) {
       await _scanStoredFiles();
     }
+    notifyListeners();
+  }
+
+  void updateTextContentFontSize(double value) {
+    final normalized = AppSettings.normalizeTextContentFontSize(value);
+    if ((settings.textContentFontSize - normalized).abs() < 0.01) return;
+
+    settings = settings.copyWith(textContentFontSize: normalized);
+    _settingsSaveDebounce?.cancel();
+    _settingsSaveDebounce = Timer(const Duration(milliseconds: 250), () {
+      _settingsSaveDebounce = null;
+      unawaited(_prefs.setString('settings', jsonEncode(settings.toJson())));
+    });
     notifyListeners();
   }
 

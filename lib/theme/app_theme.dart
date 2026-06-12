@@ -68,13 +68,14 @@ class AppTheme {
     final accent = getAccentColor(colorName, isDark);
     String? fontFamily;
     if (defaultTargetPlatform == TargetPlatform.windows) {
-      fontFamily = 'Segoe UI';
+      fontFamily = 'Microsoft YaHei UI';
     } else if (defaultTargetPlatform == TargetPlatform.macOS) {
       fontFamily = '.AppleSystemUIFont';
     }
     const fontFallback = <String>[
-      'Microsoft YaHei UI',
+      'Segoe UI',
       'PingFang SC',
+      'Microsoft YaHei UI',
       'Noto Sans CJK SC',
       'Arial Unicode MS',
     ];
@@ -89,6 +90,13 @@ class AppTheme {
         brightness: isDark ? Brightness.dark : Brightness.light,
         surface: isDark ? darkPanelBg : lightPanelBg,
         outline: isDark ? darkBorder : lightBorder,
+      ),
+      textSelectionTheme: TextSelectionThemeData(
+        cursorColor: accent,
+        selectionColor: isDark
+            ? accent.withValues(alpha: 0.42)
+            : accent.withValues(alpha: 0.24),
+        selectionHandleColor: accent,
       ),
       scrollbarTheme: ScrollbarThemeData(
         thickness: WidgetStateProperty.all(4.0),
