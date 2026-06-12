@@ -221,7 +221,9 @@ class MainFlutterWindow: NSPanel {
     )
 
     clipboardOwnerChannel.setMethodCallHandler { (call, result) in
-      if call.method == "getClipboardOwner" {
+      if call.method == "getClipboardChangeCount" {
+        result(NSPasteboard.general.changeCount)
+      } else if call.method == "getClipboardOwner" {
         guard let frontmostApp = NSWorkspace.shared.frontmostApplication else {
           result([String: Any]())
           return

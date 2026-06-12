@@ -117,7 +117,10 @@ bool FlutterWindow::OnCreate() {
   method_channel_->SetMethodCallHandler(
       [](const flutter::MethodCall<>& call,
          std::unique_ptr<flutter::MethodResult<>> result) {
-        if (call.method_name() == "getClipboardOwner") {
+        if (call.method_name() == "getClipboardSequenceNumber") {
+          result->Success(flutter::EncodableValue(
+              static_cast<int64_t>(GetClipboardSequenceNumber())));
+        } else if (call.method_name() == "getClipboardOwner") {
           HWND hwnd = GetClipboardOwner();
           if (!hwnd) {
             hwnd = GetForegroundWindow();

@@ -61,6 +61,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String? _lastSystemClipImageSignature;
   String? _lastAppCopiedImageSignature;
   bool _isCheckingClipboard = false;
+  int? _lastNativeClipboardSequence;
+  bool _nativeClipboardSequenceUnavailable = false;
   Timer? _clipboardTimer;
   Timer? _notesSaveTimer;
   Timer? _autoCollapseTimer;
@@ -1683,12 +1685,49 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Future<int?> _getNativeClipboardSequence() async {
+    if ((!Platform.isWindows && !Platform.isMacOS) ||
+        _nativeClipboardSequenceUnavailable) {
+      return null;
+    }
+
+    try {
+      final methodName = Platform.isWindows
+          ? 'getClipboardSequenceNumber'
+          : 'getClipboardChangeCount';
+      return await _clipboardOwnerChannel.invokeMethod<int>(
+        methodName,
+      );
+    } on MissingPluginException catch (e) {
+      _nativeClipboardSequenceUnavailable = true;
+      debugPrint('Clipboard sequence API unavailable: $e');
+      return null;
+    } catch (e) {
+      debugPrint('Failed to get clipboard sequence number: $e');
+      return null;
+    }
+  }
+
+  Future<bool> _shouldSkipUnchangedClipboard() async {
+    final sequence = await _getNativeClipboardSequence();
+    if (sequence == null) return false;
+
+    final previousSequence = _lastNativeClipboardSequence;
+    _lastNativeClipboardSequence = sequence;
+    return previousSequence != null && previousSequence == sequence;
+  }
+
   void _startClipboardMonitoring() {
     _clipboardTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
       if (_isShuttingDown) return;
       if (_isCheckingClipboard) return;
       _isCheckingClipboard = true;
       try {
+        // Avoid touching large clipboard payloads unless content changed.
+        if (await _shouldSkipUnchangedClipboard()) {
+          return;
+        }
+
         // 1. 先检查文本，因为绝大多数情况下剪贴板中都是文本，且 Clipboard.getData 极轻量
         final data = await Clipboard.getData(Clipboard.kTextPlain);
         if (data != null && data.text != null && data.text!.isNotEmpty) {
