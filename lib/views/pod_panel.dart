@@ -152,7 +152,7 @@ class _PodPanelState extends State<PodPanel>
   void _onMouseExitedPanel() {
     _isMouseInside = false;
     widget.state.isMouseInside = false; // Sync to AppState
-    widget.state.startAutoCollapseTimer(ignoreEditableFocus: Platform.isMacOS);
+    widget.state.startAutoCollapseTimer();
   }
 
   // 顶部感应条/把手双向滚轮处理：上滑收起 / 下滑展开
@@ -199,9 +199,9 @@ class _PodPanelState extends State<PodPanel>
 
     // 展开窗口高度以容纳设置弹窗
     final x = screenX + (screenWidth - panelW) / 2;
-    windowManager.setBounds(
-      Rect.fromLTWH(x, menuBarHeight, panelW, dialogH),
-    ).catchError((e) => debugPrint('Failed to expand settings window: $e'));
+    windowManager
+        .setBounds(Rect.fromLTWH(x, menuBarHeight, panelW, dialogH))
+        .catchError((e) => debugPrint('Failed to expand settings window: $e'));
 
     if (!mounted) return;
 
@@ -220,9 +220,11 @@ class _PodPanelState extends State<PodPanel>
     // 弹窗关闭后：直接用 lastCalculatedWidth（updateSettings 已更新）
     final double updatedPanelW = widget.state.lastCalculatedWidth;
     final rx = screenX + (screenWidth - updatedPanelW) / 2;
-    windowManager.setBounds(
-      Rect.fromLTWH(rx, menuBarHeight, updatedPanelW, expandedH),
-    ).catchError((e) => debugPrint('Failed to restore window size after settings: $e'));
+    windowManager
+        .setBounds(Rect.fromLTWH(rx, menuBarHeight, updatedPanelW, expandedH))
+        .catchError(
+          (e) => debugPrint('Failed to restore window size after settings: $e'),
+        );
 
     // 设置关闭后若鼠标不在面板内，启动自动收起计时器
     if (!_isMouseInside) {
@@ -312,7 +314,10 @@ class _PodPanelState extends State<PodPanel>
                                     isDark: animatedIsDark,
                                     color: currentTheme.scaffoldBackgroundColor
                                         .withValues(
-                                          alpha: widget.state.settings.backdropOpacity,
+                                          alpha: widget
+                                              .state
+                                              .settings
+                                              .backdropOpacity,
                                         ),
                                     borderColor:
                                         currentTheme.colorScheme.outline,
@@ -323,22 +328,47 @@ class _PodPanelState extends State<PodPanel>
                                       Expanded(
                                         child: LayoutBuilder(
                                           builder: (context, constraints) {
-                                            final double totalW = constraints.maxWidth;
-                                            final panes = widget.state.settings.panelOrder;
+                                            final double totalW =
+                                                constraints.maxWidth;
+                                            final panes = widget
+                                                .state
+                                                .settings
+                                                .panelOrder;
                                             final int n = panes.length;
-                                            final double wAvailable = totalW - ((n - 1) * 1.0);
+                                            final double wAvailable =
+                                                totalW - ((n - 1) * 1.0);
 
-                                            final currentWeights = _dragWeights ?? widget.state.settings.panelWeights;
-                                            final double totalWeight = currentWeights.values.fold(0.0, (sum, w) => sum + w);
+                                            final currentWeights =
+                                                _dragWeights ??
+                                                widget
+                                                    .state
+                                                    .settings
+                                                    .panelWeights;
+                                            final double totalWeight =
+                                                currentWeights.values.fold(
+                                                  0.0,
+                                                  (sum, w) => sum + w,
+                                                );
 
-                                            final resolvedTotalWeight = totalWeight > 0.0 ? totalWeight : n.toDouble();
-                                            final resolvedWeights = totalWeight > 0.0 ? currentWeights : {
-                                              for (final pane in panes) pane: 1.0
-                                            };
+                                            final resolvedTotalWeight =
+                                                totalWeight > 0.0
+                                                ? totalWeight
+                                                : n.toDouble();
+                                            final resolvedWeights =
+                                                totalWeight > 0.0
+                                                ? currentWeights
+                                                : {
+                                                    for (final pane in panes)
+                                                      pane: 1.0,
+                                                  };
 
                                             final children = <Widget>[];
                                             for (var i = 0; i < n; i++) {
-                                              final paneW = wAvailable * ((resolvedWeights[panes[i]] ?? 1.0) / resolvedTotalWeight);
+                                              final paneW =
+                                                  wAvailable *
+                                                  ((resolvedWeights[panes[i]] ??
+                                                          1.0) /
+                                                      resolvedTotalWeight);
                                               children.add(
                                                 SizedBox(
                                                   width: paneW,
@@ -356,35 +386,90 @@ class _PodPanelState extends State<PodPanel>
                                                     color: dividerColor,
                                                     onDragUpdate: (dx) {
                                                       setState(() {
-                                                        final currentWeights = _dragWeights ?? widget.state.settings.panelWeights;
-                                                        final Map<PanelPane, double> newWeights = Map.from(currentWeights);
-                                                        final totalWeight = newWeights.values.fold(0.0, (sum, w) => sum + w);
+                                                        final currentWeights =
+                                                            _dragWeights ??
+                                                            widget
+                                                                .state
+                                                                .settings
+                                                                .panelWeights;
+                                                        final Map<
+                                                          PanelPane,
+                                                          double
+                                                        >
+                                                        newWeights = Map.from(
+                                                          currentWeights,
+                                                        );
+                                                        final totalWeight =
+                                                            newWeights.values
+                                                                .fold(
+                                                                  0.0,
+                                                                  (sum, w) =>
+                                                                      sum + w,
+                                                                );
 
-                                                        final resolvedTotal = totalWeight > 0.0 ? totalWeight : n.toDouble();
-                                                        final pixelWidths = panes.map((pane) => wAvailable * ((newWeights[pane] ?? 1.0) / resolvedTotal)).toList();
+                                                        final resolvedTotal =
+                                                            totalWeight > 0.0
+                                                            ? totalWeight
+                                                            : n.toDouble();
+                                                        final pixelWidths = panes
+                                                            .map(
+                                                              (pane) =>
+                                                                  wAvailable *
+                                                                  ((newWeights[pane] ??
+                                                                          1.0) /
+                                                                      resolvedTotal),
+                                                            )
+                                                            .toList();
 
-                                                        final sumBefore = pixelWidths[dividerIndex] + pixelWidths[dividerIndex + 1];
-                                                        double newWi = pixelWidths[dividerIndex] + dx;
+                                                        final sumBefore =
+                                                            pixelWidths[dividerIndex] +
+                                                            pixelWidths[dividerIndex +
+                                                                1];
+                                                        double newWi =
+                                                            pixelWidths[dividerIndex] +
+                                                            dx;
 
-                                                        const double minWidth = 100.0;
-                                                        newWi = newWi.clamp(minWidth, sumBefore - minWidth);
+                                                        const double minWidth =
+                                                            100.0;
+                                                        newWi = newWi.clamp(
+                                                          minWidth,
+                                                          sumBefore - minWidth,
+                                                        );
 
-                                                        pixelWidths[dividerIndex] = newWi;
-                                                        pixelWidths[dividerIndex + 1] = sumBefore - newWi;
+                                                        pixelWidths[dividerIndex] =
+                                                            newWi;
+                                                        pixelWidths[dividerIndex +
+                                                                1] =
+                                                            sumBefore - newWi;
 
-                                                        for (var j = 0; j < n; j++) {
-                                                          newWeights[panes[j]] = pixelWidths[j];
+                                                        for (
+                                                          var j = 0;
+                                                          j < n;
+                                                          j++
+                                                        ) {
+                                                          newWeights[panes[j]] =
+                                                              pixelWidths[j];
                                                         }
 
-                                                        _dragWeights = newWeights;
+                                                        _dragWeights =
+                                                            newWeights;
                                                       });
                                                     },
                                                     onDragEnd: () async {
-                                                      if (_dragWeights != null) {
-                                                        final updatedSettings = widget.state.settings.copyWith(
-                                                          panelWeights: _dragWeights,
-                                                        );
-                                                        await widget.state.updateSettings(updatedSettings);
+                                                      if (_dragWeights !=
+                                                          null) {
+                                                        final updatedSettings =
+                                                            widget
+                                                                .state
+                                                                .settings
+                                                                .copyWith(
+                                                                  panelWeights:
+                                                                      _dragWeights,
+                                                                );
+                                                        await widget.state
+                                                            .updateSettings(
+                                                              updatedSettings,
+                                                            );
                                                       }
                                                     },
                                                   ),
@@ -392,9 +477,7 @@ class _PodPanelState extends State<PodPanel>
                                               }
                                             }
 
-                                            return Row(
-                                              children: children,
-                                            );
+                                            return Row(children: children);
                                           },
                                         ),
                                       ),
@@ -453,7 +536,9 @@ class _PodPanelState extends State<PodPanel>
                                             _handleTopScrollSignal, // 直接复用统一方法
                                         child: Container(
                                           color: Platform.isMacOS
-                                              ? Colors.white.withValues(alpha: 0.01)
+                                              ? Colors.white.withValues(
+                                                  alpha: 0.01,
+                                                )
                                               : (animatedIsDark
                                                     ? Colors.white.withValues(
                                                         alpha: 0.1,
@@ -475,7 +560,9 @@ class _PodPanelState extends State<PodPanel>
                                           _handleTopScrollSignal, // 直接复用统一方法
                                       child: Container(
                                         color: Platform.isMacOS
-                                            ? Colors.white.withValues(alpha: 0.01)
+                                            ? Colors.white.withValues(
+                                                alpha: 0.01,
+                                              )
                                             : (animatedIsDark
                                                   ? Colors.white.withValues(
                                                       alpha: 0.1,
@@ -532,7 +619,8 @@ class _DraggableDividerState extends State<DraggableDivider> {
     final double visualWidth = (_isHovered || _isDragging) ? 2.0 : 1.0;
 
     return ExpandedHitTestMinSize(
-      minWidth: 10.0, // 10px hit test zone (5px on each side) is easy to target but won't block scrollbars
+      minWidth:
+          10.0, // 10px hit test zone (5px on each side) is easy to target but won't block scrollbars
       child: SizedBox(
         width: 1.0,
         height: double.infinity,
@@ -575,9 +663,7 @@ class _DraggableDividerState extends State<DraggableDivider> {
                   onHorizontalDragCancel: () {
                     widget.onDragEnd?.call();
                   },
-                  child: Container(
-                    color: Colors.transparent,
-                  ),
+                  child: Container(color: Colors.transparent),
                 ),
               ),
             ),
@@ -633,8 +719,12 @@ class RenderExpandedHitTestMinSize extends RenderProxyBox {
 
   @override
   bool hitTest(BoxHitTestResult result, {required Offset position}) {
-    final double widthDiff = minWidth > size.width ? minWidth - size.width : 0.0;
-    final double heightDiff = minHeight > size.height ? minHeight - size.height : 0.0;
+    final double widthDiff = minWidth > size.width
+        ? minWidth - size.width
+        : 0.0;
+    final double heightDiff = minHeight > size.height
+        ? minHeight - size.height
+        : 0.0;
 
     final Rect expandedBounds = Rect.fromLTWH(
       -widthDiff / 2.0,

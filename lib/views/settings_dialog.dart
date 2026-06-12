@@ -770,19 +770,24 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             _panelOrder.insert(newIndex, pane);
                           });
                         },
-                        proxyDecorator: (Widget child, int index, Animation<double> animation) {
-                          return AnimatedBuilder(
-                            animation: animation,
-                            builder: (BuildContext context, Widget? child) {
-                              return Material(
-                                elevation: 4.0,
-                                color: Colors.transparent,
+                        proxyDecorator:
+                            (
+                              Widget child,
+                              int index,
+                              Animation<double> animation,
+                            ) {
+                              return AnimatedBuilder(
+                                animation: animation,
+                                builder: (BuildContext context, Widget? child) {
+                                  return Material(
+                                    elevation: 4.0,
+                                    color: Colors.transparent,
+                                    child: child,
+                                  );
+                                },
                                 child: child,
                               );
                             },
-                            child: child,
-                          );
-                        },
                         children: [
                           for (
                             var index = 0;
@@ -918,8 +923,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               ),
                             ),
                             Text(
-                              _autoCollapseDelay == 0
-                                  ? '已禁用'
+                              _autoCollapseDelay >=
+                                      AppSettings.maxAutoCollapseDelay
+                                  ? '仅手动收起'
+                                  : _autoCollapseDelay == 0
+                                  ? '点击外部后立即收起'
                                   : '$_autoCollapseDelay 秒后收起',
                               style: TextStyle(
                                 fontSize: 11,
@@ -933,14 +941,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Slider(
                       value: _autoCollapseDelay.toDouble(),
                       min: 0,
-                      max: 30,
-                      divisions: 30,
+                      max: AppSettings.maxAutoCollapseDelay.toDouble(),
+                      divisions: AppSettings.maxAutoCollapseDelay,
                       activeColor: accentColor,
                       inactiveColor: _isDarkTheme
                           ? Colors.white12
                           : Colors.black12,
-                      label: _autoCollapseDelay == 0
-                          ? '禁用'
+                      label:
+                          _autoCollapseDelay >= AppSettings.maxAutoCollapseDelay
+                          ? '仅手动'
+                          : _autoCollapseDelay == 0
+                          ? '点外部立即'
                           : '$_autoCollapseDelay 秒',
                       onChanged: (val) {
                         setState(() {

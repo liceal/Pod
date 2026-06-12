@@ -28,6 +28,8 @@ class _NotesPaneState extends State<NotesPane> {
   final ScrollController _listScrollController = ScrollController();
   final ScrollController _scrollController = ScrollController();
   final FocusNode _editorFocusNode = FocusNode();
+  final Map<String, TextSelection> _noteSelections = {};
+  final Map<String, double> _noteScrollOffsets = {};
   String _activeNoteId = '';
   bool _showList = true;
   double _swipeDistance = 0;
@@ -41,6 +43,7 @@ class _NotesPaneState extends State<NotesPane> {
     _searchController.addListener(() {
       widget.state.searchNotesQuery = _searchController.text;
     });
+    _editorFocusNode.addListener(_handleEditorFocusChanged);
     _syncActiveNote();
   }
 
@@ -52,6 +55,8 @@ class _NotesPaneState extends State<NotesPane> {
 
   @override
   void dispose() {
+    widget.state.setNoteEditorFocused(false);
+    _editorFocusNode.removeListener(_handleEditorFocusChanged);
     _editorController.dispose();
     _searchController.dispose();
     _listScrollController.dispose();
@@ -63,22 +68,83 @@ class _NotesPaneState extends State<NotesPane> {
   void _syncActiveNote() {
     final active = widget.state.activeNote;
     if (active != null) {
-      if (_activeNoteId != active.id ||
-          _editorController.text != active.content) {
+      final noteChanged = _activeNoteId != active.id;
+      if (noteChanged || _editorController.text != active.content) {
+        if (noteChanged) {
+          _saveCurrentNoteViewState();
+        }
         _activeNoteId = active.id;
-        _editorController.text = active.content;
+        _editorController.value = TextEditingValue(
+          text: active.content,
+          selection: _selectionForNote(active),
+        );
+        _restoreScrollForNote(active);
       }
     } else {
+      _saveCurrentNoteViewState();
       _editorController.clear();
       _activeNoteId = '';
     }
+  }
+
+  TextSelection _selectionForNote(Note note) {
+    final saved = _noteSelections[note.id];
+    final offset = saved?.baseOffset ?? 0;
+    final extentOffset = saved?.extentOffset ?? offset;
+    return TextSelection(
+      baseOffset: offset.clamp(0, note.content.length).toInt(),
+      extentOffset: extentOffset.clamp(0, note.content.length).toInt(),
+    );
+  }
+
+  void _restoreScrollForNote(Note note) {
+    final savedOffset = _noteScrollOffsets[note.id] ?? 0.0;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted ||
+          _activeNoteId != note.id ||
+          !_scrollController.hasClients) {
+        return;
+      }
+      final position = _scrollController.position;
+      final target = savedOffset
+          .clamp(position.minScrollExtent, position.maxScrollExtent)
+          .toDouble();
+      _scrollController.jumpTo(target);
+    });
+  }
+
+  void _saveCurrentNoteViewState() {
+    if (_activeNoteId.isEmpty) return;
+
+    final selection = _editorController.selection;
+    if (selection.isValid) {
+      final textLength = _editorController.text.length;
+      _noteSelections[_activeNoteId] = TextSelection(
+        baseOffset: selection.baseOffset.clamp(0, textLength).toInt(),
+        extentOffset: selection.extentOffset.clamp(0, textLength).toInt(),
+      );
+    }
+
+    if (_scrollController.hasClients) {
+      _noteScrollOffsets[_activeNoteId] = _scrollController.offset;
+    }
+  }
+
+  void _clearNoteViewState(String noteId) {
+    _noteSelections.remove(noteId);
+    _noteScrollOffsets.remove(noteId);
   }
 
   void _onContentChanged(String val) {
     widget.state.updateActiveNoteContent(val);
   }
 
+  void _handleEditorFocusChanged() {
+    widget.state.setNoteEditorFocused(_editorFocusNode.hasFocus && !_showList);
+  }
+
   Future<void> _showNoteDetail(Note note) async {
+    _saveCurrentNoteViewState();
     await widget.state.selectNote(note);
     if (!mounted) return;
     _syncActiveNote();
@@ -87,6 +153,9 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   void _showListView() {
+    _saveCurrentNoteViewState();
+    _editorFocusNode.unfocus();
+    widget.state.setNoteEditorFocused(false);
     setState(() => _showList = true);
   }
 
@@ -94,6 +163,7 @@ class _NotesPaneState extends State<NotesPane> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _showList) return;
       _editorFocusNode.requestFocus();
+      widget.state.setNoteEditorFocused(true);
     });
   }
 
@@ -180,7 +250,12 @@ class _NotesPaneState extends State<NotesPane> {
             child: const Text('删除'),
             onPressed: () async {
               final nav = Navigator.of(ctx);
+              final deletedActiveNote = _activeNoteId == note.id;
               nav.pop();
+              _clearNoteViewState(note.id);
+              if (deletedActiveNote) {
+                _activeNoteId = '';
+              }
               await widget.state.deleteNote(note);
               _syncActiveNote();
               if (fromDetail) {
@@ -222,82 +297,86 @@ class _NotesPaneState extends State<NotesPane> {
         physics: const BouncingScrollPhysics(),
         itemCount: allNotes.length,
         itemBuilder: (context, index) {
-        final note = allNotes[index];
-        final snippet = _getSnippet(note.content);
-        final dateStr =
-            '${note.updatedAt.month}-${note.updatedAt.day} ${note.updatedAt.hour.toString().padLeft(2, '0')}:${note.updatedAt.minute.toString().padLeft(2, '0')}';
+          final note = allNotes[index];
+          final snippet = _getSnippet(note.content);
+          final dateStr =
+              '${note.updatedAt.month}-${note.updatedAt.day} ${note.updatedAt.hour.toString().padLeft(2, '0')}:${note.updatedAt.minute.toString().padLeft(2, '0')}';
 
-        return Container(
-          margin: const EdgeInsets.only(bottom: 2),
-          child: Material(
-            color: widget.isDark
-                ? Colors.white.withValues(alpha: 0.05)
-                : Colors.black.withValues(alpha: 0.03),
-            borderRadius: BorderRadius.circular(5),
-            child: InkWell(
+          return Container(
+            margin: const EdgeInsets.only(bottom: 2),
+            child: Material(
+              color: widget.isDark
+                  ? Colors.white.withValues(alpha: 0.05)
+                  : Colors.black.withValues(alpha: 0.03),
               borderRadius: BorderRadius.circular(5),
-              onTap: () {
-                _showNoteDetail(note);
-              },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            snippet,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 12,
-                              height: 1.15,
-                              fontWeight: FontWeight.w600,
-                              color: widget.isDark
-                                  ? Colors.white
-                                  : Colors.black87,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(5),
+                onTap: () {
+                  _showNoteDetail(note);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 5,
+                  ),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              snippet,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 12,
+                                height: 1.15,
+                                fontWeight: FontWeight.w600,
+                                color: widget.isDark
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 1),
-                          Text(
-                            dateStr,
-                            style: TextStyle(
-                              fontSize: 10,
-                              height: 1.1,
-                              color: widget.isDark
-                                  ? Colors.white54
-                                  : Colors.black54,
+                            const SizedBox(height: 1),
+                            Text(
+                              dateStr,
+                              style: TextStyle(
+                                fontSize: 10,
+                                height: 1.1,
+                                color: widget.isDark
+                                    ? Colors.white54
+                                    : Colors.black54,
+                              ),
                             ),
-                          ),
-                        ],
+                          ],
+                        ),
                       ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 14),
-                      onPressed: () => _showDeleteConfirmDialog(
-                        context,
-                        note,
-                        fromDetail: false,
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, size: 14),
+                        onPressed: () => _showDeleteConfirmDialog(
+                          context,
+                          note,
+                          fromDetail: false,
+                        ),
+                        color: widget.isDark ? Colors.white54 : Colors.black45,
+                        hoverColor: Colors.red.withValues(alpha: 0.1),
+                        constraints: const BoxConstraints(
+                          minWidth: 22,
+                          minHeight: 22,
+                        ),
+                        padding: const EdgeInsets.all(2),
+                        tooltip: '删除便签',
                       ),
-                      color: widget.isDark ? Colors.white54 : Colors.black45,
-                      hoverColor: Colors.red.withValues(alpha: 0.1),
-                      constraints: const BoxConstraints(
-                        minWidth: 22,
-                        minHeight: 22,
-                      ),
-                      padding: const EdgeInsets.all(2),
-                      tooltip: '删除便签',
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),
-          ),
-        );
-      },
-    ),);
+          );
+        },
+      ),
+    );
   }
 
   void _insertTab() {
@@ -317,7 +396,8 @@ class _NotesPaneState extends State<NotesPane> {
 
   Widget _buildDetail(Note active) {
     final editorFontSize = widget.state.settings.textContentFontSize;
-    final editorTextStyle = Theme.of(context).textTheme.bodySmall?.copyWith(
+    final editorTextStyle =
+        Theme.of(context).textTheme.bodySmall?.copyWith(
           fontSize: editorFontSize,
           height: 1.4,
           color: widget.isDark ? Colors.white : Colors.black87,
@@ -397,80 +477,118 @@ class _NotesPaneState extends State<NotesPane> {
               child: Row(
                 children: [
                   if (_showList)
-                  Expanded(
-                    child: Container(
-                      height: 26,
-                      decoration: BoxDecoration(
-                        color: widget.isDark
-                            ? Colors.white.withOpacity(0.06)
-                            : Colors.black.withOpacity(0.04),
-                        borderRadius: BorderRadius.zero,
-                      ),
-                      child: TextField(
-                        controller: _searchController,
-                        textAlignVertical: TextAlignVertical.center,
-                        style: const TextStyle(fontSize: 12),
-                        decoration: InputDecoration(
-                          hintText: '搜索便签...',
-                          hintStyle: TextStyle(
-                            fontSize: 12,
-                            color: widget.isDark
-                                ? Colors.white30
-                                : Colors.black54,
-                          ),
-                          prefixIcon: Padding(
-                            padding: const EdgeInsets.only(left: 8, right: 6),
-                            child: Icon(
-                              Icons.search_rounded,
-                              size: 14,
+                    Expanded(
+                      child: Container(
+                        height: 26,
+                        decoration: BoxDecoration(
+                          color: widget.isDark
+                              ? Colors.white.withOpacity(0.06)
+                              : Colors.black.withOpacity(0.04),
+                          borderRadius: BorderRadius.zero,
+                        ),
+                        child: TextField(
+                          controller: _searchController,
+                          textAlignVertical: TextAlignVertical.center,
+                          style: const TextStyle(fontSize: 12),
+                          decoration: InputDecoration(
+                            hintText: '搜索便签...',
+                            hintStyle: TextStyle(
+                              fontSize: 12,
                               color: widget.isDark
-                                  ? Colors.white.withOpacity(0.5)
-                                  : Colors.black.withOpacity(0.5),
+                                  ? Colors.white30
+                                  : Colors.black54,
+                            ),
+                            prefixIcon: Padding(
+                              padding: const EdgeInsets.only(left: 8, right: 6),
+                              child: Icon(
+                                Icons.search_rounded,
+                                size: 14,
+                                color: widget.isDark
+                                    ? Colors.white.withOpacity(0.5)
+                                    : Colors.black.withOpacity(0.5),
+                              ),
+                            ),
+                            prefixIconConstraints: const BoxConstraints(
+                              minWidth: 28,
+                              minHeight: 14,
+                            ),
+                            suffixIcon: _searchController.text.isNotEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.click,
+                                      child: AnimatedPress(
+                                        onTap: () => _searchController.clear(),
+                                        child: const Icon(
+                                          Icons.clear,
+                                          size: 15,
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                : null,
+                            suffixIconConstraints: const BoxConstraints(
+                              minWidth: 26,
+                              minHeight: 16,
+                            ),
+                            isDense: true,
+                            border: InputBorder.none,
+                            contentPadding: const EdgeInsets.symmetric(
+                              vertical: 8,
                             ),
                           ),
-                          prefixIconConstraints: const BoxConstraints(
-                            minWidth: 28,
-                            minHeight: 14,
+                        ),
+                      ),
+                    )
+                  else
+                    const Spacer(),
+                  const SizedBox(width: 2),
+                  if (!_showList) ...[
+                    Tooltip(
+                      message: '删除当前便签',
+                      child: MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: AnimatedPress(
+                          onTap: () => _showDeleteConfirmDialog(
+                            context,
+                            active,
+                            fromDetail: true,
                           ),
-                          suffixIcon: _searchController.text.isNotEmpty
-                              ? Padding(
-                                  padding: const EdgeInsets.only(right: 8.0),
-                                  child: MouseRegion(
-                                    cursor: SystemMouseCursors.click,
-                                    child: AnimatedPress(
-                                      onTap: () => _searchController.clear(),
-                                      child: const Icon(Icons.clear, size: 15),
-                                    ),
-                                  ),
-                                )
-                              : null,
-                          suffixIconConstraints: const BoxConstraints(
-                            minWidth: 26,
-                            minHeight: 16,
-                          ),
-                          isDense: true,
-                          border: InputBorder.none,
-                          contentPadding: const EdgeInsets.symmetric(
-                            vertical: 8,
+                          child: Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(
+                              color: widget.isDark
+                                  ? Colors.white.withOpacity(0.06)
+                                  : Colors.black.withOpacity(0.04),
+                              borderRadius: BorderRadius.zero,
+                            ),
+                            child: Icon(
+                              Icons.delete_outline_rounded,
+                              size: 15,
+                              color: widget.isDark
+                                  ? Colors.red[300]
+                                  : Colors.red[600],
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  )
-                else
-                  const Spacer(),
-                const SizedBox(width: 2),
-                if (!_showList) ...[
+                    const SizedBox(width: 2),
+                  ],
                   Tooltip(
-                    message: '删除当前便签',
+                    message: '新建便签',
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
-                        onTap: () => _showDeleteConfirmDialog(
-                          context,
-                          active,
-                          fromDetail: true,
-                        ),
+                        onTap: () async {
+                          await widget.state.createNote();
+                          _syncActiveNote();
+                          setState(() {
+                            _showList = false;
+                          });
+                          _focusEditorOnNextFrame();
+                        },
                         child: Container(
                           width: 26,
                           height: 26,
@@ -481,116 +599,81 @@ class _NotesPaneState extends State<NotesPane> {
                             borderRadius: BorderRadius.zero,
                           ),
                           child: Icon(
-                            Icons.delete_outline_rounded,
+                            Icons.add_rounded,
                             size: 15,
                             color: widget.isDark
-                                ? Colors.red[300]
-                                : Colors.red[600],
+                                ? Colors.white.withOpacity(0.6)
+                                : Colors.black.withOpacity(0.6),
                           ),
                         ),
                       ),
                     ),
                   ),
                   const SizedBox(width: 2),
+                  Tooltip(
+                    message: _showList ? '当前为列表视图' : '返回列表视图',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: AnimatedPress(
+                        onTap: () {
+                          final willShowList = !_showList;
+                          setState(() => _showList = willShowList);
+                          if (!willShowList) {
+                            _focusEditorOnNextFrame();
+                          }
+                        },
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.04),
+                            borderRadius: BorderRadius.zero,
+                          ),
+                          child: Icon(
+                            Icons.menu_rounded,
+                            size: 15,
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.6)
+                                : Colors.black.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  Tooltip(
+                    message: '设置',
+                    child: MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: AnimatedPress(
+                        onTap: widget.onShowSettings,
+                        child: Container(
+                          width: 26,
+                          height: 26,
+                          decoration: BoxDecoration(
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.06)
+                                : Colors.black.withOpacity(0.04),
+                            borderRadius: BorderRadius.zero,
+                          ),
+                          child: Icon(
+                            Icons.settings_outlined,
+                            size: 15,
+                            color: widget.isDark
+                                ? Colors.white.withOpacity(0.6)
+                                : Colors.black.withOpacity(0.6),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                 ],
-                Tooltip(
-                  message: '新建便签',
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: AnimatedPress(
-                      onTap: () async {
-                        await widget.state.createNote();
-                        _syncActiveNote();
-                        setState(() {
-                          _showList = false;
-                        });
-                        _focusEditorOnNextFrame();
-                      },
-                      child: Container(
-                        width: 26,
-                        height: 26,
-                        decoration: BoxDecoration(
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.06)
-                              : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.zero,
-                        ),
-                        child: Icon(
-                          Icons.add_rounded,
-                          size: 15,
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.6)
-                              : Colors.black.withOpacity(0.6),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Tooltip(
-                  message: _showList ? '当前为列表视图' : '返回列表视图',
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: AnimatedPress(
-                      onTap: () {
-                        final willShowList = !_showList;
-                        setState(() => _showList = willShowList);
-                        if (!willShowList) {
-                          _focusEditorOnNextFrame();
-                        }
-                      },
-                      child: Container(
-                        width: 26,
-                        height: 26,
-                        decoration: BoxDecoration(
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.06)
-                              : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.zero,
-                        ),
-                        child: Icon(
-                          Icons.menu_rounded,
-                          size: 15,
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.6)
-                              : Colors.black.withOpacity(0.6),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 2),
-                Tooltip(
-                  message: '设置',
-                  child: MouseRegion(
-                    cursor: SystemMouseCursors.click,
-                    child: AnimatedPress(
-                      onTap: widget.onShowSettings,
-                      child: Container(
-                        width: 26,
-                        height: 26,
-                        decoration: BoxDecoration(
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.06)
-                              : Colors.black.withOpacity(0.04),
-                          borderRadius: BorderRadius.zero,
-                        ),
-                        child: Icon(
-                          Icons.settings_outlined,
-                          size: 15,
-                          color: widget.isDark
-                              ? Colors.white.withOpacity(0.6)
-                              : Colors.black.withOpacity(0.6),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+              ),
             ),
           ),
-        ),
-        const SizedBox(height: 2),
+          const SizedBox(height: 2),
 
           // Main Content Area with Transition
           Expanded(

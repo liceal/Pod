@@ -591,17 +591,18 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 child: AnimatedDefaultTextStyle(
                                   duration: const Duration(milliseconds: 200),
                                   curve: Curves.easeOut,
-                                  style: (itemTextStyle ?? const TextStyle()).copyWith(
-                                    fontSize: 12,
-                                    fontWeight: widget.isFavorite
-                                        ? FontWeight.w500
-                                        : FontWeight.normal,
-                                    color: _isCopied
-                                        ? themeAccent
-                                        : (widget.isDark
-                                              ? Colors.white70
-                                              : Colors.black87),
-                                  ),
+                                  style: (itemTextStyle ?? const TextStyle())
+                                      .copyWith(
+                                        fontSize: 12,
+                                        fontWeight: widget.isFavorite
+                                            ? FontWeight.w500
+                                            : FontWeight.normal,
+                                        color: _isCopied
+                                            ? themeAccent
+                                            : (widget.isDark
+                                                  ? Colors.white70
+                                                  : Colors.black87),
+                                      ),
                                   child: Text(
                                     widget.item.content.trim(),
                                     maxLines: 1,
@@ -628,17 +629,18 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                 child: AnimatedDefaultTextStyle(
                                   duration: const Duration(milliseconds: 200),
                                   curve: Curves.easeOut,
-                                  style: (itemTextStyle ?? const TextStyle()).copyWith(
-                                    fontSize: 12,
-                                    fontWeight: widget.isFavorite
-                                        ? FontWeight.w500
-                                        : FontWeight.normal,
-                                    color: _isCopied
-                                        ? themeAccent
-                                        : (widget.isDark
-                                              ? Colors.white70
-                                              : Colors.black87),
-                                  ),
+                                  style: (itemTextStyle ?? const TextStyle())
+                                      .copyWith(
+                                        fontSize: 12,
+                                        fontWeight: widget.isFavorite
+                                            ? FontWeight.w500
+                                            : FontWeight.normal,
+                                        color: _isCopied
+                                            ? themeAccent
+                                            : (widget.isDark
+                                                  ? Colors.white70
+                                                  : Colors.black87),
+                                      ),
                                   child: Text(
                                     '${widget.item.content.trim()} ➔ ${DateFormat('yyyy-MM-dd HH:mm:ss').format(AppState().parseTimestamp(widget.item.content)!)}',
                                     maxLines: 1,
@@ -654,17 +656,18 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                           child: AnimatedDefaultTextStyle(
                             duration: const Duration(milliseconds: 200),
                             curve: Curves.easeOut,
-                            style: (itemTextStyle ?? const TextStyle()).copyWith(
-                              fontSize: 12,
-                              fontWeight: widget.isFavorite
-                                  ? FontWeight.w500
-                                  : FontWeight.normal,
-                              color: _isCopied
-                                  ? themeAccent
-                                  : (widget.isDark
-                                        ? Colors.white70
-                                        : Colors.black87),
-                            ),
+                            style: (itemTextStyle ?? const TextStyle())
+                                .copyWith(
+                                  fontSize: 12,
+                                  fontWeight: widget.isFavorite
+                                      ? FontWeight.w500
+                                      : FontWeight.normal,
+                                  color: _isCopied
+                                      ? themeAccent
+                                      : (widget.isDark
+                                            ? Colors.white70
+                                            : Colors.black87),
+                                ),
                             child: Text(
                               widget.item.content.trim().replaceAll('\n', ' '),
                               maxLines: 1,
@@ -1269,6 +1272,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   bool _isRightSwipeSignal(double dx, double dy) {
     return widget.embedded &&
+        _isImageDetail &&
         !_hasHorizontalOverflow &&
         dx.abs() > 24 &&
         dx.abs() > dy.abs() * 1.2;
@@ -1293,6 +1297,39 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
     final dy = event.scrollDelta.dy;
     if (_isRightSwipeSignal(dx, dy)) {
       widget.onBack?.call();
+    }
+  }
+
+  void _handleDetailContentPointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent ||
+        _wrapCodeLines ||
+        _isTextZoomModifierPressed ||
+        !_horizontalScrollController.hasClients) {
+      return;
+    }
+
+    final dx = event.scrollDelta.dx;
+    final dy = event.scrollDelta.dy;
+    final isShiftPressed =
+        HardwareKeyboard.instance.logicalKeysPressed.contains(
+          LogicalKeyboardKey.shiftLeft,
+        ) ||
+        HardwareKeyboard.instance.logicalKeysPressed.contains(
+          LogicalKeyboardKey.shiftRight,
+        );
+    final horizontalDelta = dx.abs() >= 1 ? dx : (isShiftPressed ? dy : 0.0);
+
+    if (horizontalDelta.abs() < 1 ||
+        (!isShiftPressed && horizontalDelta.abs() <= dy.abs() * 0.8)) {
+      return;
+    }
+
+    final position = _horizontalScrollController.position;
+    final target = (position.pixels + horizontalDelta)
+        .clamp(position.minScrollExtent, position.maxScrollExtent)
+        .toDouble();
+    if ((target - position.pixels).abs() > 0.1) {
+      _horizontalScrollController.jumpTo(target);
     }
   }
 
@@ -1918,102 +1955,142 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                 );
               },
             )
-          : (itemType == 'COLOR'
-                ? _buildColorDetailDashboard(
-                    displayText,
-                    themeAccent,
-                    textColor,
-                    contentMaxHeight,
-                  )
-                : (itemType == 'DATETIME'
-                      ? _buildDatetimeDetailDashboard(
-                          displayText,
-                          themeAccent,
-                          textColor,
-                          contentMaxHeight,
-                        )
-                      : LayoutBuilder(
-                          builder: (context, constraints) {
-                            final viewportHeight = constraints.hasBoundedHeight
-                                ? constraints.maxHeight
-                                : contentMaxHeight;
-                            final contentFontSize =
-                                widget.state.settings.textContentFontSize;
-                            final textStyle =
-                                (Theme.of(context).textTheme.bodySmall ??
-                                        const TextStyle())
-                                    .copyWith(
-                              fontSize: contentFontSize,
-                              height: 1.32,
-                              color: itemType == 'URL'
-                                  ? themeAccent
-                                  : textColor,
-                              decoration: itemType == 'URL'
-                                  ? TextDecoration.underline
-                                  : null,
-                            );
+          : Listener(
+              behavior: HitTestBehavior.translucent,
+              onPointerSignal: _handleDetailContentPointerSignal,
+              child: itemType == 'COLOR'
+                  ? _buildColorDetailDashboard(
+                      displayText,
+                      themeAccent,
+                      textColor,
+                      contentMaxHeight,
+                    )
+                  : (itemType == 'DATETIME'
+                        ? _buildDatetimeDetailDashboard(
+                            displayText,
+                            themeAccent,
+                            textColor,
+                            contentMaxHeight,
+                          )
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final viewportHeight =
+                                  constraints.hasBoundedHeight
+                                  ? constraints.maxHeight
+                                  : contentMaxHeight;
+                              final viewportWidth = constraints.hasBoundedWidth
+                                  ? constraints.maxWidth
+                                  : 0.0;
+                              final contentFontSize =
+                                  widget.state.settings.textContentFontSize;
+                              final textStyle =
+                                  (Theme.of(context).textTheme.bodySmall ??
+                                          const TextStyle())
+                                      .copyWith(
+                                        fontSize: contentFontSize,
+                                        height: 1.32,
+                                        color: itemType == 'URL'
+                                            ? themeAccent
+                                            : textColor,
+                                        decoration: itemType == 'URL'
+                                            ? TextDecoration.underline
+                                            : null,
+                                      );
 
-                            final scrollBehavior = ScrollConfiguration.of(
-                              context,
-                            ).copyWith(scrollbars: false);
+                              final scrollBehavior = ScrollConfiguration.of(
+                                context,
+                              ).copyWith(scrollbars: false);
 
-                            Widget finalContainer;
-                            if (displayText.length > 30000) {
-                              finalContainer = SizedBox(
-                                height: viewportHeight,
-                                child: _LargeTextDetailView(
-                                  text: displayText,
-                                  style: textStyle,
-                                  wrapLines: _wrapCodeLines,
-                                  verticalController: _scrollController,
-                                  horizontalController:
-                                      _horizontalScrollController,
-                                ),
-                              );
-                            } else if (_wrapCodeLines) {
-                              finalContainer = ScrollConfiguration(
-                                behavior: scrollBehavior,
-                                child: SizedBox(
+                              Widget finalContainer;
+                              if (displayText.length > 30000) {
+                                finalContainer = SizedBox(
                                   height: viewportHeight,
-                                  child: SingleChildScrollView(
-                                    controller: _scrollController,
-                                    physics: const BouncingScrollPhysics(),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(8.0),
-                                      child: SelectableText(
-                                        displayText,
-                                        style: textStyle,
-                                      ),
-                                    ),
+                                  child: _LargeTextDetailView(
+                                    text: displayText,
+                                    style: textStyle,
+                                    wrapLines: _wrapCodeLines,
+                                    verticalController: _scrollController,
+                                    horizontalController:
+                                        _horizontalScrollController,
                                   ),
-                                ),
-                              );
-                            } else {
-                              finalContainer = ScrollConfiguration(
-                                behavior: scrollBehavior,
-                                child: SizedBox(
-                                  height: viewportHeight,
-                                  child: SingleChildScrollView(
-                                    controller: _scrollController,
-                                    physics: const BouncingScrollPhysics(),
-                                    child: SingleChildScrollView(
-                                      controller: _horizontalScrollController,
-                                      scrollDirection: Axis.horizontal,
-                                      physics: const BouncingScrollPhysics(),
-                                      child: Padding(
-                                        padding: const EdgeInsets.all(8.0),
-                                        child: SelectableText(
-                                          displayText,
-                                          style: textStyle,
+                                );
+                              } else if (_wrapCodeLines) {
+                                finalContainer = ScrollConfiguration(
+                                  behavior: scrollBehavior,
+                                  child: SizedBox(
+                                    height: viewportHeight,
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.text,
+                                      child: SingleChildScrollView(
+                                        controller: _scrollController,
+                                        physics: const BouncingScrollPhysics(),
+                                        child: ConstrainedBox(
+                                          constraints: BoxConstraints(
+                                            minWidth: viewportWidth,
+                                            minHeight: viewportHeight,
+                                          ),
+                                          child: Padding(
+                                            padding: const EdgeInsets.all(8.0),
+                                            child: SelectableText(
+                                              displayText,
+                                              style: textStyle,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              );
-                            }
+                                );
+                              } else {
+                                finalContainer = ScrollConfiguration(
+                                  behavior: scrollBehavior,
+                                  child: SizedBox(
+                                    height: viewportHeight,
+                                    child: MouseRegion(
+                                      cursor: SystemMouseCursors.text,
+                                      child: SingleChildScrollView(
+                                        controller: _scrollController,
+                                        physics: const BouncingScrollPhysics(),
+                                        child: SingleChildScrollView(
+                                          controller:
+                                              _horizontalScrollController,
+                                          scrollDirection: Axis.horizontal,
+                                          physics:
+                                              const ClampingScrollPhysics(),
+                                          child: ConstrainedBox(
+                                            constraints: BoxConstraints(
+                                              minWidth: viewportWidth,
+                                              minHeight: viewportHeight,
+                                            ),
+                                            child: Padding(
+                                              padding: const EdgeInsets.all(
+                                                8.0,
+                                              ),
+                                              child: SelectableText(
+                                                displayText,
+                                                style: textStyle,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                );
+                              }
 
-                            if (_wrapCodeLines) {
+                              if (_wrapCodeLines) {
+                                return Scrollbar(
+                                  controller: _scrollController,
+                                  notificationPredicate: (n) =>
+                                      n.metrics.axis == Axis.vertical,
+                                  thumbVisibility: true,
+                                  thickness: 4,
+                                  radius: const Radius.circular(999),
+                                  child: finalContainer,
+                                );
+                              }
+
                               return Scrollbar(
                                 controller: _scrollController,
                                 notificationPredicate: (n) =>
@@ -2021,29 +2098,19 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                                 thumbVisibility: true,
                                 thickness: 4,
                                 radius: const Radius.circular(999),
-                                child: finalContainer,
+                                child: Scrollbar(
+                                  controller: _horizontalScrollController,
+                                  notificationPredicate: (n) =>
+                                      n.metrics.axis == Axis.horizontal,
+                                  thumbVisibility: true,
+                                  thickness: 3,
+                                  radius: const Radius.circular(999),
+                                  child: finalContainer,
+                                ),
                               );
-                            }
-
-                            return Scrollbar(
-                              controller: _scrollController,
-                              notificationPredicate: (n) =>
-                                  n.metrics.axis == Axis.vertical,
-                              thumbVisibility: true,
-                              thickness: 4,
-                              radius: const Radius.circular(999),
-                              child: Scrollbar(
-                                controller: _horizontalScrollController,
-                                notificationPredicate: (n) =>
-                                    n.metrics.axis == Axis.horizontal,
-                                thumbVisibility: false,
-                                thickness: 3,
-                                radius: const Radius.circular(999),
-                                child: finalContainer,
-                              ),
-                            );
-                          },
-                        ))),
+                            },
+                          )),
+            ),
     );
   }
 }
@@ -2136,42 +2203,48 @@ class _LargeTextDetailViewState extends State<_LargeTextDetailView> {
     ).copyWith(scrollbars: false);
 
     if (widget.wrapLines) {
-      return SelectionArea(
-        child: ScrollConfiguration(
-          behavior: scrollBehavior,
-          child: ListView.builder(
-            controller: widget.verticalController,
-            physics: const BouncingScrollPhysics(),
-            itemCount: _lines.length,
-            padding: const EdgeInsets.all(8.0),
-            itemBuilder: (context, index) {
-              return Text(_lines[index], style: widget.style);
-            },
+      return MouseRegion(
+        cursor: SystemMouseCursors.text,
+        child: SelectionArea(
+          child: ScrollConfiguration(
+            behavior: scrollBehavior,
+            child: ListView.builder(
+              controller: widget.verticalController,
+              physics: const BouncingScrollPhysics(),
+              itemCount: _lines.length,
+              padding: const EdgeInsets.all(8.0),
+              itemBuilder: (context, index) {
+                return Text(_lines[index], style: widget.style);
+              },
+            ),
           ),
         ),
       );
     } else {
-      return SelectionArea(
-        child: ScrollConfiguration(
-          behavior: scrollBehavior,
-          child: SingleChildScrollView(
-            controller: widget.horizontalController,
-            scrollDirection: Axis.horizontal,
-            physics: const BouncingScrollPhysics(),
-            child: SizedBox(
-              width: 10000,
-              child: ListView.builder(
-                controller: widget.verticalController,
-                physics: const BouncingScrollPhysics(),
-                itemCount: _lines.length,
-                padding: const EdgeInsets.all(8.0),
-                itemBuilder: (context, index) {
-                  return Text(
-                    _lines[index],
-                    style: widget.style,
-                    softWrap: false,
-                  );
-                },
+      return MouseRegion(
+        cursor: SystemMouseCursors.text,
+        child: SelectionArea(
+          child: ScrollConfiguration(
+            behavior: scrollBehavior,
+            child: SingleChildScrollView(
+              controller: widget.horizontalController,
+              scrollDirection: Axis.horizontal,
+              physics: const ClampingScrollPhysics(),
+              child: SizedBox(
+                width: 10000,
+                child: ListView.builder(
+                  controller: widget.verticalController,
+                  physics: const BouncingScrollPhysics(),
+                  itemCount: _lines.length,
+                  padding: const EdgeInsets.all(8.0),
+                  itemBuilder: (context, index) {
+                    return Text(
+                      _lines[index],
+                      style: widget.style,
+                      softWrap: false,
+                    );
+                  },
+                ),
               ),
             ),
           ),
