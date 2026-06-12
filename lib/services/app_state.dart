@@ -699,7 +699,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> collapsePanel({
-    Duration duration = const Duration(milliseconds: 280),
+    Duration duration = const Duration(milliseconds: 230),
   }) async {
     if (!isExpanded || isAnimating) return;
     _autoCollapseTimer?.cancel();
@@ -757,9 +757,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
     }
 
-    await _restorePreviousAppAfterCollapse();
+    unawaited(_runPostCollapseMaintenance());
+  }
 
-    // Save notes after collapse animation finishes so we don't drop frames during slide-up transition
+  Future<void> _runPostCollapseMaintenance() async {
+    await Future.delayed(const Duration(milliseconds: 80));
+    if (!isExpanded) {
+      await _restorePreviousAppAfterCollapse();
+    }
     await forceSaveNotesIfPending();
   }
 

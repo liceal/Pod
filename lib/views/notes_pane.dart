@@ -352,11 +352,11 @@ class _NotesPaneState extends State<NotesPane> {
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: const TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 12),
                         decoration: InputDecoration(
                           hintText: '搜索便签...',
                           hintStyle: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             color: widget.isDark
                                 ? Colors.white30
                                 : Colors.black54,

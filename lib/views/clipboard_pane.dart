@@ -165,13 +165,13 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                       child: TextField(
                         controller: _searchController,
                         textAlignVertical: TextAlignVertical.center,
-                        style: const TextStyle(fontSize: 11),
+                        style: const TextStyle(fontSize: 12),
                         decoration: InputDecoration(
                           hintText: _showFavoritesOnly
                               ? '搜索收藏记录...'
                               : '搜索剪贴板记录...',
                           hintStyle: TextStyle(
-                            fontSize: 11,
+                            fontSize: 12,
                             color: widget.isDark
                                 ? Colors.white30
                                 : Colors.black54,
@@ -1858,7 +1858,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                             ? constraints.maxHeight
                             : contentMaxHeight;
                         final textStyle = TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 12,
                           height: 1.32,
                           fontFamily: 'Menlo',
                           color: itemType == 'URL' ? themeAccent : textColor,

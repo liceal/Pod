@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 class AppTheme {
   // Dark theme colors (Mac-like)
@@ -65,6 +66,18 @@ class AppTheme {
   static ThemeData getThemeData(bool isDark, String colorName) {
     final baseColor = isDark ? Colors.white : Colors.black;
     final accent = getAccentColor(colorName, isDark);
+    String? fontFamily;
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      fontFamily = 'Segoe UI';
+    } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+      fontFamily = '.AppleSystemUIFont';
+    }
+    const fontFallback = <String>[
+      'Microsoft YaHei UI',
+      'PingFang SC',
+      'Noto Sans CJK SC',
+      'Arial Unicode MS',
+    ];
     return ThemeData(
       useMaterial3: true,
       brightness: isDark ? Brightness.dark : Brightness.light,
@@ -93,11 +106,12 @@ class AppTheme {
         titleMedium: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
         titleSmall: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
         bodyMedium: TextStyle(fontSize: 13),
-        bodySmall: TextStyle(fontSize: 11),
+        bodySmall: TextStyle(fontSize: 12),
       ).apply(
         bodyColor: baseColor,
         displayColor: baseColor,
-        fontFamily: 'Segoe UI', // Windows default modern sans-serif
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFallback,
       ),
       iconTheme: IconThemeData(
         color: isDark ? Colors.white.withOpacity(0.9) : Colors.black.withOpacity(0.8),

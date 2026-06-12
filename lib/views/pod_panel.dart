@@ -50,7 +50,7 @@ class _PodPanelState extends State<PodPanel>
           CurvedAnimation(
             parent: _animationController,
             curve: Curves.easeOutCubic,
-            reverseCurve: Curves.easeInCubic,
+            reverseCurve: Curves.easeOutCubic,
           ),
         );
 

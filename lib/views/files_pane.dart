@@ -942,11 +942,11 @@ class _SearchBar extends StatelessWidget {
       child: TextField(
         controller: controller,
         textAlignVertical: TextAlignVertical.center,
-        style: const TextStyle(fontSize: 11),
+        style: const TextStyle(fontSize: 12),
         decoration: InputDecoration(
           hintText: '搜索暂存文件...',
           hintStyle: TextStyle(
-            fontSize: 11,
+            fontSize: 12,
             color: isDark ? Colors.white30 : Colors.black54,
           ),
           prefixIcon: Padding(
