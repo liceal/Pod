@@ -25,6 +25,7 @@ class PodPanel extends StatefulWidget {
 
 class _PodPanelState extends State<PodPanel>
     with SingleTickerProviderStateMixin {
+  static bool _hasAutoOpened = false;
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   Timer? _hoverTimer;
@@ -78,6 +79,18 @@ class _PodPanelState extends State<PodPanel>
       if (mounted) {
         setState(() {
           _isDragDropReady = true;
+        });
+      }
+    });
+
+    // Automatically expand the panel once on startup after rendering is complete
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_hasAutoOpened) {
+        _hasAutoOpened = true;
+        Future.delayed(const Duration(milliseconds: 300), () {
+          if (mounted && !widget.state.isExpanded && !widget.state.isAnimating) {
+            widget.state.expandPanel(focus: true);
+          }
         });
       }
     });

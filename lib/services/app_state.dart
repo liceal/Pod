@@ -79,6 +79,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool _isCheckingClipboard = false;
   int? _lastNativeClipboardSequence;
   bool _nativeClipboardSequenceUnavailable = false;
+  bool _hasSequenceChanged = false;
   Timer? _clipboardTimer;
   Timer? _notesSaveTimer;
   Timer? _autoCollapseTimer;
@@ -1810,11 +1811,21 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<bool> _shouldSkipUnchangedClipboard() async {
     final sequence = await _getNativeClipboardSequence();
-    if (sequence == null) return false;
+    if (sequence == null) {
+      _hasSequenceChanged = false;
+      return false;
+    }
 
     final previousSequence = _lastNativeClipboardSequence;
     _lastNativeClipboardSequence = sequence;
-    return previousSequence != null && previousSequence == sequence;
+    
+    if (previousSequence != null && previousSequence == sequence) {
+      _hasSequenceChanged = false;
+      return true;
+    }
+    
+    _hasSequenceChanged = previousSequence != null;
+    return false;
   }
 
   void _startClipboardMonitoring() {
@@ -1832,7 +1843,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final data = await Clipboard.getData(Clipboard.kTextPlain);
         if (data != null && data.text != null && data.text!.isNotEmpty) {
           final text = data.text!;
-          if (text != _lastSystemClipText) {
+          if (text != _lastSystemClipText || _hasSequenceChanged) {
             _lastSystemClipText = text;
             _lastSystemClipImageSignature =
                 null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
@@ -1900,7 +1911,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final imageBytes = await Pasteboard.image;
             if (imageBytes != null && imageBytes.isNotEmpty) {
               final imageSignature = _imageSignature(imageBytes);
-              if (imageSignature != _lastSystemClipImageSignature) {
+              if (imageSignature != _lastSystemClipImageSignature || _hasSequenceChanged) {
                 _lastSystemClipImageSignature = imageSignature;
                 _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
 
@@ -2063,6 +2074,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           } catch (e) {
             debugPrint('Failed to sync written image signature: $e');
           }
+
+          // Update sequence number immediately to prevent the background monitor
+          // from detecting this internal write as a new external copy.
+          await Future.delayed(const Duration(milliseconds: 50));
+          final newSeq = await _getNativeClipboardSequence();
+          if (newSeq != null) {
+            _lastNativeClipboardSequence = newSeq;
+          }
         } catch (e) {
           debugPrint('Failed to write image to pasteboard: $e');
         }
@@ -2078,6 +2097,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _lastSystemClipImageSignature = null; // Clear image clip state
     _lastAppCopiedImageSignature = null; // Clear image clip state
     await Clipboard.setData(ClipboardData(text: content));
+
+    // Update sequence number immediately to prevent the background monitor
+    // from detecting this internal write as a new external copy.
+    await Future.delayed(const Duration(milliseconds: 50));
+    final newSeq = await _getNativeClipboardSequence();
+    if (newSeq != null) {
+      _lastNativeClipboardSequence = newSeq;
+    }
   }
 
   void deleteClipboardItem(String id) {

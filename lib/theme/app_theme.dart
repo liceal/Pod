@@ -11,7 +11,7 @@ class AppTheme {
   static const Color darkGlow = Color(0x1F0A84FF);
   
   // Light theme colors (Mac-like)
-  static const Color lightBg = Color(0xF2F2F2F2); // 95% opacity light grey
+  static const Color lightBg = Color(0xFFECEAE4); // Warm grey background
   static const Color lightPanelBg = Color(0xFFFFFFFF);
   static const Color lightAccent = Color(0xFF007AFF);
   static const Color lightSecondaryText = Color(0xFF6C6C70);
