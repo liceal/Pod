@@ -1157,7 +1157,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
   bool _isImageDetail = false;
-  double? _trackpadZoomStartFontSize;
   double _trackpadBackSwipeDistance = 0;
   double _trackpadBackSwipeCrossAxisDistance = 0;
   bool _didTriggerTrackpadBackSwipe = false;
@@ -1314,11 +1313,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   }
 
   void _handleDetailContentPointerSignal(PointerSignalEvent event) {
-    if (event is PointerScaleEvent) {
-      _applyTextZoomScale(event.scale);
-      return;
-    }
-
     if (event is! PointerScrollEvent ||
         _wrapCodeLines ||
         _isTextZoomModifierPressed ||
@@ -1359,35 +1353,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
-  void _applyTextZoomScale(double scale, {double? baseFontSize}) {
-    final delta = scale - 1.0;
-    if (delta.abs() < _textZoomDeadZone) return;
-
-    widget.state.updateTextContentFontSize(
-      (baseFontSize ?? widget.state.settings.textContentFontSize) *
-          (1.0 + delta * _textZoomSensitivity),
-    );
-    setState(() {});
-  }
-
-  void _handleTextPanZoomStart(PointerPanZoomStartEvent event) {
-    if (_isImageDetail) return;
-    _trackpadZoomStartFontSize = widget.state.settings.textContentFontSize;
-  }
-
-  void _handleTextPanZoomUpdate(PointerPanZoomUpdateEvent event) {
-    if (_isImageDetail) return;
-
-    final startFontSize = _trackpadZoomStartFontSize;
-    if (startFontSize == null) return;
-
-    _applyTextZoomScale(event.scale, baseFontSize: startFontSize);
-  }
-
-  void _handleTextPanZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadZoomStartFontSize = null;
-  }
-
   void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
     _trackpadBackSwipeDistance = 0;
     _trackpadBackSwipeCrossAxisDistance = 0;
@@ -1395,6 +1360,17 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   }
 
   void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_isTextZoomModifierPressed) {
+      if (!_isImageDetail && event.panDelta.dy != 0 && (event.scale - 1.0).abs() < 0.01) {
+        final currentFontSize = widget.state.settings.textContentFontSize;
+        final delta = event.panDelta.dy / 30.0;
+        final targetFontSize = currentFontSize + delta;
+        widget.state.updateTextContentFontSize(targetFontSize);
+        setState(() {});
+      }
+      return;
+    }
+
     if (!widget.embedded ||
         _hasHorizontalOverflow ||
         _didTriggerTrackpadBackSwipe ||
@@ -2070,9 +2046,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
           : Listener(
               behavior: HitTestBehavior.translucent,
               onPointerSignal: _handleDetailContentPointerSignal,
-              onPointerPanZoomStart: _handleTextPanZoomStart,
-              onPointerPanZoomUpdate: _handleTextPanZoomUpdate,
-              onPointerPanZoomEnd: _handleTextPanZoomEnd,
               child: itemType == 'COLOR'
                   ? _buildColorDetailDashboard(
                       displayText,

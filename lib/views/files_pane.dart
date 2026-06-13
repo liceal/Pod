@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
+import 'package:pasteboard/pasteboard.dart';
 import '../services/app_state.dart';
 import '../utils/localization.dart';
 import '../theme/app_theme.dart';
@@ -12,6 +13,18 @@ enum _ViewMode { grid, details }
 
 class _PasteFilesIntent extends Intent {
   const _PasteFilesIntent();
+}
+
+class _CopyFileIntent extends Intent {
+  const _CopyFileIntent();
+}
+
+class _CutFileIntent extends Intent {
+  const _CutFileIntent();
+}
+
+class _DeleteFileIntent extends Intent {
+  const _DeleteFileIntent();
 }
 
 class FilesPane extends StatefulWidget {
@@ -33,7 +46,168 @@ class _FilesPaneState extends State<FilesPane> {
   final ScrollController _detailsScrollController = ScrollController();
   final FocusNode _paneFocusNode = FocusNode();
   bool _isDragDropReady = false;
+  String? _selectedFilePath;
+  String? _cutFilePath;
   bool _showSizeSlider = false;
+  String _currentRelativePath = '';
+
+  double _swipeDistance = 0;
+  double _trackpadBackSwipeDistance = 0;
+  double _trackpadBackSwipeCrossAxisDistance = 0;
+  bool _didTriggerTrackpadBackSwipe = false;
+  bool _isMouseButtonDown = false;
+  bool _ignoreCurrentBackDrag = false;
+  static const int kBackMouseButton = 8; // standard back button on mouse
+
+  void _handleBackPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
+      _isMouseButtonDown = true;
+    }
+    if (event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kBackMouseButton) != 0) {
+      _goBack();
+    }
+  }
+
+  void _handleBackPointerUp(PointerUpEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPointerCancel(PointerCancelEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
+      return;
+    }
+
+    _trackpadBackSwipeDistance += event.panDelta.dx;
+    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
+
+    if (_trackpadBackSwipeDistance > 80 &&
+        _trackpadBackSwipeDistance.abs() >
+            _trackpadBackSwipeCrossAxisDistance * 1.6) {
+      _didTriggerTrackpadBackSwipe = true;
+      _goBack();
+    }
+  }
+
+  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  Widget _wrapDetailBackGesture(Widget child) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _handleBackPointerDown,
+      onPointerUp: _handleBackPointerUp,
+      onPointerCancel: _handleBackPointerCancel,
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent &&
+            event.scrollDelta.dx > 48 &&
+            event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
+          _goBack();
+        }
+      },
+      onPointerPanZoomStart: _handleBackPanZoomStart,
+      onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
+      onPointerPanZoomEnd: _handleBackPanZoomEnd,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = _isMouseButtonDown;
+        },
+        onHorizontalDragUpdate: (details) {
+          if (_ignoreCurrentBackDrag) return;
+          _swipeDistance += details.delta.dx;
+        },
+        onHorizontalDragEnd: (details) {
+          if (!_ignoreCurrentBackDrag) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (_swipeDistance > 80 || velocity > 520) {
+              _goBack();
+            }
+          }
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
+        },
+        onHorizontalDragCancel: () {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
+        },
+        child: child,
+      ),
+    );
+  }
+
+  String _getFilesDirectoryPathSync() {
+    final settings = widget.state.settings;
+    if (settings.customFilesPath != null &&
+        settings.customFilesPath!.trim().isNotEmpty) {
+      return settings.customFilesPath!.trim();
+    }
+    final dataDir = widget.state.getDataDirectoryPathSync();
+    return '$dataDir/files';
+  }
+
+  DateTime _getFileTime(FileSystemEntity entity) {
+    try {
+      if (!entity.existsSync()) return DateTime(0);
+      final stat = entity.statSync();
+      return Platform.isWindows ? stat.changed : stat.modified;
+    } catch (_) {
+      return DateTime(0);
+    }
+  }
+
+  void _onFileOpen(FileSystemEntity file) {
+    final root = _getFilesDirectoryPathSync();
+    if (FileSystemEntity.isDirectorySync(file.path) &&
+        file.path.startsWith(root)) {
+      String relative = file.path.substring(root.length);
+      if (relative.startsWith('/') || relative.startsWith('\\')) {
+        relative = relative.substring(1);
+      }
+      setState(() {
+        _currentRelativePath = relative.replaceAll('\\', '/');
+        _searchController.clear();
+        _selectedFilePath = null;
+      });
+    } else {
+      widget.state.openFile(file);
+    }
+  }
+
+  void _goBack() {
+    if (_currentRelativePath.isEmpty) return;
+    final parts = _currentRelativePath.split('/');
+    parts.removeLast();
+    setState(() {
+      _currentRelativePath = parts.join('/');
+      _searchController.clear();
+      _selectedFilePath = null;
+    });
+  }
+
+  String _getBreadcrumbText() {
+    if (_currentRelativePath.isEmpty) return '';
+    final rootLabel = context.text('文件', 'Files');
+    return '$rootLabel / ${_currentRelativePath.replaceAll('/', ' / ')}';
+  }
 
   @override
   void initState() {
@@ -76,8 +250,111 @@ class _FilesPaneState extends State<FilesPane> {
     return _imageExts.contains(ext);
   }
 
+  void _copySelectedFile() {
+    final path = _selectedFilePath;
+    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+      Pasteboard.writeFiles([path]);
+      setState(() {
+        _cutFilePath = null;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.text('已复制文件到剪贴板', 'File copied to clipboard'),
+            style: const TextStyle(fontSize: 11),
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  void _cutSelectedFile() {
+    final path = _selectedFilePath;
+    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+      Pasteboard.writeFiles([path]);
+      setState(() {
+        _cutFilePath = path;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            context.text('已剪切文件到剪贴板', 'File cut to clipboard'),
+            style: const TextStyle(fontSize: 11),
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
+  void _deleteSelectedFile() {
+    final path = _selectedFilePath;
+    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+      final entity = FileSystemEntity.isDirectorySync(path)
+          ? Directory(path)
+          : File(path);
+      widget.state.deleteFile(entity);
+      setState(() {
+        if (_selectedFilePath == path) {
+          _selectedFilePath = null;
+        }
+        if (_cutFilePath == path) {
+          _cutFilePath = null;
+        }
+      });
+    }
+  }
+
   Future<void> _pasteFromClipboard() async {
-    final count = await widget.state.pasteClipboardIntoFiles();
+    final root = _getFilesDirectoryPathSync();
+    final targetDir = _currentRelativePath.isEmpty
+        ? Directory(root)
+        : Directory('$root/$_currentRelativePath');
+
+    if (_cutFilePath != null) {
+      final cutPath = _cutFilePath!;
+      final entity = FileSystemEntity.isDirectorySync(cutPath)
+          ? Directory(cutPath)
+          : File(cutPath);
+      if (entity.existsSync()) {
+        if (entity.path != targetDir.path &&
+            !targetDir.path.startsWith('${entity.path}/')) {
+          try {
+            await widget.state.moveFileToFolder(entity, targetDir);
+            setState(() {
+              _cutFilePath = null;
+              final name = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
+              _selectedFilePath = '${targetDir.path}/$name';
+            });
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  context.text('已移动文件', 'File moved'),
+                  style: const TextStyle(fontSize: 11),
+                ),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          } catch (e) {
+            debugPrint('Failed to move cut file: $e');
+          }
+        } else {
+          setState(() {
+            _cutFilePath = null;
+          });
+        }
+        return;
+      } else {
+        setState(() {
+          _cutFilePath = null;
+        });
+      }
+    }
+
+    final count = await widget.state.pasteClipboardIntoFiles(
+      targetDir: targetDir,
+    );
     if (!mounted) return;
 
     final message = count > 0
@@ -198,7 +475,7 @@ class _FilesPaneState extends State<FilesPane> {
 
     switch (result) {
       case 'open':
-        widget.state.openFile(file);
+        _onFileOpen(file);
         break;
       case 'show_in_explorer':
         widget.state.revealFileInExplorer(file);
@@ -335,7 +612,41 @@ class _FilesPaneState extends State<FilesPane> {
       widget.isDark,
     );
 
-    final files = widget.state.storedFiles.where((file) {
+    final rawFiles = <FileSystemEntity>[];
+    if (_currentRelativePath.isEmpty) {
+      rawFiles.addAll(widget.state.storedFiles);
+    } else {
+      final root = _getFilesDirectoryPathSync();
+      final subDir = Directory('$root/$_currentRelativePath');
+      if (subDir.existsSync()) {
+        try {
+          final listed =
+              subDir
+                  .listSync()
+                  .where((entity) => entity is File || entity is Directory)
+                  .toList()
+                ..sort((a, b) {
+                  final timeA = _getFileTime(a);
+                  final timeB = _getFileTime(b);
+                  return timeB.compareTo(timeA);
+                });
+          rawFiles.addAll(listed);
+        } catch (e) {
+          debugPrint('Error listing subfolder: $e');
+        }
+      } else {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            setState(() {
+              _currentRelativePath = '';
+            });
+          }
+        });
+        rawFiles.addAll(widget.state.storedFiles);
+      }
+    }
+
+    final files = rawFiles.where((file) {
       if (_searchQuery.isEmpty) return true;
       final segments = file.uri.pathSegments
           .where((s) => s.isNotEmpty)
@@ -389,13 +700,46 @@ class _FilesPaneState extends State<FilesPane> {
                 },
                 child: Row(
                   children: [
+                    if (_currentRelativePath.isNotEmpty) ...[
+                      Tooltip(
+                        message: context.text('返回上级', 'Back'),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: AnimatedPress(
+                            onTap: _goBack,
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: widget.isDark
+                                    ? Colors.white.withOpacity(0.06)
+                                    : Colors.black.withOpacity(0.04),
+                                borderRadius: BorderRadius.zero,
+                              ),
+                              child: Icon(
+                                Icons.arrow_back_rounded,
+                                size: 15,
+                                color: widget.isDark
+                                    ? Colors.white60
+                                    : Colors.black54,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                    ],
                     Expanded(
                       child: _SearchBar(
                         controller: _searchController,
                         isDark: widget.isDark,
                         showFolderBtn: _searchController.text.isEmpty,
-                        onOpenFolder: () =>
-                            widget.state.openFilesDirectoryInExplorer(),
+                        onOpenFolder: () {
+                          final currentPath = _currentRelativePath.isEmpty
+                              ? _getFilesDirectoryPathSync()
+                              : '${_getFilesDirectoryPathSync()}/$_currentRelativePath';
+                          widget.state.openDirectoryPath(currentPath);
+                        },
                       ),
                     ),
                     const SizedBox(width: 2),
@@ -527,6 +871,39 @@ class _FilesPaneState extends State<FilesPane> {
                   ],
                 ),
               ),
+              if (_currentRelativePath.isNotEmpty) ...[
+                const SizedBox(height: 2),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 4.0,
+                    vertical: 1.0,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.folder_open_rounded,
+                        size: 13,
+                        color: widget.isDark ? Colors.white30 : Colors.black38,
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          _getBreadcrumbText(),
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: widget.isDark
+                                ? Colors.white30
+                                : Colors.black38,
+                            fontWeight: FontWeight.w500,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               const SizedBox(height: 2),
 
               // ── File Content ──
@@ -538,42 +915,44 @@ class _FilesPaneState extends State<FilesPane> {
                     context,
                     details.globalPosition,
                   ),
-                  child: files.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                Icons.move_to_inbox_outlined,
-                                size: 32,
-                                color: widget.isDark
-                                    ? Colors.white24
-                                    : Colors.black26,
-                              ),
-                              const SizedBox(height: 6),
-                              Text(
-                                _searchQuery.isNotEmpty
-                                    ? context.text(
-                                        '未找到匹配文件',
-                                        'No matching files found',
-                                      )
-                                    : context.text(
-                                        '拖拽文件到此处',
-                                        'Drag & drop files here',
-                                      ),
-                                style: TextStyle(
-                                  fontSize: 11,
+                  child: _wrapDetailBackGesture(
+                    files.isEmpty
+                        ? Center(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(
+                                  Icons.move_to_inbox_outlined,
+                                  size: 32,
                                   color: widget.isDark
-                                      ? Colors.white30
-                                      : Colors.black.withOpacity(0.3),
+                                      ? Colors.white24
+                                      : Colors.black26,
                                 ),
-                              ),
-                            ],
-                          ),
-                        )
-                      : _viewMode == _ViewMode.grid
-                      ? _buildGridView(files)
-                      : _buildDetailsView(files),
+                                const SizedBox(height: 6),
+                                Text(
+                                  _searchQuery.isNotEmpty
+                                      ? context.text(
+                                          '未找到匹配文件',
+                                          'No matching files found',
+                                        )
+                                      : context.text(
+                                          '拖拽文件到此处',
+                                          'Drag & drop files here',
+                                        ),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: widget.isDark
+                                        ? Colors.white30
+                                        : Colors.black.withOpacity(0.3),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          )
+                        : _viewMode == _ViewMode.grid
+                        ? _buildGridView(files)
+                        : _buildDetailsView(files),
+                  ),
                 ),
               ),
             ],
@@ -665,20 +1044,44 @@ class _FilesPaneState extends State<FilesPane> {
                       }
                       completed++;
                       if (completed == items.length && filePaths.isNotEmpty) {
-                        widget.state.addDroppedFiles(filePaths);
+                        final targetDir = _currentRelativePath.isEmpty
+                            ? null
+                            : Directory(
+                                '${_getFilesDirectoryPathSync()}/$_currentRelativePath',
+                              );
+                        widget.state.addDroppedFiles(
+                          filePaths,
+                          targetDir: targetDir,
+                        );
                       }
                     },
                     onError: (err) {
                       completed++;
                       if (completed == items.length && filePaths.isNotEmpty) {
-                        widget.state.addDroppedFiles(filePaths);
+                        final targetDir = _currentRelativePath.isEmpty
+                            ? null
+                            : Directory(
+                                '${_getFilesDirectoryPathSync()}/$_currentRelativePath',
+                              );
+                        widget.state.addDroppedFiles(
+                          filePaths,
+                          targetDir: targetDir,
+                        );
                       }
                     },
                   );
                 } else {
                   completed++;
                   if (completed == items.length && filePaths.isNotEmpty) {
-                    widget.state.addDroppedFiles(filePaths);
+                    final targetDir = _currentRelativePath.isEmpty
+                        ? null
+                        : Directory(
+                            '${_getFilesDirectoryPathSync()}/$_currentRelativePath',
+                          );
+                    widget.state.addDroppedFiles(
+                      filePaths,
+                      targetDir: targetDir,
+                    );
                   }
                 }
               }
@@ -687,18 +1090,59 @@ class _FilesPaneState extends State<FilesPane> {
           )
         : mainContent;
 
+    final bool isInputFocused = FocusManager.instance.primaryFocus != null &&
+        FocusManager.instance.primaryFocus != _paneFocusNode;
+
     return Shortcuts(
       shortcuts: const {
         SingleActivator(LogicalKeyboardKey.keyV, control: true):
             _PasteFilesIntent(),
         SingleActivator(LogicalKeyboardKey.keyV, meta: true):
             _PasteFilesIntent(),
+        SingleActivator(LogicalKeyboardKey.keyC, control: true):
+            _CopyFileIntent(),
+        SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+            _CopyFileIntent(),
+        SingleActivator(LogicalKeyboardKey.keyX, control: true):
+            _CutFileIntent(),
+        SingleActivator(LogicalKeyboardKey.keyX, meta: true):
+            _CutFileIntent(),
+        SingleActivator(LogicalKeyboardKey.delete):
+            _DeleteFileIntent(),
+        SingleActivator(LogicalKeyboardKey.backspace):
+            _DeleteFileIntent(),
       },
       child: Actions(
         actions: {
           _PasteFilesIntent: CallbackAction<_PasteFilesIntent>(
             onInvoke: (_) {
-              _pasteFromClipboard();
+              if (!isInputFocused) {
+                _pasteFromClipboard();
+              }
+              return null;
+            },
+          ),
+          _CopyFileIntent: CallbackAction<_CopyFileIntent>(
+            onInvoke: (_) {
+              if (!isInputFocused) {
+                _copySelectedFile();
+              }
+              return null;
+            },
+          ),
+          _CutFileIntent: CallbackAction<_CutFileIntent>(
+            onInvoke: (_) {
+              if (!isInputFocused) {
+                _cutSelectedFile();
+              }
+              return null;
+            },
+          ),
+          _DeleteFileIntent: CallbackAction<_DeleteFileIntent>(
+            onInvoke: (_) {
+              if (!isInputFocused) {
+                _deleteSelectedFile();
+              }
               return null;
             },
           ),
@@ -736,10 +1180,18 @@ class _FilesPaneState extends State<FilesPane> {
             final name = val.trim();
             if (name.isNotEmpty) {
               Navigator.of(ctx).pop();
+              final targetDir = _currentRelativePath.isEmpty
+                  ? null
+                  : Directory(
+                      '${_getFilesDirectoryPathSync()}/$_currentRelativePath',
+                    );
               if (isFolder) {
-                await widget.state.createNewDirectory(name);
+                await widget.state.createNewDirectory(
+                  name,
+                  targetDir: targetDir,
+                );
               } else {
-                await widget.state.createNewFile(name);
+                await widget.state.createNewFile(name, targetDir: targetDir);
               }
               setState(() {});
             }
@@ -756,10 +1208,18 @@ class _FilesPaneState extends State<FilesPane> {
               final name = textController.text.trim();
               if (name.isNotEmpty) {
                 Navigator.of(ctx).pop();
+                final targetDir = _currentRelativePath.isEmpty
+                    ? null
+                    : Directory(
+                        '${_getFilesDirectoryPathSync()}/$_currentRelativePath',
+                      );
                 if (isFolder) {
-                  await widget.state.createNewDirectory(name);
+                  await widget.state.createNewDirectory(
+                    name,
+                    targetDir: targetDir,
+                  );
                 } else {
-                  await widget.state.createNewFile(name);
+                  await widget.state.createNewFile(name, targetDir: targetDir);
                 }
                 setState(() {});
               }
@@ -867,7 +1327,10 @@ class _FilesPaneState extends State<FilesPane> {
         if (context.mounted) _showNewNameDialog(context, true);
         break;
       case 'open_folder':
-        widget.state.openFilesDirectoryInExplorer();
+        final currentPath = _currentRelativePath.isEmpty
+            ? _getFilesDirectoryPathSync()
+            : '${_getFilesDirectoryPathSync()}/$_currentRelativePath';
+        widget.state.openDirectoryPath(currentPath);
         break;
     }
   }
@@ -911,14 +1374,28 @@ class _FilesPaneState extends State<FilesPane> {
             iconColor: iconColor,
             isImage: _isImage(file.path),
             isDark: widget.isDark,
-            onOpen: () => widget.state.openFile(file),
+            isSelected: _selectedFilePath == file.path,
+            isCut: _cutFilePath == file.path,
+            onSelect: () {
+              _paneFocusNode.requestFocus();
+              setState(() {
+                _selectedFilePath = file.path;
+              });
+            },
+            onOpen: () => _onFileOpen(file),
             onDelete: () => widget.state.deleteFile(file),
-            onContextMenu: (ctx, pos) => _showContextMenu(
-              ctx,
-              pos,
-              file,
-              () => widget.state.deleteFile(file),
-            ),
+            onContextMenu: (ctx, pos) {
+              _paneFocusNode.requestFocus();
+              setState(() {
+                _selectedFilePath = file.path;
+              });
+              _showContextMenu(
+                ctx,
+                pos,
+                file,
+                () => widget.state.deleteFile(file),
+              );
+            },
           );
         },
       ),
@@ -1026,14 +1503,28 @@ class _FilesPaneState extends State<FilesPane> {
                   iconColor: iconColor,
                   isImage: _isImage(file.path),
                   isDark: widget.isDark,
-                  onOpen: () => widget.state.openFile(file),
+                  isSelected: _selectedFilePath == file.path,
+                  isCut: _cutFilePath == file.path,
+                  onSelect: () {
+                    _paneFocusNode.requestFocus();
+                    setState(() {
+                      _selectedFilePath = file.path;
+                    });
+                  },
+                  onOpen: () => _onFileOpen(file),
                   onDelete: () => widget.state.deleteFile(file),
-                  onContextMenu: (ctx, pos) => _showContextMenu(
-                    ctx,
-                    pos,
-                    file,
-                    () => widget.state.deleteFile(file),
-                  ),
+                  onContextMenu: (ctx, pos) {
+                    _paneFocusNode.requestFocus();
+                    setState(() {
+                      _selectedFilePath = file.path;
+                    });
+                    _showContextMenu(
+                      ctx,
+                      pos,
+                      file,
+                      () => widget.state.deleteFile(file),
+                    );
+                  },
                 );
               },
             ),
@@ -1207,6 +1698,9 @@ class _GridFileCard extends StatefulWidget {
   final Color iconColor;
   final bool isImage;
   final bool isDark;
+  final bool isSelected;
+  final bool isCut;
+  final VoidCallback onSelect;
   final VoidCallback onOpen;
   final VoidCallback onDelete;
   final void Function(BuildContext, Offset) onContextMenu;
@@ -1218,6 +1712,9 @@ class _GridFileCard extends StatefulWidget {
     required this.iconColor,
     required this.isImage,
     required this.isDark,
+    required this.isSelected,
+    required this.isCut,
+    required this.onSelect,
     required this.onOpen,
     required this.onDelete,
     required this.onContextMenu,
@@ -1234,6 +1731,10 @@ class _GridFileCardState extends State<_GridFileCard> {
   @override
   Widget build(BuildContext context) {
     final isDir = widget.file is Directory;
+    final accentColor = AppTheme.getAccentColor(
+      AppState().settings.themeColorName,
+      widget.isDark,
+    );
 
     final card = sdd.DragItemWidget(
       dragItemProvider: (request) {
@@ -1267,23 +1768,29 @@ class _GridFileCardState extends State<_GridFileCard> {
                     widget.onOpen();
                   } else {
                     _lastTapTime = now;
+                    widget.onSelect();
                   }
                 },
                 child: AnimatedContainer(
                   duration: const Duration(milliseconds: 120),
                   decoration: BoxDecoration(
-                    color: _isHovered
-                        ? (widget.isDark
-                              ? Colors.white.withOpacity(0.07)
-                              : Colors.black.withOpacity(0.05))
-                        : (widget.isDark
-                              ? Colors.white.withOpacity(0.03)
-                              : Colors.black.withOpacity(0.02)),
+                    color: widget.isSelected
+                        ? accentColor.withOpacity(widget.isDark ? 0.15 : 0.1)
+                        : (_isHovered
+                            ? (widget.isDark
+                                  ? Colors.white.withOpacity(0.07)
+                                  : Colors.black.withOpacity(0.05))
+                            : (widget.isDark
+                                  ? Colors.white.withOpacity(0.03)
+                                  : Colors.black.withOpacity(0.02))),
                     borderRadius: BorderRadius.zero,
                     border: Border.all(
-                      color: _isHovered
-                          ? (widget.isDark ? Colors.white12 : Colors.black12)
-                          : Colors.transparent,
+                      color: widget.isSelected
+                          ? accentColor
+                          : (_isHovered
+                              ? (widget.isDark ? Colors.white12 : Colors.black12)
+                              : Colors.transparent),
+                      width: widget.isSelected ? 1.5 : 1.0,
                     ),
                   ),
                   child: Padding(
@@ -1300,24 +1807,45 @@ class _GridFileCardState extends State<_GridFileCard> {
                                       File(widget.file.path),
                                       fit: BoxFit.cover,
                                       width: double.infinity,
-                                      errorBuilder: (_, __, ___) => Icon(
-                                        widget.icon,
-                                        size: 30,
-                                        color: widget.iconColor,
+                                      errorBuilder: (_, __, ___) => Center(
+                                        child: LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final fallbackIconSize =
+                                                constraints.maxWidth * 0.45;
+                                            return Icon(
+                                              widget.icon,
+                                              size: fallbackIconSize,
+                                              color: widget.iconColor,
+                                            );
+                                          },
+                                        ),
                                       ),
                                     ),
                                   )
-                                : Container(
-                                    width: 32,
-                                    height: 32,
-                                    decoration: BoxDecoration(
-                                      color: widget.iconColor.withOpacity(0.12),
-                                      borderRadius: BorderRadius.zero,
-                                    ),
-                                    child: Icon(
-                                      widget.icon,
-                                      size: 19,
-                                      color: widget.iconColor,
+                                : AspectRatio(
+                                    aspectRatio: 1.0,
+                                    child: FractionallySizedBox(
+                                      widthFactor: 0.6,
+                                      heightFactor: 0.6,
+                                      child: Container(
+                                        decoration: BoxDecoration(
+                                          color: widget.iconColor.withOpacity(
+                                            0.12,
+                                          ),
+                                          borderRadius: BorderRadius.zero,
+                                        ),
+                                        child: LayoutBuilder(
+                                          builder: (context, constraints) {
+                                            final iconSize =
+                                                constraints.maxWidth * 0.6;
+                                            return Icon(
+                                              widget.icon,
+                                              size: iconSize,
+                                              color: widget.iconColor,
+                                            );
+                                          },
+                                        ),
+                                      ),
                                     ),
                                   ),
                           ),
@@ -1347,46 +1875,49 @@ class _GridFileCardState extends State<_GridFileCard> {
       ),
     );
 
-    if (isDir) {
-      return sdd.DropRegion(
-        formats: const [sdd.Formats.fileUri],
-        onDropOver: (event) {
-          return sdd.DropOperation.copy;
-        },
-        onPerformDrop: (event) async {
-          final items = event.session.items;
-          if (items.isEmpty) return;
+    final resultWidget = isDir
+        ? sdd.DropRegion(
+            formats: const [sdd.Formats.fileUri],
+            onDropOver: (event) {
+              return sdd.DropOperation.copy;
+            },
+            onPerformDrop: (event) async {
+              final items = event.session.items;
+              if (items.isEmpty) return;
 
-          for (final item in items) {
-            final reader = item.dataReader;
-            if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
-              reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
-                if (uri != null) {
-                  final sourcePath = uri.toFilePath();
-                  if (item.localData == 'internal_file_drag') {
-                    final sourceEntity =
-                        FileSystemEntity.isDirectorySync(sourcePath)
-                        ? Directory(sourcePath)
-                        : File(sourcePath);
-                    AppState().moveFileToFolder(
-                      sourceEntity,
-                      Directory(widget.file.path),
-                    );
-                  } else {
-                    AppState().addDroppedFiles([
-                      sourcePath,
-                    ], targetDir: Directory(widget.file.path));
-                  }
+              for (final item in items) {
+                final reader = item.dataReader;
+                if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
+                  reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
+                    if (uri != null) {
+                      final sourcePath = uri.toFilePath();
+                      if (item.localData == 'internal_file_drag') {
+                        final sourceEntity =
+                            FileSystemEntity.isDirectorySync(sourcePath)
+                            ? Directory(sourcePath)
+                            : File(sourcePath);
+                        AppState().moveFileToFolder(
+                          sourceEntity,
+                          Directory(widget.file.path),
+                        );
+                      } else {
+                        AppState().addDroppedFiles([
+                          sourcePath,
+                        ], targetDir: Directory(widget.file.path));
+                      }
+                    }
+                  });
                 }
-              });
-            }
-          }
-        },
-        child: card,
-      );
-    }
+              }
+            },
+            child: card,
+          )
+        : card;
 
-    return card;
+    return Opacity(
+      opacity: widget.isCut ? 0.55 : 1.0,
+      child: resultWidget,
+    );
   }
 }
 
@@ -1677,6 +2208,9 @@ class _DetailsFileCard extends StatefulWidget {
   final Color iconColor;
   final bool isImage;
   final bool isDark;
+  final bool isSelected;
+  final bool isCut;
+  final VoidCallback onSelect;
   final VoidCallback onOpen;
   final VoidCallback onDelete;
   final void Function(BuildContext, Offset) onContextMenu;
@@ -1690,6 +2224,9 @@ class _DetailsFileCard extends StatefulWidget {
     required this.iconColor,
     required this.isImage,
     required this.isDark,
+    required this.isSelected,
+    required this.isCut,
+    required this.onSelect,
     required this.onOpen,
     required this.onDelete,
     required this.onContextMenu,
@@ -1707,6 +2244,10 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
   Widget build(BuildContext context) {
     final scaleFactor = (AppState().fileDisplaySize / 110.0).clamp(0.8, 1.4);
     final isDir = widget.file is Directory;
+    final accentColor = AppTheme.getAccentColor(
+      AppState().settings.themeColorName,
+      widget.isDark,
+    );
 
     final card = sdd.DragItemWidget(
       dragItemProvider: (request) {
@@ -1740,6 +2281,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                     widget.onOpen();
                   } else {
                     _lastTapTime = now;
+                    widget.onSelect();
                   }
                 },
                 child: AnimatedContainer(
@@ -1750,12 +2292,18 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                     vertical: 0.5 * scaleFactor,
                   ),
                   decoration: BoxDecoration(
-                    color: _isHovered
-                        ? (widget.isDark
-                              ? Colors.white.withOpacity(0.06)
-                              : Colors.black.withOpacity(0.04))
-                        : Colors.transparent,
+                    color: widget.isSelected
+                        ? accentColor.withOpacity(widget.isDark ? 0.15 : 0.1)
+                        : (_isHovered
+                            ? (widget.isDark
+                                  ? Colors.white.withOpacity(0.06)
+                                  : Colors.black.withOpacity(0.04))
+                            : Colors.transparent),
                     borderRadius: BorderRadius.zero,
+                    border: Border.all(
+                      color: widget.isSelected ? accentColor : Colors.transparent,
+                      width: 1.0,
+                    ),
                   ),
                   child: Row(
                     children: [
@@ -1847,45 +2395,48 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
       ),
     );
 
-    if (isDir) {
-      return sdd.DropRegion(
-        formats: const [sdd.Formats.fileUri],
-        onDropOver: (event) {
-          return sdd.DropOperation.copy;
-        },
-        onPerformDrop: (event) async {
-          final items = event.session.items;
-          if (items.isEmpty) return;
+    final resultWidget = isDir
+        ? sdd.DropRegion(
+            formats: const [sdd.Formats.fileUri],
+            onDropOver: (event) {
+              return sdd.DropOperation.copy;
+            },
+            onPerformDrop: (event) async {
+              final items = event.session.items;
+              if (items.isEmpty) return;
 
-          for (final item in items) {
-            final reader = item.dataReader;
-            if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
-              reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
-                if (uri != null) {
-                  final sourcePath = uri.toFilePath();
-                  if (item.localData == 'internal_file_drag') {
-                    final sourceEntity =
-                        FileSystemEntity.isDirectorySync(sourcePath)
-                        ? Directory(sourcePath)
-                        : File(sourcePath);
-                    AppState().moveFileToFolder(
-                      sourceEntity,
-                      Directory(widget.file.path),
-                    );
-                  } else {
-                    AppState().addDroppedFiles([
-                      sourcePath,
-                    ], targetDir: Directory(widget.file.path));
-                  }
+              for (final item in items) {
+                final reader = item.dataReader;
+                if (reader != null && reader.canProvide(sdd.Formats.fileUri)) {
+                  reader.getValue<Uri>(sdd.Formats.fileUri, (uri) {
+                    if (uri != null) {
+                      final sourcePath = uri.toFilePath();
+                      if (item.localData == 'internal_file_drag') {
+                        final sourceEntity =
+                            FileSystemEntity.isDirectorySync(sourcePath)
+                            ? Directory(sourcePath)
+                            : File(sourcePath);
+                        AppState().moveFileToFolder(
+                          sourceEntity,
+                          Directory(widget.file.path),
+                        );
+                      } else {
+                        AppState().addDroppedFiles([
+                          sourcePath,
+                        ], targetDir: Directory(widget.file.path));
+                      }
+                    }
+                  });
                 }
-              });
-            }
-          }
-        },
-        child: card,
-      );
-    }
+              }
+            },
+            child: card,
+          )
+        : card;
 
-    return card;
+    return Opacity(
+      opacity: widget.isCut ? 0.55 : 1.0,
+      child: resultWidget,
+    );
   }
 }
