@@ -1113,10 +1113,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     final menuItems = [
-      MenuItem(
-        key: 'toggle',
-        label: text('显示/隐藏 Pod', 'Show/Hide Pod'),
-      ),
+      MenuItem(key: 'toggle', label: text('显示/隐藏 Pod', 'Show/Hide Pod')),
       MenuItem.separator(),
       MenuItem(key: 'quit', label: text('退出', 'Quit')),
     ];
@@ -1818,12 +1815,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     final previousSequence = _lastNativeClipboardSequence;
     _lastNativeClipboardSequence = sequence;
-    
+
     if (previousSequence != null && previousSequence == sequence) {
       _hasSequenceChanged = false;
       return true;
     }
-    
+
     _hasSequenceChanged = previousSequence != null;
     return false;
   }
@@ -1911,7 +1908,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final imageBytes = await Pasteboard.image;
             if (imageBytes != null && imageBytes.isNotEmpty) {
               final imageSignature = _imageSignature(imageBytes);
-              if (imageSignature != _lastSystemClipImageSignature || _hasSequenceChanged) {
+              if (imageSignature != _lastSystemClipImageSignature ||
+                  _hasSequenceChanged) {
                 _lastSystemClipImageSignature = imageSignature;
                 _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
 
@@ -2702,14 +2700,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await _dirWatcher?.cancel();
     try {
       final dir = Directory(path);
-      _dirWatcher = dir.watch(events: FileSystemEvent.all).listen((event) {
-        // 文件夹内容变化时重新扫描（不再重建监听，避免递归）
-        _fileWatchDebounce?.cancel();
-        _fileWatchDebounce = Timer(
-          const Duration(milliseconds: 300),
-          _rescanWithoutRebuildingWatcher,
-        );
-      });
+      _dirWatcher = dir
+          .watch(events: FileSystemEvent.all, recursive: true)
+          .listen((event) {
+            // 文件夹内容变化时重新扫描（不再重建监听，避免递归）
+            _fileWatchDebounce?.cancel();
+            _fileWatchDebounce = Timer(
+              const Duration(milliseconds: 300),
+              _rescanWithoutRebuildingWatcher,
+            );
+          });
     } catch (e) {
       debugPrint('Failed to watch directory: $e');
     }
@@ -2940,10 +2940,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  Future<void> createNewFile(String name) async {
+  Future<void> createNewFile(String name, {Directory? targetDir}) async {
     try {
-      final basePath = await _getFilesDirectoryPath();
-      var fileName = name.trim().isEmpty ? text('新建文件.txt', 'New File.txt') : name.trim();
+      final basePath = targetDir?.path ?? await _getFilesDirectoryPath();
+      var fileName = name.trim().isEmpty
+          ? text('新建文件.txt', 'New File.txt')
+          : name.trim();
       var file = File('$basePath/$fileName');
 
       // Handle duplicates by adding suffix
@@ -2966,10 +2968,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  Future<void> createNewDirectory(String name) async {
+  Future<void> createNewDirectory(String name, {Directory? targetDir}) async {
     try {
-      final basePath = await _getFilesDirectoryPath();
-      var dirName = name.trim().isEmpty ? text('新建文件夹', 'New Folder') : name.trim();
+      final basePath = targetDir?.path ?? await _getFilesDirectoryPath();
+      var dirName = name.trim().isEmpty
+          ? text('新建文件夹', 'New Folder')
+          : name.trim();
       var dir = Directory('$basePath/$dirName');
 
       // Handle duplicates by adding suffix
