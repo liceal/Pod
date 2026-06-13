@@ -36,7 +36,6 @@ class _NotesPaneState extends State<NotesPane> {
   final Map<String, double> _noteScrollOffsets = {};
   String _activeNoteId = '';
   bool _showList = true;
-  double? _trackpadZoomStartFontSize;
   double _trackpadBackSwipeDistance = 0;
   double _trackpadBackSwipeCrossAxisDistance = 0;
   bool _didTriggerTrackpadBackSwipe = false;
@@ -212,22 +211,7 @@ class _NotesPaneState extends State<NotesPane> {
         pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
-  void _applyTextZoomScale(double scale, {double? baseFontSize}) {
-    final delta = scale - 1.0;
-    if (delta.abs() < _textZoomDeadZone) return;
-
-    widget.state.updateTextContentFontSize(
-      (baseFontSize ?? widget.state.settings.textContentFontSize) *
-          (1.0 + delta * _textZoomSensitivity),
-    );
-  }
-
   void _handleEditorPointerSignal(PointerSignalEvent event) {
-    if (event is PointerScaleEvent) {
-      _applyTextZoomScale(event.scale);
-      return;
-    }
-
     if (event is! PointerScrollEvent || !_isTextZoomModifierPressed) {
       return;
     }
@@ -242,21 +226,6 @@ class _NotesPaneState extends State<NotesPane> {
     );
   }
 
-  void _handleEditorPanZoomStart(PointerPanZoomStartEvent event) {
-    _trackpadZoomStartFontSize = widget.state.settings.textContentFontSize;
-  }
-
-  void _handleEditorPanZoomUpdate(PointerPanZoomUpdateEvent event) {
-    final startFontSize = _trackpadZoomStartFontSize;
-    if (startFontSize == null) return;
-
-    _applyTextZoomScale(event.scale, baseFontSize: startFontSize);
-  }
-
-  void _handleEditorPanZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadZoomStartFontSize = null;
-  }
-
   void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
     _trackpadBackSwipeDistance = 0;
     _trackpadBackSwipeCrossAxisDistance = 0;
@@ -264,6 +233,17 @@ class _NotesPaneState extends State<NotesPane> {
   }
 
   void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_isTextZoomModifierPressed) {
+      if (event.panDelta.dy != 0 && (event.scale - 1.0).abs() < 0.01) {
+        final currentFontSize = widget.state.settings.textContentFontSize;
+        final delta = event.panDelta.dy / 30.0;
+        final targetFontSize = currentFontSize + delta;
+        widget.state.updateTextContentFontSize(targetFontSize);
+        setState(() {});
+      }
+      return;
+    }
+
     if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
       return;
     }
@@ -341,7 +321,12 @@ class _NotesPaneState extends State<NotesPane> {
       barrierColor: Colors.transparent,
       builder: (ctx) => AlertDialog(
         title: Text(context.text('删除便签？', 'Delete Note?')),
-        content: Text(context.text('您确定要删除该便签吗？', 'Are you sure you want to delete this note?')),
+        content: Text(
+          context.text(
+            '您确定要删除该便签吗？',
+            'Are you sure you want to delete this note?',
+          ),
+        ),
         actions: [
           TextButton(
             child: Text(context.text('取消', 'Cancel')),
@@ -524,33 +509,33 @@ class _NotesPaneState extends State<NotesPane> {
         },
         child: Listener(
           onPointerSignal: _handleEditorPointerSignal,
-          onPointerPanZoomStart: _handleEditorPanZoomStart,
-          onPointerPanZoomUpdate: _handleEditorPanZoomUpdate,
-          onPointerPanZoomEnd: _handleEditorPanZoomEnd,
           child: TextField(
-            controller: _editorController,
-            focusNode: _editorFocusNode,
-            scrollController: _scrollController,
-            maxLines: null,
-            minLines: null,
-            expands: true,
-            textAlignVertical: TextAlignVertical.top,
-            keyboardType: TextInputType.multiline,
-            style: editorTextStyle,
-            decoration: InputDecoration(
-              hintText: context.text('开始书写便签内容...', 'Start writing note content...'),
-              hintStyle: editorTextStyle.copyWith(
-                color: widget.isDark ? Colors.white24 : Colors.black26,
+              controller: _editorController,
+              focusNode: _editorFocusNode,
+              scrollController: _scrollController,
+              maxLines: null,
+              minLines: null,
+              expands: true,
+              textAlignVertical: TextAlignVertical.top,
+              keyboardType: TextInputType.multiline,
+              style: editorTextStyle,
+              decoration: InputDecoration(
+                hintText: context.text(
+                  '开始书写便签内容...',
+                  'Start writing note content...',
+                ),
+                hintStyle: editorTextStyle.copyWith(
+                  color: widget.isDark ? Colors.white24 : Colors.black26,
+                ),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.only(left: 10, right: 2),
+                isDense: true,
               ),
-              border: InputBorder.none,
-              contentPadding: const EdgeInsets.only(left: 10, right: 2),
-              isDense: true,
+              onChanged: _onContentChanged,
             ),
-            onChanged: _onContentChanged,
           ),
         ),
-      ),
-    );
+      );
   }
 
   @override
@@ -595,7 +580,10 @@ class _NotesPaneState extends State<NotesPane> {
                           textAlignVertical: TextAlignVertical.center,
                           style: const TextStyle(fontSize: 12),
                           decoration: InputDecoration(
-                            hintText: context.text('搜索便签...', 'Search notes...'),
+                            hintText: context.text(
+                              '搜索便签...',
+                              'Search notes...',
+                            ),
                             hintStyle: TextStyle(
                               fontSize: 12,
                               color: widget.isDark
