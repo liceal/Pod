@@ -1140,8 +1140,6 @@ class _DetailDialogContent extends StatefulWidget {
 }
 
 class _DetailDialogContentState extends State<_DetailDialogContent> {
-  static const double _textZoomDeadZone = 0.001;
-  static const double _textZoomSensitivity = 1.25;
 
   late final TransformationController _transformationController;
   late final ScrollController _scrollController;

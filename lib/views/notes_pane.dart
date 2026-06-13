@@ -24,8 +24,6 @@ class NotesPane extends StatefulWidget {
 }
 
 class _NotesPaneState extends State<NotesPane> {
-  static const double _textZoomDeadZone = 0.001;
-  static const double _textZoomSensitivity = 1.25;
 
   late TextEditingController _editorController;
   late TextEditingController _searchController;
