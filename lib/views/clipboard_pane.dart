@@ -2084,7 +2084,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                                   controller: _scrollController,
                                   notificationPredicate: (n) =>
                                       n.metrics.axis == Axis.vertical,
-                                  thumbVisibility: true,
                                   thickness: 4,
                                   radius: const Radius.circular(999),
                                   child: finalContainer,
@@ -2095,14 +2094,12 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                                 controller: _scrollController,
                                 notificationPredicate: (n) =>
                                     n.metrics.axis == Axis.vertical,
-                                thumbVisibility: true,
                                 thickness: 4,
                                 radius: const Radius.circular(999),
                                 child: Scrollbar(
                                   controller: _horizontalScrollController,
                                   notificationPredicate: (n) =>
                                       n.metrics.axis == Axis.horizontal,
-                                  thumbVisibility: true,
                                   thickness: 3,
                                   radius: const Radius.circular(999),
                                   child: finalContainer,
