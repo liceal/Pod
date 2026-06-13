@@ -23,6 +23,9 @@ class NotesPane extends StatefulWidget {
 }
 
 class _NotesPaneState extends State<NotesPane> {
+  static const double _textZoomDeadZone = 0.001;
+  static const double _textZoomSensitivity = 1.25;
+
   late TextEditingController _editorController;
   late TextEditingController _searchController;
   final ScrollController _listScrollController = ScrollController();
@@ -32,7 +35,13 @@ class _NotesPaneState extends State<NotesPane> {
   final Map<String, double> _noteScrollOffsets = {};
   String _activeNoteId = '';
   bool _showList = true;
+  double? _trackpadZoomStartFontSize;
+  double _trackpadBackSwipeDistance = 0;
+  double _trackpadBackSwipeCrossAxisDistance = 0;
+  bool _didTriggerTrackpadBackSwipe = false;
   double _swipeDistance = 0;
+  bool _isMouseButtonDown = false;
+  bool _ignoreCurrentBackDrag = false;
 
   @override
   void initState() {
@@ -172,6 +181,28 @@ class _NotesPaneState extends State<NotesPane> {
         (event.buttons & kBackMouseButton) != 0;
   }
 
+  void _handleBackPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
+      _isMouseButtonDown = true;
+    }
+
+    if (_isMouseBackButton(event)) {
+      _showListView();
+    }
+  }
+
+  void _handleBackPointerUp(PointerUpEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPointerCancel(PointerCancelEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
   bool get _isTextZoomModifierPressed {
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
     return pressed.contains(LogicalKeyboardKey.controlLeft) ||
@@ -180,7 +211,22 @@ class _NotesPaneState extends State<NotesPane> {
         pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
+  void _applyTextZoomScale(double scale, {double? baseFontSize}) {
+    final delta = scale - 1.0;
+    if (delta.abs() < _textZoomDeadZone) return;
+
+    widget.state.updateTextContentFontSize(
+      (baseFontSize ?? widget.state.settings.textContentFontSize) *
+          (1.0 + delta * _textZoomSensitivity),
+    );
+  }
+
   void _handleEditorPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScaleEvent) {
+      _applyTextZoomScale(event.scale);
+      return;
+    }
+
     if (event is! PointerScrollEvent || !_isTextZoomModifierPressed) {
       return;
     }
@@ -195,35 +241,89 @@ class _NotesPaneState extends State<NotesPane> {
     );
   }
 
+  void _handleEditorPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadZoomStartFontSize = widget.state.settings.textContentFontSize;
+  }
+
+  void _handleEditorPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    final startFontSize = _trackpadZoomStartFontSize;
+    if (startFontSize == null) return;
+
+    _applyTextZoomScale(event.scale, baseFontSize: startFontSize);
+  }
+
+  void _handleEditorPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadZoomStartFontSize = null;
+  }
+
+  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
+      return;
+    }
+
+    _trackpadBackSwipeDistance += event.panDelta.dx;
+    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
+
+    if (_trackpadBackSwipeDistance > 80 &&
+        _trackpadBackSwipeDistance.abs() >
+            _trackpadBackSwipeCrossAxisDistance * 1.6) {
+      _didTriggerTrackpadBackSwipe = true;
+      _showListView();
+    }
+  }
+
+  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
   Widget _wrapDetailBackGesture(Widget child) {
     return Listener(
       behavior: HitTestBehavior.translucent,
-      onPointerDown: (event) {
-        if (_isMouseBackButton(event)) {
-          _showListView();
-        }
-      },
+      onPointerDown: _handleBackPointerDown,
+      onPointerUp: _handleBackPointerUp,
+      onPointerCancel: _handleBackPointerCancel,
       onPointerSignal: (event) {
         if (event is PointerScrollEvent &&
-            event.scrollDelta.dx.abs() > 48 &&
+            event.scrollDelta.dx > 48 &&
             event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
           _showListView();
         }
       },
+      onPointerPanZoomStart: _handleBackPanZoomStart,
+      onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
+      onPointerPanZoomEnd: _handleBackPanZoomEnd,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) => _swipeDistance = 0,
+        onHorizontalDragStart: (_) {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = _isMouseButtonDown;
+        },
         onHorizontalDragUpdate: (details) {
+          if (_ignoreCurrentBackDrag) return;
           _swipeDistance += details.delta.dx;
         },
         onHorizontalDragEnd: (details) {
-          final velocity = details.primaryVelocity ?? 0;
-          if (_swipeDistance.abs() > 80 || velocity.abs() > 520) {
-            _showListView();
+          if (!_ignoreCurrentBackDrag) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (_swipeDistance > 80 || velocity > 520) {
+              _showListView();
+            }
           }
           _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
         },
-        onHorizontalDragCancel: () => _swipeDistance = 0,
+        onHorizontalDragCancel: () {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
+        },
         child: child,
       ),
     );
@@ -423,6 +523,9 @@ class _NotesPaneState extends State<NotesPane> {
         },
         child: Listener(
           onPointerSignal: _handleEditorPointerSignal,
+          onPointerPanZoomStart: _handleEditorPanZoomStart,
+          onPointerPanZoomUpdate: _handleEditorPanZoomUpdate,
+          onPointerPanZoomEnd: _handleEditorPanZoomEnd,
           child: TextField(
             controller: _editorController,
             focusNode: _editorFocusNode,

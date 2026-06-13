@@ -1135,6 +1135,9 @@ class _DetailDialogContent extends StatefulWidget {
 }
 
 class _DetailDialogContentState extends State<_DetailDialogContent> {
+  static const double _textZoomDeadZone = 0.001;
+  static const double _textZoomSensitivity = 1.25;
+
   late final TransformationController _transformationController;
   late final ScrollController _scrollController;
   late final ScrollController _horizontalScrollController;
@@ -1148,8 +1151,14 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   File? _imageFile;
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
-  double _swipeDistance = 0;
   bool _isImageDetail = false;
+  double? _trackpadZoomStartFontSize;
+  double _trackpadBackSwipeDistance = 0;
+  double _trackpadBackSwipeCrossAxisDistance = 0;
+  bool _didTriggerTrackpadBackSwipe = false;
+  double _swipeDistance = 0;
+  bool _isMouseButtonDown = false;
+  bool _ignoreCurrentBackDrag = false;
 
   @override
   void initState() {
@@ -1272,9 +1281,8 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
   bool _isRightSwipeSignal(double dx, double dy) {
     return widget.embedded &&
-        _isImageDetail &&
         !_hasHorizontalOverflow &&
-        dx.abs() > 24 &&
+        dx > 48 &&
         dx.abs() > dy.abs() * 1.2;
   }
 
@@ -1301,6 +1309,11 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   }
 
   void _handleDetailContentPointerSignal(PointerSignalEvent event) {
+    if (event is PointerScaleEvent) {
+      _applyTextZoomScale(event.scale);
+      return;
+    }
+
     if (event is! PointerScrollEvent ||
         _wrapCodeLines ||
         _isTextZoomModifierPressed ||
@@ -1341,11 +1354,87 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
-  void _handleBackMouseButton(PointerDownEvent event) {
+  void _applyTextZoomScale(double scale, {double? baseFontSize}) {
+    final delta = scale - 1.0;
+    if (delta.abs() < _textZoomDeadZone) return;
+
+    widget.state.updateTextContentFontSize(
+      (baseFontSize ?? widget.state.settings.textContentFontSize) *
+          (1.0 + delta * _textZoomSensitivity),
+    );
+    setState(() {});
+  }
+
+  void _handleTextPanZoomStart(PointerPanZoomStartEvent event) {
+    if (_isImageDetail) return;
+    _trackpadZoomStartFontSize = widget.state.settings.textContentFontSize;
+  }
+
+  void _handleTextPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_isImageDetail) return;
+
+    final startFontSize = _trackpadZoomStartFontSize;
+    if (startFontSize == null) return;
+
+    _applyTextZoomScale(event.scale, baseFontSize: startFontSize);
+  }
+
+  void _handleTextPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadZoomStartFontSize = null;
+  }
+
+  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (!widget.embedded ||
+        _hasHorizontalOverflow ||
+        _didTriggerTrackpadBackSwipe ||
+        (event.scale - 1.0).abs() >= 0.01) {
+      return;
+    }
+
+    _trackpadBackSwipeDistance += event.panDelta.dx;
+    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
+
+    if (_trackpadBackSwipeDistance > 80 &&
+        _trackpadBackSwipeDistance.abs() >
+            _trackpadBackSwipeCrossAxisDistance * 1.2) {
+      _didTriggerTrackpadBackSwipe = true;
+      widget.onBack?.call();
+    }
+  }
+
+  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  void _handleBackPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
+      _isMouseButtonDown = true;
+    }
+
     if (!widget.embedded) return;
     if (event.kind == PointerDeviceKind.mouse &&
         (event.buttons & kBackMouseButton) != 0) {
       widget.onBack?.call();
+    }
+  }
+
+  void _handleBackPointerUp(PointerUpEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPointerCancel(PointerCancelEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
     }
   }
 
@@ -1587,30 +1676,46 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       if (isImage) {
         return Listener(
           behavior: HitTestBehavior.translucent,
-          onPointerDown: _handleBackMouseButton,
+          onPointerDown: _handleBackPointerDown,
+          onPointerUp: _handleBackPointerUp,
+          onPointerCancel: _handleBackPointerCancel,
           child: detailWithEsc,
         );
       }
 
       return Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _handleBackMouseButton,
+        onPointerDown: _handleBackPointerDown,
+        onPointerUp: _handleBackPointerUp,
+        onPointerCancel: _handleBackPointerCancel,
         onPointerSignal: _handleBackPointerSignal,
+        onPointerPanZoomStart: _handleBackPanZoomStart,
+        onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
+        onPointerPanZoomEnd: _handleBackPanZoomEnd,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: (_) => _swipeDistance = 0,
+          onHorizontalDragStart: (_) {
+            _swipeDistance = 0;
+            _ignoreCurrentBackDrag = _isMouseButtonDown;
+          },
           onHorizontalDragUpdate: (details) {
+            if (_ignoreCurrentBackDrag) return;
             _swipeDistance += details.delta.dx;
           },
           onHorizontalDragEnd: (details) {
-            final velocity = details.primaryVelocity ?? 0;
-            if (!_hasHorizontalOverflow &&
-                (_swipeDistance.abs() > 80 || velocity.abs() > 520)) {
-              widget.onBack?.call();
+            if (!_ignoreCurrentBackDrag && !_hasHorizontalOverflow) {
+              final velocity = details.primaryVelocity ?? 0;
+              if (_swipeDistance > 80 || velocity > 520) {
+                widget.onBack?.call();
+              }
             }
             _swipeDistance = 0;
+            _ignoreCurrentBackDrag = false;
           },
-          onHorizontalDragCancel: () => _swipeDistance = 0,
+          onHorizontalDragCancel: () {
+            _swipeDistance = 0;
+            _ignoreCurrentBackDrag = false;
+          },
           child: detailWithEsc,
         ),
       );
@@ -1958,6 +2063,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
           : Listener(
               behavior: HitTestBehavior.translucent,
               onPointerSignal: _handleDetailContentPointerSignal,
+              onPointerPanZoomStart: _handleTextPanZoomStart,
+              onPointerPanZoomUpdate: _handleTextPanZoomUpdate,
+              onPointerPanZoomEnd: _handleTextPanZoomEnd,
               child: itemType == 'COLOR'
                   ? _buildColorDetailDashboard(
                       displayText,
