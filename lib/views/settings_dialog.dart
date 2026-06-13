@@ -171,7 +171,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     try {
       await windowManager.setAlwaysOnTop(false);
       final selected = await FilePicker.platform.getDirectoryPath(
-        dialogTitle: _text('选择源数据文件夹（导入合并）', 'Select Source Data Folder (Import & Merge)'),
+        dialogTitle: _text(
+          '选择源数据文件夹（导入合并）',
+          'Select Source Data Folder (Import & Merge)',
+        ),
       );
       if (selected == null) return;
       final cleanSelected = selected.replaceAll('\\', '/');
@@ -193,8 +196,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
           content: Text(
             _text(
-              '即将从所选文件夹同步并合并数据（便签、剪贴板历史、图片、暂存文件）到当前的存储位置：\n$_dataDirectory\n\n注意：这不会覆盖已有的同名数据，而是进行增量合并。',
-              'Data (notes, clipboard history, images, staged files) will be synced and merged into the current storage location:\n$_dataDirectory\n\nNote: This will perform an incremental merge and won\'t overwrite existing data.',
+              '即将从所选文件夹同步并合并数据（便签、剪贴板历史、图片、文件）到当前的存储位置：\n$_dataDirectory\n\n注意：这不会覆盖已有的同名数据，而是进行增量合并。',
+              'Data (notes, clipboard history, images, files) will be synced and merged into the current storage location:\n$_dataDirectory\n\nNote: This will perform an incremental merge and won\'t overwrite existing data.',
             ),
             style: TextStyle(
               color: _isDarkTheme ? Colors.white70 : Colors.black54,
@@ -262,15 +265,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ? const Color(0xFF1E1E1E)
               : Colors.white,
           title: Text(
-            success ? _text('同步成功', 'Sync Successful') : _text('同步失败', 'Sync Failed'),
+            success
+                ? _text('同步成功', 'Sync Successful')
+                : _text('同步失败', 'Sync Failed'),
             style: TextStyle(
               color: _isDarkTheme ? Colors.white : Colors.black87,
             ),
           ),
           content: Text(
             success
-                ? _text('数据已成功同步并合并，界面已实时刷新！', 'Data synced and merged successfully! The UI has been refreshed.')
-                : _text('数据同步失败，请检查文件夹权限或所选目录是否正确。', 'Data sync failed. Please check folder permissions or make sure the directory is correct.'),
+                ? _text(
+                    '数据已成功同步并合并，界面已实时刷新！',
+                    'Data synced and merged successfully! The UI has been refreshed.',
+                  )
+                : _text(
+                    '数据同步失败，请检查文件夹权限或所选目录是否正确。',
+                    'Data sync failed. Please check folder permissions or make sure the directory is correct.',
+                  ),
             style: TextStyle(
               color: _isDarkTheme ? Colors.white70 : Colors.black54,
             ),
@@ -331,8 +342,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           ),
           content: Text(
             _text(
-              '检测到数据存储位置发生改变，是否立即将现有数据（包含历史记录、便签、图片及暂存文件）迁移到新目录下？',
-              'Data storage location changed. Do you want to migrate existing data (including history, notes, images, and staged files) to the new directory?',
+              '检测到数据存储位置发生改变，是否立即将现有数据（包含历史记录、便签、图片及文件）迁移到新目录下？',
+              'Data storage location changed. Do you want to migrate existing data (including history, notes, images, and files) to the new directory?',
             ),
             style: TextStyle(
               color: _isDarkTheme ? Colors.white70 : Colors.black54,
@@ -341,7 +352,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
           actions: [
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(false),
-              child: Text(_text('仅更改路径(不迁移数据)', 'Only Change Path (Don\'t Migrate)')),
+              child: Text(
+                _text('仅更改路径(不迁移数据)', 'Only Change Path (Don\'t Migrate)'),
+              ),
             ),
             TextButton(
               onPressed: () => Navigator.of(ctx).pop(true),
@@ -373,7 +386,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
             child: Card(
               color: const Color(0xFF262626),
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 16,
+                ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -410,10 +426,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ? const Color(0xFF1E1E1E)
                   : Colors.white,
               title: Text(_text('错误', 'Error')),
-              content: Text(_text(
-                '数据迁移失败，未更改存储位置。请检查目标文件夹权限。',
-                'Data migration failed. Storage location remains unchanged. Please check target folder permissions.',
-              )),
+              content: Text(
+                _text(
+                  '数据迁移失败，未更改存储位置。请检查目标文件夹权限。',
+                  'Data migration failed. Storage location remains unchanged. Please check target folder permissions.',
+                ),
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(ctx).pop(),
@@ -533,7 +551,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       ),
       child: Container(
         width: 420,
-        height: 540, // Fixed height and ClampingScrollPhysics prevent trembling at scroll boundaries
+        height:
+            540, // Fixed height and ClampingScrollPhysics prevent trembling at scroll boundaries
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1226,8 +1245,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       const SizedBox(height: 6),
                       Text(
                         _text(
-                          '所有数据（剪贴板历史、收藏、便签、剪切板图片及暂存文件）都将保存在此目录下，方便统一管理与备份。',
-                          'Clipboard history, favorites, notes, images, and staged files are stored here for backup and management.',
+                          '所有数据（剪贴板历史、收藏、便签、剪切板图片及文件）都将保存在此目录下，方便统一管理与备份。',
+                          'Clipboard history, favorites, notes, images, and files are stored here for backup and management.',
                         ),
                         style: TextStyle(
                           fontSize: 11,

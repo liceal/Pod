@@ -81,8 +81,11 @@ class _FilesPaneState extends State<FilesPane> {
     if (!mounted) return;
 
     final message = count > 0
-        ? context.text('已粘贴到暂存区', 'Pasted to staging area')
-        : context.text('剪贴板里没有可暂存的文件或图片', 'No storable files or images found in clipboard');
+        ? context.text('已粘贴到文件', 'Pasted to files')
+        : context.text(
+            '剪贴板里没有可添加的文件或图片',
+            'No files or images found in clipboard',
+          );
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: const TextStyle(fontSize: 11)),
@@ -207,8 +210,14 @@ class _FilesPaneState extends State<FilesPane> {
             SnackBar(
               content: Text(
                 isDir
-                    ? context.text('文件夹路径已复制到剪贴板', 'Folder path copied to clipboard')
-                    : context.text('文件路径已复制到剪贴板', 'File path copied to clipboard'),
+                    ? context.text(
+                        '文件夹路径已复制到剪贴板',
+                        'Folder path copied to clipboard',
+                      )
+                    : context.text(
+                        '文件路径已复制到剪贴板',
+                        'File path copied to clipboard',
+                      ),
                 style: const TextStyle(fontSize: 11),
               ),
               duration: const Duration(seconds: 1),
@@ -350,7 +359,7 @@ class _FilesPaneState extends State<FilesPane> {
             ),
             const SizedBox(height: 8),
             Text(
-              context.text('正在加载暂存区...', 'Loading staging area...'),
+              context.text('正在加载文件...', 'Loading files...'),
               style: TextStyle(
                 fontSize: 11,
                 color: widget.isDark
@@ -544,8 +553,14 @@ class _FilesPaneState extends State<FilesPane> {
                               const SizedBox(height: 6),
                               Text(
                                 _searchQuery.isNotEmpty
-                                    ? context.text('未找到匹配文件', 'No matching files found')
-                                    : context.text('拖拽文件到此处暂存', 'Drag & drop files here to stage'),
+                                    ? context.text(
+                                        '未找到匹配文件',
+                                        'No matching files found',
+                                      )
+                                    : context.text(
+                                        '拖拽文件到此处',
+                                        'Drag & drop files here',
+                                      ),
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: widget.isDark
@@ -592,7 +607,7 @@ class _FilesPaneState extends State<FilesPane> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        context.text('释放文件以暂存', 'Drop files to stage'),
+                        context.text('释放文件以添加', 'Drop files to add'),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -688,10 +703,7 @@ class _FilesPaneState extends State<FilesPane> {
             },
           ),
         },
-        child: Focus(
-          focusNode: _paneFocusNode,
-          child: paneContent,
-        ),
+        child: Focus(focusNode: _paneFocusNode, child: paneContent),
       ),
     );
   }
@@ -707,9 +719,11 @@ class _FilesPaneState extends State<FilesPane> {
       context: context,
       barrierColor: Colors.transparent,
       builder: (ctx) => AlertDialog(
-        title: Text(isFolder
-            ? context.text('新建文件夹', 'New Folder')
-            : context.text('新建文件', 'New File')),
+        title: Text(
+          isFolder
+              ? context.text('新建文件夹', 'New Folder')
+              : context.text('新建文件', 'New File'),
+        ),
         content: TextField(
           controller: textController,
           autofocus: true,
@@ -782,7 +796,10 @@ class _FilesPaneState extends State<FilesPane> {
             children: [
               const Icon(Icons.content_paste_rounded, size: 14),
               const SizedBox(width: 8),
-              Text(context.text('粘贴文件或图片', 'Paste Files/Images'), style: const TextStyle(fontSize: 11)),
+              Text(
+                context.text('粘贴文件或图片', 'Paste Files/Images'),
+                style: const TextStyle(fontSize: 11),
+              ),
             ],
           ),
         ),
@@ -794,7 +811,10 @@ class _FilesPaneState extends State<FilesPane> {
             children: [
               const Icon(Icons.note_add_rounded, size: 14),
               const SizedBox(width: 8),
-              Text(context.text('新建文件', 'New File'), style: const TextStyle(fontSize: 11)),
+              Text(
+                context.text('新建文件', 'New File'),
+                style: const TextStyle(fontSize: 11),
+              ),
             ],
           ),
         ),
@@ -805,7 +825,10 @@ class _FilesPaneState extends State<FilesPane> {
             children: [
               const Icon(Icons.create_new_folder_rounded, size: 14),
               const SizedBox(width: 8),
-              Text(context.text('新建文件夹', 'New Folder'), style: const TextStyle(fontSize: 11)),
+              Text(
+                context.text('新建文件夹', 'New Folder'),
+                style: const TextStyle(fontSize: 11),
+              ),
             ],
           ),
         ),
@@ -817,7 +840,10 @@ class _FilesPaneState extends State<FilesPane> {
             children: [
               const Icon(Icons.folder_open_rounded, size: 14),
               const SizedBox(width: 8),
-              Text(context.text('打开暂存目录', 'Open Staging Folder'), style: const TextStyle(fontSize: 11)),
+              Text(
+                context.text('打开文件目录', 'Open Files Folder'),
+                style: const TextStyle(fontSize: 11),
+              ),
             ],
           ),
         ),
@@ -858,42 +884,45 @@ class _FilesPaneState extends State<FilesPane> {
         return false;
       },
       child: GridView.builder(
-      key: const PageStorageKey('files_grid_view'),
-      controller: _gridScrollController,
-      padding: EdgeInsets.zero,
-      physics: const BouncingScrollPhysics(),
-      gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
-        maxCrossAxisExtent: widget.state.fileDisplaySize,
-        crossAxisSpacing: 2,
-        mainAxisSpacing: 2,
-        childAspectRatio: 1.0,
+        key: const PageStorageKey('files_grid_view'),
+        controller: _gridScrollController,
+        padding: EdgeInsets.zero,
+        physics: const BouncingScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+          maxCrossAxisExtent: widget.state.fileDisplaySize,
+          crossAxisSpacing: 2,
+          mainAxisSpacing: 2,
+          childAspectRatio: 1.0,
+        ),
+        itemCount: files.length,
+        itemBuilder: (ctx, index) {
+          final file = files[index];
+          final segments = file.uri.pathSegments
+              .where((s) => s.isNotEmpty)
+              .toList();
+          final fileName = segments.isEmpty
+              ? context.text('未知', 'Unknown')
+              : segments.last;
+          final (icon, iconColor) = _getFileIconAndColor(file.path);
+          return _GridFileCard(
+            file: file,
+            fileName: fileName,
+            icon: icon,
+            iconColor: iconColor,
+            isImage: _isImage(file.path),
+            isDark: widget.isDark,
+            onOpen: () => widget.state.openFile(file),
+            onDelete: () => widget.state.deleteFile(file),
+            onContextMenu: (ctx, pos) => _showContextMenu(
+              ctx,
+              pos,
+              file,
+              () => widget.state.deleteFile(file),
+            ),
+          );
+        },
       ),
-      itemCount: files.length,
-      itemBuilder: (ctx, index) {
-        final file = files[index];
-        final segments = file.uri.pathSegments
-            .where((s) => s.isNotEmpty)
-            .toList();
-        final fileName = segments.isEmpty ? context.text('未知', 'Unknown') : segments.last;
-        final (icon, iconColor) = _getFileIconAndColor(file.path);
-        return _GridFileCard(
-          file: file,
-          fileName: fileName,
-          icon: icon,
-          iconColor: iconColor,
-          isImage: _isImage(file.path),
-          isDark: widget.isDark,
-          onOpen: () => widget.state.openFile(file),
-          onDelete: () => widget.state.deleteFile(file),
-          onContextMenu: (ctx, pos) => _showContextMenu(
-            ctx,
-            pos,
-            file,
-            () => widget.state.deleteFile(file),
-          ),
-        );
-      },
-    ),);
+    );
   }
 
   Widget _buildDetailsView(List<FileSystemEntity> files) {
@@ -958,51 +987,57 @@ class _FilesPaneState extends State<FilesPane> {
               return false;
             },
             child: ListView.builder(
-            key: const PageStorageKey('files_details_view'),
-            controller: _detailsScrollController,
-            itemCount: files.length,
-            physics: const BouncingScrollPhysics(),
-            itemBuilder: (ctx, index) {
-              final file = files[index];
-              final segments = file.uri.pathSegments
-                  .where((s) => s.isNotEmpty)
-                  .toList();
-              final fileName = segments.isEmpty ? context.text('未知', 'Unknown') : segments.last;
-              final (icon, iconColor) = _getFileIconAndColor(file.path);
-              final stat = widget.state.getCachedFileStat(file.path) ??
-                  (file.existsSync() ? file.statSync() : null);
-              final isDir = widget.state.getCachedIsDirectory(file.path);
-              final sizeStr = isDir
-                  ? '—'
-                  : (stat != null ? formatFileSize(stat.size) : '—');
+              key: const PageStorageKey('files_details_view'),
+              controller: _detailsScrollController,
+              itemCount: files.length,
+              physics: const BouncingScrollPhysics(),
+              itemBuilder: (ctx, index) {
+                final file = files[index];
+                final segments = file.uri.pathSegments
+                    .where((s) => s.isNotEmpty)
+                    .toList();
+                final fileName = segments.isEmpty
+                    ? context.text('未知', 'Unknown')
+                    : segments.last;
+                final (icon, iconColor) = _getFileIconAndColor(file.path);
+                final stat =
+                    widget.state.getCachedFileStat(file.path) ??
+                    (file.existsSync() ? file.statSync() : null);
+                final isDir = widget.state.getCachedIsDirectory(file.path);
+                final sizeStr = isDir
+                    ? '—'
+                    : (stat != null ? formatFileSize(stat.size) : '—');
 
-              String dateStr = '—';
-              if (stat != null) {
-                final date = Platform.isWindows ? stat.changed : stat.modified;
-                dateStr =
-                    '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-              }
+                String dateStr = '—';
+                if (stat != null) {
+                  final date = Platform.isWindows
+                      ? stat.changed
+                      : stat.modified;
+                  dateStr =
+                      '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                }
 
-              return _DetailsFileCard(
-                file: file,
-                fileName: fileName,
-                sizeStr: sizeStr,
-                dateStr: dateStr,
-                icon: icon,
-                iconColor: iconColor,
-                isImage: _isImage(file.path),
-                isDark: widget.isDark,
-                onOpen: () => widget.state.openFile(file),
-                onDelete: () => widget.state.deleteFile(file),
-                onContextMenu: (ctx, pos) => _showContextMenu(
-                  ctx,
-                  pos,
-                  file,
-                  () => widget.state.deleteFile(file),
-                ),
-              );
-            },
-          ),),
+                return _DetailsFileCard(
+                  file: file,
+                  fileName: fileName,
+                  sizeStr: sizeStr,
+                  dateStr: dateStr,
+                  icon: icon,
+                  iconColor: iconColor,
+                  isImage: _isImage(file.path),
+                  isDark: widget.isDark,
+                  onOpen: () => widget.state.openFile(file),
+                  onDelete: () => widget.state.deleteFile(file),
+                  onContextMenu: (ctx, pos) => _showContextMenu(
+                    ctx,
+                    pos,
+                    file,
+                    () => widget.state.deleteFile(file),
+                  ),
+                );
+              },
+            ),
+          ),
         ),
       ],
     );
@@ -1049,7 +1084,7 @@ class _SearchBar extends StatelessWidget {
         textAlignVertical: TextAlignVertical.center,
         style: const TextStyle(fontSize: 12),
         decoration: InputDecoration(
-          hintText: context.text('搜索暂存文件...', 'Search staged files...'),
+          hintText: context.text('搜索文件...', 'Search files...'),
           hintStyle: TextStyle(
             fontSize: 12,
             color: isDark ? Colors.white30 : Colors.black54,
@@ -1396,7 +1431,11 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
             if (mounted) {
               setState(() {
                 _textContent = content.length > 4000
-                    ? '${content.substring(0, 4000)}\n' + context.text('...(仅预览前 4000 字符)', '...(Previewing first 4000 characters only)')
+                    ? '${content.substring(0, 4000)}\n' +
+                          context.text(
+                            '...(仅预览前 4000 字符)',
+                            '...(Previewing first 4000 characters only)',
+                          )
                     : content;
                 _loadingText = false;
               });
@@ -1415,7 +1454,8 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
     final subColor = widget.isDark ? Colors.white54 : Colors.black45;
 
     // File metadata
-    final stat = AppState().getCachedFileStat(widget.file.path) ??
+    final stat =
+        AppState().getCachedFileStat(widget.file.path) ??
         (widget.file.existsSync() ? widget.file.statSync() : null);
     final size = stat != null ? _FilesPaneState.formatFileSize(stat.size) : '—';
     final creationTime = stat != null
@@ -1604,10 +1644,19 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
         children: [
           Icon(Icons.description_outlined, size: 52, color: subColor),
           const SizedBox(height: 12),
-          Text(context.text('此文件类型不支持预览', 'Preview not supported for this file type'), style: TextStyle(fontSize: 13, color: subColor)),
+          Text(
+            context.text(
+              '此文件类型不支持预览',
+              'Preview not supported for this file type',
+            ),
+            style: TextStyle(fontSize: 13, color: subColor),
+          ),
           const SizedBox(height: 4),
           Text(
-            context.text('点击「用应用打开」在外部程序中查看', 'Click "Open with App" to view in an external program'),
+            context.text(
+              '点击「用应用打开」在外部程序中查看',
+              'Click "Open with App" to view in an external program',
+            ),
             style: TextStyle(fontSize: 11, color: subColor),
           ),
         ],
