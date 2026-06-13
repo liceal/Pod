@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import '../services/app_state.dart';
+import '../utils/localization.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
 
@@ -79,7 +80,9 @@ class _FilesPaneState extends State<FilesPane> {
     final count = await widget.state.pasteClipboardIntoFiles();
     if (!mounted) return;
 
-    final message = count > 0 ? '已粘贴到暂存区' : '剪贴板里没有可暂存的文件或图片';
+    final message = count > 0
+        ? context.text('已粘贴到暂存区', 'Pasted to staging area')
+        : context.text('剪贴板里没有可暂存的文件或图片', 'No storable files or images found in clipboard');
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message, style: const TextStyle(fontSize: 11)),
@@ -117,7 +120,9 @@ class _FilesPaneState extends State<FilesPane> {
               const Icon(Icons.open_in_new_rounded, size: 14),
               const SizedBox(width: 8),
               Text(
-                isDir ? '打开文件夹' : '打开文件',
+                isDir
+                    ? context.text('打开文件夹', 'Open Folder')
+                    : context.text('打开文件', 'Open File'),
                 style: const TextStyle(fontSize: 11),
               ),
             ],
@@ -131,7 +136,9 @@ class _FilesPaneState extends State<FilesPane> {
               const Icon(Icons.folder_open_rounded, size: 14),
               const SizedBox(width: 8),
               Text(
-                Platform.isMacOS ? '在 Finder 中显示' : '在资源管理器中显示',
+                Platform.isMacOS
+                    ? context.text('在 Finder 中显示', 'Reveal in Finder')
+                    : context.text('在资源管理器中显示', 'Reveal in File Explorer'),
                 style: const TextStyle(fontSize: 11),
               ),
             ],
@@ -145,7 +152,9 @@ class _FilesPaneState extends State<FilesPane> {
               const Icon(Icons.copy_rounded, size: 14),
               const SizedBox(width: 8),
               Text(
-                isDir ? '复制文件夹路径' : '复制文件路径',
+                isDir
+                    ? context.text('复制文件夹路径', 'Copy Folder Path')
+                    : context.text('复制文件路径', 'Copy File Path'),
                 style: const TextStyle(fontSize: 11),
               ),
             ],
@@ -164,7 +173,9 @@ class _FilesPaneState extends State<FilesPane> {
               ),
               const SizedBox(width: 8),
               Text(
-                isDir ? '删除文件夹' : '删除文件',
+                isDir
+                    ? context.text('删除文件夹', 'Delete Folder')
+                    : context.text('删除文件', 'Delete File'),
                 style: TextStyle(
                   fontSize: 11,
                   color: isDark ? Colors.red[300] : Colors.red[700],
@@ -195,7 +206,9 @@ class _FilesPaneState extends State<FilesPane> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                isDir ? '文件夹路径已复制到剪贴板' : '文件路径已复制到剪贴板',
+                isDir
+                    ? context.text('文件夹路径已复制到剪贴板', 'Folder path copied to clipboard')
+                    : context.text('文件路径已复制到剪贴板', 'File path copied to clipboard'),
                 style: const TextStyle(fontSize: 11),
               ),
               duration: const Duration(seconds: 1),
@@ -337,7 +350,7 @@ class _FilesPaneState extends State<FilesPane> {
             ),
             const SizedBox(height: 8),
             Text(
-              '正在加载暂存区...',
+              context.text('正在加载暂存区...', 'Loading staging area...'),
               style: TextStyle(
                 fontSize: 11,
                 color: widget.isDark
@@ -378,7 +391,7 @@ class _FilesPaneState extends State<FilesPane> {
                     ),
                     const SizedBox(width: 2),
                     Tooltip(
-                      message: '粘贴文件或图片',
+                      message: context.text('粘贴文件或图片', 'Paste files or images'),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: AnimatedPress(
@@ -439,7 +452,7 @@ class _FilesPaneState extends State<FilesPane> {
                       const SizedBox(width: 2),
                     ],
                     Tooltip(
-                      message: '调整显示大小',
+                      message: context.text('调整显示大小', 'Adjust display size'),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: AnimatedPress(
@@ -531,8 +544,8 @@ class _FilesPaneState extends State<FilesPane> {
                               const SizedBox(height: 6),
                               Text(
                                 _searchQuery.isNotEmpty
-                                    ? '未找到匹配文件'
-                                    : '拖拽文件到此处暂存',
+                                    ? context.text('未找到匹配文件', 'No matching files found')
+                                    : context.text('拖拽文件到此处暂存', 'Drag & drop files here to stage'),
                                 style: TextStyle(
                                   fontSize: 11,
                                   color: widget.isDark
@@ -579,7 +592,7 @@ class _FilesPaneState extends State<FilesPane> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        '释放文件以暂存',
+                        context.text('释放文件以暂存', 'Drop files to stage'),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.w600,
@@ -685,19 +698,25 @@ class _FilesPaneState extends State<FilesPane> {
 
   void _showNewNameDialog(BuildContext context, bool isFolder) async {
     final textController = TextEditingController(
-      text: isFolder ? '新建文件夹' : '新建文件.txt',
+      text: isFolder
+          ? context.text('新建文件夹', 'New Folder')
+          : context.text('新建文件.txt', 'New File.txt'),
     );
     widget.state.setDialogOpen(true);
     await showDialog(
       context: context,
       barrierColor: Colors.transparent,
       builder: (ctx) => AlertDialog(
-        title: Text(isFolder ? '新建文件夹' : '新建文件'),
+        title: Text(isFolder
+            ? context.text('新建文件夹', 'New Folder')
+            : context.text('新建文件', 'New File')),
         content: TextField(
           controller: textController,
           autofocus: true,
           decoration: InputDecoration(
-            hintText: isFolder ? '请输入文件夹名称' : '请输入文件名称',
+            hintText: isFolder
+                ? context.text('请输入文件夹名称', 'Please enter folder name')
+                : context.text('请输入文件名称', 'Please enter file name'),
           ),
           onSubmitted: (val) async {
             final name = val.trim();
@@ -714,11 +733,11 @@ class _FilesPaneState extends State<FilesPane> {
         ),
         actions: [
           TextButton(
-            child: const Text('取消'),
+            child: Text(context.text('取消', 'Cancel')),
             onPressed: () => Navigator.of(ctx).pop(),
           ),
           TextButton(
-            child: const Text('创建'),
+            child: Text(context.text('创建', 'Create')),
             onPressed: () async {
               final name = textController.text.trim();
               if (name.isNotEmpty) {
@@ -756,49 +775,49 @@ class _FilesPaneState extends State<FilesPane> {
         Offset.zero & overlay.size,
       ),
       items: [
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'paste',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.content_paste_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('粘贴文件或图片', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.content_paste_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(context.text('粘贴文件或图片', 'Paste Files/Images'), style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
         const PopupMenuDivider(height: 1),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'new_file',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.note_add_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('新建文件', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.note_add_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(context.text('新建文件', 'New File'), style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'new_folder',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.create_new_folder_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('新建文件夹', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.create_new_folder_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(context.text('新建文件夹', 'New Folder'), style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
         const PopupMenuDivider(height: 1),
-        const PopupMenuItem<String>(
+        PopupMenuItem<String>(
           value: 'open_folder',
           height: 32,
           child: Row(
             children: [
-              Icon(Icons.folder_open_rounded, size: 14),
-              SizedBox(width: 8),
-              Text('打开暂存目录', style: TextStyle(fontSize: 11)),
+              const Icon(Icons.folder_open_rounded, size: 14),
+              const SizedBox(width: 8),
+              Text(context.text('打开暂存目录', 'Open Staging Folder'), style: const TextStyle(fontSize: 11)),
             ],
           ),
         ),
@@ -855,7 +874,7 @@ class _FilesPaneState extends State<FilesPane> {
         final segments = file.uri.pathSegments
             .where((s) => s.isNotEmpty)
             .toList();
-        final fileName = segments.isEmpty ? '未知' : segments.last;
+        final fileName = segments.isEmpty ? context.text('未知', 'Unknown') : segments.last;
         final (icon, iconColor) = _getFileIconAndColor(file.path);
         return _GridFileCard(
           file: file,
@@ -888,7 +907,7 @@ class _FilesPaneState extends State<FilesPane> {
             children: [
               Expanded(
                 child: Text(
-                  '名称',
+                  context.text('名称', 'Name'),
                   style: TextStyle(
                     fontSize: 10 * scaleFactor,
                     fontWeight: FontWeight.bold,
@@ -900,7 +919,7 @@ class _FilesPaneState extends State<FilesPane> {
               SizedBox(
                 width: 50 * scaleFactor,
                 child: Text(
-                  '大小',
+                  context.text('大小', 'Size'),
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     fontSize: 10 * scaleFactor,
@@ -913,7 +932,7 @@ class _FilesPaneState extends State<FilesPane> {
               SizedBox(
                 width: 65 * scaleFactor,
                 child: Text(
-                  '创建时间',
+                  context.text('创建时间', 'Created'),
                   textAlign: TextAlign.right,
                   style: TextStyle(
                     fontSize: 10 * scaleFactor,
@@ -948,7 +967,7 @@ class _FilesPaneState extends State<FilesPane> {
               final segments = file.uri.pathSegments
                   .where((s) => s.isNotEmpty)
                   .toList();
-              final fileName = segments.isEmpty ? '未知' : segments.last;
+              final fileName = segments.isEmpty ? context.text('未知', 'Unknown') : segments.last;
               final (icon, iconColor) = _getFileIconAndColor(file.path);
               final stat = widget.state.getCachedFileStat(file.path) ??
                   (file.existsSync() ? file.statSync() : null);
@@ -1030,7 +1049,7 @@ class _SearchBar extends StatelessWidget {
         textAlignVertical: TextAlignVertical.center,
         style: const TextStyle(fontSize: 12),
         decoration: InputDecoration(
-          hintText: '搜索暂存文件...',
+          hintText: context.text('搜索暂存文件...', 'Search staged files...'),
           hintStyle: TextStyle(
             fontSize: 12,
             color: isDark ? Colors.white30 : Colors.black54,
@@ -1377,7 +1396,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
             if (mounted) {
               setState(() {
                 _textContent = content.length > 4000
-                    ? '${content.substring(0, 4000)}\n...(仅预览前 4000 字符)'
+                    ? '${content.substring(0, 4000)}\n' + context.text('...(仅预览前 4000 字符)', '...(Previewing first 4000 characters only)')
                     : content;
                 _loadingText = false;
               });
@@ -1483,7 +1502,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
                           borderRadius: BorderRadius.circular(6),
                         ),
                         child: Text(
-                          '删除',
+                          context.text('删除', 'Delete'),
                           style: TextStyle(
                             fontSize: 12,
                             color: widget.isDark
@@ -1508,8 +1527,8 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
                           color: Theme.of(context).colorScheme.primary,
                           borderRadius: BorderRadius.circular(6),
                         ),
-                        child: const Text(
-                          '用应用打开',
+                        child: Text(
+                          context.text('用应用打开', 'Open with App'),
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.white,
@@ -1544,7 +1563,7 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
                   Icon(Icons.broken_image_outlined, size: 48, color: subColor),
                   const SizedBox(height: 8),
                   Text(
-                    '无法加载图片',
+                    context.text('无法加载图片', 'Failed to load image'),
                     style: TextStyle(color: subColor, fontSize: 12),
                   ),
                 ],
@@ -1585,10 +1604,10 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
         children: [
           Icon(Icons.description_outlined, size: 52, color: subColor),
           const SizedBox(height: 12),
-          Text('此文件类型不支持预览', style: TextStyle(fontSize: 13, color: subColor)),
+          Text(context.text('此文件类型不支持预览', 'Preview not supported for this file type'), style: TextStyle(fontSize: 13, color: subColor)),
           const SizedBox(height: 4),
           Text(
-            '点击「用应用打开」在外部程序中查看',
+            context.text('点击「用应用打开」在外部程序中查看', 'Click "Open with App" to view in an external program'),
             style: TextStyle(fontSize: 11, color: subColor),
           ),
         ],

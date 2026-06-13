@@ -1,3 +1,5 @@
+import 'dart:ui';
+
 enum TriggerMode { both, hotkeyOnly, hoverOnly, scrollOnly }
 
 enum PanelPane { clipboard, files, notes }
@@ -11,6 +13,8 @@ class AppSettings {
   static const double maxTextContentFontSize = 22.0;
   static const int defaultAutoCollapseDelay = 3;
   static const int maxAutoCollapseDelay = 30;
+  static const String defaultLanguageCode = 'zh';
+  static const List<String> supportedLanguageCodes = ['system', 'zh', 'en'];
   static const List<PanelPane> defaultPanelOrder = [
     PanelPane.clipboard,
     PanelPane.files,
@@ -37,9 +41,17 @@ class AppSettings {
   final List<PanelPane> panelOrder;
   final Map<PanelPane, double> panelWeights;
   final double textContentFontSize;
+  final String languageCode;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
+  Locale? get locale {
+    return switch (languageCode) {
+      'zh' => const Locale('zh', 'CN'),
+      'en' => const Locale('en', 'US'),
+      _ => null,
+    };
+  }
 
   AppSettings({
     this.triggerMode = TriggerMode.both,
@@ -59,6 +71,7 @@ class AppSettings {
     List<PanelPane>? panelOrder,
     Map<PanelPane, double>? panelWeights,
     double? textContentFontSize,
+    String? languageCode,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
@@ -67,7 +80,8 @@ class AppSettings {
        autoCollapseDelay = normalizeAutoCollapseDelay(autoCollapseDelay),
        panelOrder = normalizePanelOrder(panelOrder),
        panelWeights = normalizePanelWeights(panelWeights),
-       textContentFontSize = normalizeTextContentFontSize(textContentFontSize);
+       textContentFontSize = normalizeTextContentFontSize(textContentFontSize),
+       languageCode = normalizeLanguageCode(languageCode);
 
   static int normalizeClipboardHistoryLimit(int? value) {
     return (value ?? defaultClipboardHistoryLimit)
@@ -85,6 +99,13 @@ class AppSettings {
     return (value ?? defaultAutoCollapseDelay)
         .clamp(0, maxAutoCollapseDelay)
         .toInt();
+  }
+
+  static String normalizeLanguageCode(String? value) {
+    if (value == null || !supportedLanguageCodes.contains(value)) {
+      return defaultLanguageCode;
+    }
+    return value;
   }
 
   static List<PanelPane> normalizePanelOrder(List<PanelPane>? value) {
@@ -138,6 +159,7 @@ class AppSettings {
     List<PanelPane>? panelOrder,
     Map<PanelPane, double>? panelWeights,
     double? textContentFontSize,
+    String? languageCode,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -158,6 +180,7 @@ class AppSettings {
       panelOrder: panelOrder ?? this.panelOrder,
       panelWeights: panelWeights ?? this.panelWeights,
       textContentFontSize: textContentFontSize ?? this.textContentFontSize,
+      languageCode: languageCode ?? this.languageCode,
     );
   }
 
@@ -180,6 +203,7 @@ class AppSettings {
       'panelOrder': panelOrder.map((pane) => pane.name).toList(),
       'panelWeights': panelWeights.map((pane, w) => MapEntry(pane.name, w)),
       'textContentFontSize': textContentFontSize,
+      'languageCode': languageCode,
     };
   }
 
@@ -254,6 +278,7 @@ class AppSettings {
       textContentFontSize:
           (json['textContentFontSize'] as num?)?.toDouble() ??
           (json['noteEditorFontSize'] as num?)?.toDouble(),
+      languageCode: json['languageCode'] as String?,
     );
   }
 }

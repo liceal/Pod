@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
+import '../utils/localization.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../models/clipboard_item.dart';
@@ -82,9 +83,11 @@ class _ClipboardPaneState extends State<ClipboardPane> {
             child: Text(
               _showFavoritesOnly
                   ? (_searchController.text.isNotEmpty
-                        ? '没有找到匹配的收藏项'
-                        : '没有收藏的记录')
-                  : (_searchController.text.isNotEmpty ? '没有找到匹配项' : '剪贴板历史为空'),
+                        ? context.text('没有找到匹配的收藏项', 'No matching favorites found')
+                        : context.text('没有收藏的记录', 'No favorites recorded'))
+                  : (_searchController.text.isNotEmpty
+                        ? context.text('没有找到匹配项', 'No matching items found')
+                        : context.text('剪贴板历史为空', 'Clipboard history is empty')),
               style: TextStyle(
                 fontSize: 12,
                 color: widget.isDark
@@ -168,8 +171,8 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                         style: const TextStyle(fontSize: 12),
                         decoration: InputDecoration(
                           hintText: _showFavoritesOnly
-                              ? '搜索收藏记录...'
-                              : '搜索剪贴板记录...',
+                              ? context.text('搜索收藏记录...', 'Search favorites...')
+                              : context.text('搜索剪贴板记录...', 'Search clipboard history...'),
                           hintStyle: TextStyle(
                             fontSize: 12,
                             color: widget.isDark
@@ -223,20 +226,20 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                                                 barrierColor:
                                                     Colors.transparent,
                                                 builder: (ctx) => AlertDialog(
-                                                  title: const Text('清空剪贴板历史？'),
-                                                  content: const Text(
-                                                    '这将删除所有的剪贴板历史记录，此操作不可撤销。',
+                                                  title: Text(context.text('清空剪贴板历史？', 'Clear Clipboard History?')),
+                                                  content: Text(
+                                                    context.text('这将删除所有的剪贴板历史记录，此操作不可撤销。', 'This will delete all clipboard history. This action cannot be undone.'),
                                                   ),
                                                   actions: [
                                                     TextButton(
-                                                      child: const Text('取消'),
+                                                      child: Text(context.text('取消', 'Cancel')),
                                                       onPressed: () =>
                                                           Navigator.of(
                                                             ctx,
                                                           ).pop(),
                                                     ),
                                                     TextButton(
-                                                      child: const Text('立即清空'),
+                                                      child: Text(context.text('立即清空', 'Clear Now')),
                                                       onPressed: () {
                                                         widget.state
                                                             .clearClipboardHistory();
@@ -272,7 +275,9 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                   ),
                   const SizedBox(width: 2),
                   Tooltip(
-                    message: _showFavoritesOnly ? '所有记录' : '收藏记录',
+                    message: _showFavoritesOnly
+                        ? context.text('所有记录', 'All Records')
+                        : context.text('收藏记录', 'Favorites Only'),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
@@ -545,7 +550,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                 Container(
                   margin: const EdgeInsets.only(right: 6),
                   child: Tooltip(
-                    message: widget.item.appName ?? '未知应用',
+                    message: widget.item.appName ?? context.text('未知应用', 'Unknown App'),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -694,7 +699,7 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                             ),
                             const SizedBox(width: 4),
                             Text(
-                              '已复制',
+                               context.text('已复制', 'Copied'),
                               style: TextStyle(
                                 fontSize: 10,
                                 color: themeAccent,
@@ -959,7 +964,7 @@ class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: _saved ? '已保存至桌面' : '保存图片到桌面',
+      message: _saved ? context.text('已保存至桌面', 'Saved to Desktop') : context.text('保存图片到桌面', 'Save Image to Desktop'),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -1016,7 +1021,7 @@ class _HeaderOpenUrlButtonState extends State<_HeaderOpenUrlButton> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: '在浏览器打开链接',
+      message: context.text('在浏览器打开链接', 'Open URL in Browser'),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -1070,7 +1075,7 @@ class _HeaderCopyButtonState extends State<_HeaderCopyButton> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: '复制内容并关闭',
+      message: context.text('复制内容并关闭', 'Copy and Close'),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -1489,7 +1494,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      isImage ? '图片详情' : '内容详情',
+                      isImage ? context.text('图片详情', 'Image Details') : context.text('内容详情', 'Content Details'),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,
@@ -1511,7 +1516,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     if (!isImage && isLargeText) ...[
                       const SizedBox(width: 6),
                       Text(
-                        '(超长文本已优化渲染性能)',
+                        context.text('(超长文本已优化渲染性能)', '(Large text optimized for performance)'),
                         style: TextStyle(
                           fontSize: 14,
                           color: themeAccent.withOpacity(0.8),
@@ -1526,7 +1531,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     if (widget.embedded) ...[
                       _ToolbarButton(
                         icon: Icons.arrow_back_rounded,
-                        tooltip: '返回列表',
+                        tooltip: context.text('返回列表', 'Back to List'),
                         isDark: widget.isDark,
                         onTap: widget.onBack ?? () {},
                       ),
@@ -1536,21 +1541,21 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     if (isImage) ...[
                       _ToolbarButton(
                         icon: Icons.zoom_in_rounded,
-                        tooltip: '放大',
+                        tooltip: context.text('放大', 'Zoom In'),
                         isDark: widget.isDark,
                         onTap: () => _zoom(1.2),
                       ),
                       const SizedBox(width: 4),
                       _ToolbarButton(
                         icon: Icons.zoom_out_rounded,
-                        tooltip: '缩小',
+                        tooltip: context.text('缩小', 'Zoom Out'),
                         isDark: widget.isDark,
                         onTap: () => _zoom(0.8),
                       ),
                       const SizedBox(width: 4),
                       _ToolbarButton(
                         icon: Icons.settings_backup_restore_rounded,
-                        tooltip: '重置',
+                        tooltip: context.text('重置', 'Reset'),
                         isDark: widget.isDark,
                         onTap: _reset,
                       ),
@@ -1562,7 +1567,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         icon: _wrapCodeLines
                             ? Icons.wrap_text_rounded
                             : Icons.short_text_rounded,
-                        tooltip: _wrapCodeLines ? '取消自动换行' : '自动换行',
+                        tooltip: _wrapCodeLines ? context.text('取消自动换行', 'No Wrap') : context.text('自动换行', 'Auto Wrap'),
                         isDark: widget.isDark,
                         onTap: () {
                           final willWrap = !_wrapCodeLines;
@@ -1611,7 +1616,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                     // Close button
                     _ToolbarButton(
                       icon: Icons.close_rounded,
-                      tooltip: widget.embedded ? '返回列表' : '关闭',
+                      tooltip: widget.embedded ? context.text('返回列表', 'Back to List') : context.text('关闭', 'Close'),
                       isDark: widget.isDark,
                       onTap: () {
                         if (widget.embedded) {
@@ -1852,7 +1857,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
-                  opacity < 1.0 ? '透明色' : '不透明',
+                  opacity < 1.0 ? context.text('透明色', 'Transparent') : context.text('不透明', 'Opaque'),
                   style: TextStyle(
                     fontSize: 9,
                     color: themeAccent,
@@ -1900,7 +1905,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         DateFormat('yyyy-MM-dd / HH:mm:ss').format(dt.toUtc()) + ' UTC';
     final isoStr = dt.toIso8601String();
 
-    final weekdays = ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日'];
+    final weekdays = context.isChineseUi
+        ? ['星期一', '星期二', '星期三', '星期四', '星期五', '星期六', '星期日']
+        : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
     final weekdayStr = weekdays[dt.weekday - 1];
 
     final tzOffset = dt.timeZoneOffset;
@@ -1962,15 +1969,15 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
               physics: const BouncingScrollPhysics(),
               child: Column(
                 children: [
-                  _buildFormatCopyRow('本地时间', localStr, themeAccent, textColor),
-                  _buildFormatCopyRow('UTC 时间', utcStr, themeAccent, textColor),
+                  _buildFormatCopyRow(context.text('本地时间', 'Local Time'), localStr, themeAccent, textColor),
+                  _buildFormatCopyRow(context.text('UTC 时间', 'UTC Time'), utcStr, themeAccent, textColor),
                   _buildFormatCopyRow(
                     'ISO 8601',
                     isoStr,
                     themeAccent,
                     textColor,
                   ),
-                  _buildFormatCopyRow('原始戳', text, themeAccent, textColor),
+                  _buildFormatCopyRow(context.text('原始戳', 'Raw Timestamp'), text, themeAccent, textColor),
                 ],
               ),
             ),

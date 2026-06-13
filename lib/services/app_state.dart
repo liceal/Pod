@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -39,6 +40,20 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   // State Variables
   AppSettings settings = AppSettings();
+
+  bool get isChineseUi {
+    final code = settings.languageCode;
+    if (code == 'zh') return true;
+    if (code == 'en') return false;
+    try {
+      final systemLocale = PlatformDispatcher.instance.locale.languageCode;
+      return systemLocale != 'en';
+    } catch (_) {
+      return true;
+    }
+  }
+
+  String text(String zh, String en) => isChineseUi ? zh : en;
   List<ClipboardItem> clipboardHistory = [];
   List<ClipboardItem> clipboardFavorites = [];
   List<FileSystemEntity> storedFiles = [];
@@ -927,6 +942,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   Future<void> updateSettings(AppSettings newSettings) async {
     final oldPath = settings.customFilesPath;
+    final langChanged = settings.languageCode != newSettings.languageCode;
     _settingsSaveDebounce?.cancel();
     settings = newSettings;
     final didTrimClipboardHistory = _trimClipboardHistoryToLimit();
@@ -938,6 +954,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // Reconfigure hooks & window positions
     await _setupHotkeys();
     await applyWindowTriggerConfiguration();
+
+    if (langChanged) {
+      await _setupTray();
+    }
 
     if (oldPath != newSettings.customFilesPath) {
       await _scanStoredFiles();
@@ -1092,12 +1112,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     final menuItems = [
-      MenuItem(key: 'toggle', label: '显示/隐藏 Pod'),
+      MenuItem(
+        key: 'toggle',
+        label: text('显示/隐藏 Pod', 'Show/Hide Pod'),
+      ),
       MenuItem.separator(),
-      MenuItem(key: 'quit', label: '退出'),
+      MenuItem(key: 'quit', label: text('退出', 'Quit')),
     ];
     await trayManager.setContextMenu(Menu(items: menuItems));
-    await trayManager.setToolTip('Pod 助手');
+    await trayManager.setToolTip(text('Pod 助手', 'Pod Helper'));
   }
 
   @override
@@ -1997,7 +2020,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       final newItem = ClipboardItem(
         id: id,
-        content: '[图片]',
+        content: text('[图片]', '[Image]'),
         timestamp: DateTime.now(),
         appName: appName,
         appIconPath: appIconPath,
@@ -2893,7 +2916,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Future<void> createNewFile(String name) async {
     try {
       final basePath = await _getFilesDirectoryPath();
-      var fileName = name.trim().isEmpty ? '新建文件.txt' : name.trim();
+      var fileName = name.trim().isEmpty ? text('新建文件.txt', 'New File.txt') : name.trim();
       var file = File('$basePath/$fileName');
 
       // Handle duplicates by adding suffix
@@ -2919,7 +2942,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Future<void> createNewDirectory(String name) async {
     try {
       final basePath = await _getFilesDirectoryPath();
-      var dirName = name.trim().isEmpty ? '新建文件夹' : name.trim();
+      var dirName = name.trim().isEmpty ? text('新建文件夹', 'New Folder') : name.trim();
       var dir = Directory('$basePath/$dirName');
 
       // Handle duplicates by adding suffix
@@ -3042,8 +3065,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (notes.isEmpty) {
       final defaultNote = Note(
         id: _uuid.v4(),
-        title: '我的便签',
-        content: '欢迎使用快捷便签！在这里您可以随手记录任何内容，它会自动帮您保存...',
+        title: text('我的便签', 'My Notes'),
+        content: text(
+          '欢迎使用快捷便签！在这里您可以随手记录任何内容，它会自动帮您保存...',
+          'Welcome to Quick Notes! Write anything here, it will be saved automatically...',
+        ),
         createdAt: DateTime.now(),
         updatedAt: DateTime.now(),
       );
@@ -3074,7 +3100,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await forceSaveNotesIfPending();
     final newNote = Note(
       id: _uuid.v4(),
-      title: '新建便签 ${notes.length + 1}',
+      title: text('新建便签 ${notes.length + 1}', 'New Note ${notes.length + 1}'),
       content: '',
       createdAt: DateTime.now(),
       updatedAt: DateTime.now(),
@@ -3140,7 +3166,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     final idx = notes.indexWhere((n) => n.id == activeNote!.id);
     if (idx != -1) {
       final updated = activeNote!.copyWith(
-        title: title.isEmpty ? '无标题便签' : title,
+        title: title.isEmpty ? text('无标题便签', 'Untitled Note') : title,
         updatedAt: DateTime.now(),
       );
       notes.removeAt(idx);

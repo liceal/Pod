@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import '../models/note.dart';
 import '../services/app_state.dart';
+import '../utils/localization.dart';
 
 import 'components/animated_press.dart';
 
@@ -339,15 +340,15 @@ class _NotesPaneState extends State<NotesPane> {
       context: context,
       barrierColor: Colors.transparent,
       builder: (ctx) => AlertDialog(
-        title: const Text('删除便签？'),
-        content: const Text('您确定要删除该便签吗？'),
+        title: Text(context.text('删除便签？', 'Delete Note?')),
+        content: Text(context.text('您确定要删除该便签吗？', 'Are you sure you want to delete this note?')),
         actions: [
           TextButton(
-            child: const Text('取消'),
+            child: Text(context.text('取消', 'Cancel')),
             onPressed: () => Navigator.of(ctx).pop(),
           ),
           TextButton(
-            child: const Text('删除'),
+            child: Text(context.text('删除', 'Delete')),
             onPressed: () async {
               final nav = Navigator.of(ctx);
               final deletedActiveNote = _activeNoteId == note.id;
@@ -376,7 +377,7 @@ class _NotesPaneState extends State<NotesPane> {
         .split('\n')
         .where((l) => l.trim().isNotEmpty)
         .toList();
-    if (lines.isEmpty) return '无内容';
+    if (lines.isEmpty) return context.text('无内容', 'No Content');
     return lines.first;
   }
 
@@ -466,7 +467,7 @@ class _NotesPaneState extends State<NotesPane> {
                           minHeight: 22,
                         ),
                         padding: const EdgeInsets.all(2),
-                        tooltip: '删除便签',
+                        tooltip: context.text('删除便签', 'Delete Note'),
                       ),
                     ],
                   ),
@@ -537,7 +538,7 @@ class _NotesPaneState extends State<NotesPane> {
             keyboardType: TextInputType.multiline,
             style: editorTextStyle,
             decoration: InputDecoration(
-              hintText: '开始书写便签内容...',
+              hintText: context.text('开始书写便签内容...', 'Start writing note content...'),
               hintStyle: editorTextStyle.copyWith(
                 color: widget.isDark ? Colors.white24 : Colors.black26,
               ),
@@ -594,7 +595,7 @@ class _NotesPaneState extends State<NotesPane> {
                           textAlignVertical: TextAlignVertical.center,
                           style: const TextStyle(fontSize: 12),
                           decoration: InputDecoration(
-                            hintText: '搜索便签...',
+                            hintText: context.text('搜索便签...', 'Search notes...'),
                             hintStyle: TextStyle(
                               fontSize: 12,
                               color: widget.isDark
@@ -648,7 +649,7 @@ class _NotesPaneState extends State<NotesPane> {
                   const SizedBox(width: 2),
                   if (!_showList) ...[
                     Tooltip(
-                      message: '删除当前便签',
+                      message: context.text('删除当前便签', 'Delete Current Note'),
                       child: MouseRegion(
                         cursor: SystemMouseCursors.click,
                         child: AnimatedPress(
@@ -680,7 +681,7 @@ class _NotesPaneState extends State<NotesPane> {
                     const SizedBox(width: 2),
                   ],
                   Tooltip(
-                    message: '新建便签',
+                    message: context.text('新建便签', 'New Note'),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
@@ -714,7 +715,9 @@ class _NotesPaneState extends State<NotesPane> {
                   ),
                   const SizedBox(width: 2),
                   Tooltip(
-                    message: _showList ? '当前为列表视图' : '返回列表视图',
+                    message: _showList
+                        ? context.text('当前为列表视图', 'Currently list view')
+                        : context.text('返回列表视图', 'Back to list view'),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
@@ -747,7 +750,7 @@ class _NotesPaneState extends State<NotesPane> {
                   ),
                   const SizedBox(width: 2),
                   Tooltip(
-                    message: '设置',
+                    message: context.text('设置', 'Settings'),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(

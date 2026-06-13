@@ -1,0 +1,7 @@
+{
+  "@@locale": "zh",
+  "appTitle": "Pod",
+  "@appTitle": {
+    "description": "Application title"
+  }
+}
