@@ -858,7 +858,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   void setDialogOpen(bool open) {
     isDialogOpen = open;
-    notifyListeners();
+  }
+
+  void cacheFileStat(String path, FileStat stat) {
+    _fileStatCache[path] = stat;
+  }
+
+  void cacheIsDirectory(String path, bool isDir) {
+    _isDirectoryCache[path] = isDir;
   }
 
   void setNoteEditorFocused(bool focused) {
@@ -2452,18 +2459,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return filesDir.path;
   }
 
-  DateTime _getFileTime(FileSystemEntity entity) {
-    try {
-      if (!entity.existsSync()) return DateTime(0);
-      final stat = entity.statSync();
-      // On Windows, stat.changed is creation time (birth time)
-      return Platform.isWindows ? stat.changed : stat.modified;
-    } catch (_) {
-      return DateTime(0);
-    }
-  }
+
 
   Future<void> _scanStoredFiles() async {
+    await _scanStoredFilesInternal(rebuildWatcher: true);
+  }
+
+  Future<void> _scanStoredFilesInternal({required bool rebuildWatcher}) async {
     try {
       final path = await _getFilesDirectoryPath();
       final dir = Directory(path);
@@ -2472,7 +2474,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         _fileStatCache.clear();
         _isDirectoryCache.clear();
         notifyListeners();
-        await _startWatchingFilesDirectory(path);
+        if (rebuildWatcher) {
+          await _startWatchingFilesDirectory(path);
+        }
         return;
       }
 
@@ -2515,7 +2519,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       notifyListeners();
       // 每次扫描后重新建立监听（路径可能刚刚创建）
-      await _startWatchingFilesDirectory(path);
+      if (rebuildWatcher) {
+        await _startWatchingFilesDirectory(path);
+      }
     } catch (e) {
       debugPrint('Error scanning files: $e');
     }
@@ -2727,22 +2733,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   void _rescanWithoutRebuildingWatcher() {
-    _getFilesDirectoryPath().then((path) {
-      try {
-        final dir = Directory(path);
-        storedFiles =
-            dir
-                .listSync()
-                .where((entity) => entity is File || entity is Directory)
-                .toList()
-              ..sort((a, b) {
-                final timeA = _getFileTime(a);
-                final timeB = _getFileTime(b);
-                return timeB.compareTo(timeA);
-              });
-        notifyListeners();
-      } catch (_) {}
-    });
+    _scanStoredFilesInternal(rebuildWatcher: false);
   }
 
   String _fileNameFromPath(String path) {

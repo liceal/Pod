@@ -52,6 +52,8 @@ class _FilesPaneState extends State<FilesPane> {
   bool _showSizeSlider = false;
   String _currentRelativePath = '';
   String? _previewFilePath;
+  String? _lastSubdirPath;
+  List<FileSystemEntity> _cachedSubdirFiles = [];
 
   double _swipeDistance = 0;
   double _trackpadBackSwipeDistance = 0;
@@ -166,15 +168,6 @@ class _FilesPaneState extends State<FilesPane> {
     return '$dataDir/files';
   }
 
-  DateTime _getFileTime(FileSystemEntity entity) {
-    try {
-      if (!entity.existsSync()) return DateTime(0);
-      final stat = entity.statSync();
-      return Platform.isWindows ? stat.changed : stat.modified;
-    } catch (_) {
-      return DateTime(0);
-    }
-  }
 
   void _onFileOpen(FileSystemEntity file) {
     final root = _getFilesDirectoryPathSync();
@@ -227,6 +220,13 @@ class _FilesPaneState extends State<FilesPane> {
     });
   }
 
+  @override
+  void didUpdateWidget(covariant FilesPane oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Invalidate subdirectory cache when the parent widget/AppState updates
+    _lastSubdirPath = null;
+  }
+
   void _onFocusChange() {
     if (mounted && !_paneFocusNode.hasFocus && !widget.state.isDialogOpen) {
       setState(() {
@@ -256,9 +256,9 @@ class _FilesPaneState extends State<FilesPane> {
     'svg',
   ];
 
-  bool _isImage(String path) {
-    if (FileSystemEntity.isDirectorySync(path)) return false;
-    final ext = path.split('.').last.toLowerCase();
+  bool _isImage(FileSystemEntity file) {
+    if (file is Directory) return false;
+    final ext = file.path.split('.').last.toLowerCase();
     return _imageExts.contains(ext);
   }
 
@@ -404,7 +404,7 @@ class _FilesPaneState extends State<FilesPane> {
         Offset.zero & overlay.size,
       ),
       items: [
-        if (!isDir && _isImage(file.path)) ...[
+        if (!isDir && _isImage(file)) ...[
           PopupMenuItem<String>(
             value: 'preview',
             height: 32,
@@ -656,8 +656,9 @@ class _FilesPaneState extends State<FilesPane> {
   }
 
   /// 返回 (图标, 颜色)
-  (IconData, Color) _getFileIconAndColor(String path) {
-    if (FileSystemEntity.isDirectorySync(path)) {
+  (IconData, Color) _getFileIconAndColor(String path, {bool? isDir}) {
+    final isDirectory = isDir ?? widget.state.getCachedIsDirectory(path);
+    if (isDirectory) {
       return (Icons.folder_rounded, const Color(0xFFFFB300));
     }
     final ext = path.split('.').last.toLowerCase();
@@ -766,21 +767,40 @@ class _FilesPaneState extends State<FilesPane> {
       final root = _getFilesDirectoryPathSync();
       final subDir = Directory('$root/$_currentRelativePath');
       if (subDir.existsSync()) {
-        try {
-          final listed =
-              subDir
-                  .listSync()
-                  .where((entity) => entity is File || entity is Directory)
-                  .toList()
-                ..sort((a, b) {
-                  final timeA = _getFileTime(a);
-                  final timeB = _getFileTime(b);
-                  return timeB.compareTo(timeA);
-                });
-          rawFiles.addAll(listed);
-        } catch (e) {
-          debugPrint('Error listing subfolder: $e');
+        final subDirPath = subDir.path;
+        if (_lastSubdirPath != subDirPath) {
+          _lastSubdirPath = subDirPath;
+          try {
+            final listed = subDir
+                .listSync()
+                .where((entity) => entity is File || entity is Directory)
+                .toList();
+
+            // Pre-cache file times and stats to avoid O(N log N) statSync calls during sorting and card building
+            final fileTimes = <String, DateTime>{};
+            for (final entity in listed) {
+              try {
+                final stat = entity.statSync();
+                widget.state.cacheFileStat(entity.path, stat);
+                widget.state.cacheIsDirectory(entity.path, entity is Directory);
+                fileTimes[entity.path] = Platform.isWindows ? stat.changed : stat.modified;
+              } catch (_) {
+                fileTimes[entity.path] = DateTime(0);
+              }
+            }
+
+            listed.sort((a, b) {
+              final timeA = fileTimes[a.path] ?? DateTime(0);
+              final timeB = fileTimes[b.path] ?? DateTime(0);
+              return timeB.compareTo(timeA);
+            });
+            _cachedSubdirFiles = listed;
+          } catch (e) {
+            debugPrint('Error listing subfolder: $e');
+            _cachedSubdirFiles = [];
+          }
         }
+        rawFiles.addAll(_cachedSubdirFiles);
       } else {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -1530,13 +1550,14 @@ class _FilesPaneState extends State<FilesPane> {
           final fileName = segments.isEmpty
               ? context.text('未知', 'Unknown')
               : segments.last;
-          final (icon, iconColor) = _getFileIconAndColor(file.path);
+          final isDir = file is Directory;
+          final (icon, iconColor) = _getFileIconAndColor(file.path, isDir: isDir);
           return _GridFileCard(
             file: file,
             fileName: fileName,
             icon: icon,
             iconColor: iconColor,
-            isImage: _isImage(file.path),
+            isImage: _isImage(file),
             isDark: widget.isDark,
             isSelected: _selectedFilePath == file.path,
             isCut: _cutFilePath == file.path,
@@ -1645,11 +1666,11 @@ class _FilesPaneState extends State<FilesPane> {
                 final fileName = segments.isEmpty
                     ? context.text('未知', 'Unknown')
                     : segments.last;
-                final (icon, iconColor) = _getFileIconAndColor(file.path);
+                final isDir = file is Directory;
+                final (icon, iconColor) = _getFileIconAndColor(file.path, isDir: isDir);
                 final stat =
                     widget.state.getCachedFileStat(file.path) ??
                     (file.existsSync() ? file.statSync() : null);
-                final isDir = widget.state.getCachedIsDirectory(file.path);
                 final sizeStr = isDir
                     ? '—'
                     : (stat != null ? formatFileSize(stat.size) : '—');
@@ -1670,7 +1691,7 @@ class _FilesPaneState extends State<FilesPane> {
                   dateStr: dateStr,
                   icon: icon,
                   iconColor: iconColor,
-                  isImage: _isImage(file.path),
+                  isImage: _isImage(file),
                   isDark: widget.isDark,
                   isSelected: _selectedFilePath == file.path,
                   isCut: _cutFilePath == file.path,
