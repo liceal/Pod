@@ -70,7 +70,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   bool get _isChineseUi {
     if (_languageCode == 'zh') return true;
     if (_languageCode == 'en') return false;
-    return Localizations.localeOf(context).languageCode != 'en';
+    return Localizations.localeOf(context).languageCode == 'zh';
   }
 
   String _text(String zh, String en) => _isChineseUi ? zh : en;
