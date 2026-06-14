@@ -909,6 +909,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // --- Window Listeners ---
   @override
   void onWindowBlur() {
+    // User clicked away — don't restore focus when auto-collapsing later
+    _didGrabFocus = false;
     // 失去焦点时启动自动收起计时器
     if (Platform.isMacOS) {
       isMouseInside = false;
@@ -917,8 +919,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         collapseImmediatelyWhenZero: true,
       );
     }
-    // User clicked away — don't restore focus when auto-collapsing later
-    _didGrabFocus = false;
   }
 
   @override
