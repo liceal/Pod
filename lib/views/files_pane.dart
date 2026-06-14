@@ -440,6 +440,20 @@ class _FilesPaneState extends State<FilesPane> {
             ],
           ),
         ),
+        PopupMenuItem<String>(
+          value: 'rename',
+          height: 32,
+          child: Row(
+            children: [
+              const Icon(Icons.edit_outlined, size: 14),
+              const SizedBox(width: 8),
+              Text(
+                context.text('重命名', 'Rename'),
+                style: const TextStyle(fontSize: 11),
+              ),
+            ],
+          ),
+        ),
         const PopupMenuDivider(height: 1),
         PopupMenuItem<String>(
           value: 'delete',
@@ -502,10 +516,110 @@ class _FilesPaneState extends State<FilesPane> {
           );
         }
         break;
+      case 'rename':
+        if (context.mounted) {
+          _showRenameDialog(context, file);
+        }
+        break;
       case 'delete':
         onDelete();
         break;
     }
+  }
+
+  void _showRenameDialog(BuildContext context, FileSystemEntity file) async {
+    final segments = file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+    final currentName = segments.isNotEmpty ? segments.last : '';
+    final isDir = file is Directory;
+    final textController = TextEditingController(text: currentName);
+
+    // Auto-select filename without extension if it's a file
+    int selectionEnd = currentName.length;
+    if (!isDir && currentName.contains('.')) {
+      selectionEnd = currentName.lastIndexOf('.');
+    }
+    textController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: selectionEnd,
+    );
+
+    widget.state.setDialogOpen(true);
+    await showDialog(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (ctx) => AlertDialog(
+        title: Text(
+          isDir
+              ? context.text('重命名文件夹', 'Rename Folder')
+              : context.text('重命名文件', 'Rename File'),
+        ),
+        content: TextField(
+          controller: textController,
+          autofocus: true,
+          decoration: InputDecoration(
+            hintText: isDir
+                ? context.text('请输入文件夹名称', 'Please enter folder name')
+                : context.text('请输入文件名称', 'Please enter file name'),
+          ),
+          onSubmitted: (val) async {
+            final name = val.trim();
+            if (name.isNotEmpty && name != currentName) {
+              Navigator.of(ctx).pop();
+              final success = await widget.state.renameFile(file, name);
+              if (!success && context.mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(
+                      context.text(
+                        '重命名失败，名称可能已存在',
+                        'Rename failed, name might already exist',
+                      ),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    duration: const Duration(seconds: 2),
+                  ),
+                );
+              }
+            } else {
+              Navigator.of(ctx).pop();
+            }
+          },
+        ),
+        actions: [
+          TextButton(
+            child: Text(context.text('取消', 'Cancel')),
+            onPressed: () => Navigator.of(ctx).pop(),
+          ),
+          TextButton(
+            child: Text(context.text('重命名', 'Rename')),
+            onPressed: () async {
+              final name = textController.text.trim();
+              if (name.isNotEmpty && name != currentName) {
+                Navigator.of(ctx).pop();
+                final success = await widget.state.renameFile(file, name);
+                if (!success && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        context.text(
+                          '重命名失败，名称可能已存在',
+                          'Rename failed, name might already exist',
+                        ),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      duration: const Duration(seconds: 2),
+                    ),
+                  );
+                }
+              } else {
+                Navigator.of(ctx).pop();
+              }
+            },
+          ),
+        ],
+      ),
+    );
+    widget.state.setDialogOpen(false);
   }
 
   /// 返回 (图标, 颜色)

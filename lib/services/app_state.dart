@@ -2940,6 +2940,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Future<bool> renameFile(FileSystemEntity entity, String newName) async {
+    try {
+      if (!entity.existsSync()) return false;
+      final parentPath = entity.parent.path;
+      final newPath = '$parentPath/$newName';
+      if (entity.path == newPath) return true;
+
+      // Check if target name already exists to prevent overwriting
+      if (await FileSystemEntity.type(newPath) != FileSystemEntityType.notFound) {
+        return false;
+      }
+
+      await entity.rename(newPath);
+      return true;
+    } catch (e) {
+      debugPrint('Failed to rename file: $e');
+      return false;
+    } finally {
+      await _scanStoredFiles();
+    }
+  }
+
   Future<void> createNewFile(String name, {Directory? targetDir}) async {
     try {
       final basePath = targetDir?.path ?? await _getFilesDirectoryPath();
