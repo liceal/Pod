@@ -4,6 +4,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:super_drag_and_drop/super_drag_and_drop.dart' as sdd;
 import 'package:pasteboard/pasteboard.dart';
+import 'package:intl/intl.dart';
 import '../services/app_state.dart';
 import '../utils/localization.dart';
 import '../theme/app_theme.dart';
@@ -50,6 +51,7 @@ class _FilesPaneState extends State<FilesPane> {
   String? _cutFilePath;
   bool _showSizeSlider = false;
   String _currentRelativePath = '';
+  String? _previewFilePath;
 
   double _swipeDistance = 0;
   double _trackpadBackSwipeDistance = 0;
@@ -402,6 +404,22 @@ class _FilesPaneState extends State<FilesPane> {
         Offset.zero & overlay.size,
       ),
       items: [
+        if (!isDir && _isImage(file.path)) ...[
+          PopupMenuItem<String>(
+            value: 'preview',
+            height: 32,
+            child: Row(
+              children: [
+                const Icon(Icons.photo_size_select_large_rounded, size: 14),
+                const SizedBox(width: 8),
+                Text(
+                  context.text('预览图片', 'Preview Image'),
+                  style: const TextStyle(fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+        ],
         PopupMenuItem<String>(
           value: 'open',
           height: 32,
@@ -498,6 +516,11 @@ class _FilesPaneState extends State<FilesPane> {
     if (result == null) return;
 
     switch (result) {
+      case 'preview':
+        setState(() {
+          _previewFilePath = file.path;
+        });
+        break;
       case 'open':
         _onFileOpen(file);
         break;
@@ -811,8 +834,20 @@ class _FilesPaneState extends State<FilesPane> {
       children: [
         Padding(
           padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          child: _previewFilePath != null
+              ? _FileDetailPreview(
+                  file: File(_previewFilePath!),
+                  state: widget.state,
+                  isDark: widget.isDark,
+                  accentColor: accentColor,
+                  onBack: () {
+                    setState(() {
+                      _previewFilePath = null;
+                    });
+                  },
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // ── Search + View Toggle ──
               Listener(
@@ -1512,6 +1547,11 @@ class _FilesPaneState extends State<FilesPane> {
               });
             },
             onOpen: () => _onFileOpen(file),
+            onPreview: () {
+              setState(() {
+                _previewFilePath = file.path;
+              });
+            },
             onDelete: () => widget.state.deleteFile(file),
             onContextMenu: (ctx, pos) {
               _paneFocusNode.requestFocus();
@@ -1641,6 +1681,11 @@ class _FilesPaneState extends State<FilesPane> {
                     });
                   },
                   onOpen: () => _onFileOpen(file),
+                  onPreview: () {
+                    setState(() {
+                      _previewFilePath = file.path;
+                    });
+                  },
                   onDelete: () => widget.state.deleteFile(file),
                   onContextMenu: (ctx, pos) {
                     _paneFocusNode.requestFocus();
@@ -1831,6 +1876,7 @@ class _GridFileCard extends StatefulWidget {
   final bool isCut;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
+  final VoidCallback onPreview;
   final VoidCallback onDelete;
   final void Function(BuildContext, Offset) onContextMenu;
 
@@ -1845,6 +1891,7 @@ class _GridFileCard extends StatefulWidget {
     required this.isCut,
     required this.onSelect,
     required this.onOpen,
+    required this.onPreview,
     required this.onDelete,
     required this.onContextMenu,
   });
@@ -1930,26 +1977,57 @@ class _GridFileCardState extends State<_GridFileCard> {
                         Expanded(
                           child: Center(
                             child: widget.isImage
-                                ? ClipRRect(
-                                    borderRadius: BorderRadius.zero,
-                                    child: Image.file(
-                                      File(widget.file.path),
-                                      fit: BoxFit.cover,
-                                      width: double.infinity,
-                                      errorBuilder: (_, __, ___) => Center(
-                                        child: LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            final fallbackIconSize =
-                                                constraints.maxWidth * 0.45;
-                                            return Icon(
-                                              widget.icon,
-                                              size: fallbackIconSize,
-                                              color: widget.iconColor,
-                                            );
-                                          },
+                                ? Stack(
+                                    children: [
+                                      ClipRRect(
+                                        borderRadius: BorderRadius.zero,
+                                        child: Image.file(
+                                          File(widget.file.path),
+                                          fit: BoxFit.cover,
+                                          width: double.infinity,
+                                          height: double.infinity,
+                                          errorBuilder: (_, __, ___) => Center(
+                                            child: LayoutBuilder(
+                                              builder: (context, constraints) {
+                                                final fallbackIconSize =
+                                                    constraints.maxWidth * 0.45;
+                                                return Icon(
+                                                  widget.icon,
+                                                  size: fallbackIconSize,
+                                                  color: widget.iconColor,
+                                                );
+                                              },
+                                            ),
+                                          ),
                                         ),
                                       ),
-                                    ),
+                                      if (_isHovered)
+                                        Positioned(
+                                          top: 2,
+                                          right: 2,
+                                          child: Tooltip(
+                                            message: context.text('预览图片', 'Preview Image'),
+                                            child: GestureDetector(
+                                              onTap: widget.onPreview,
+                                              child: MouseRegion(
+                                                cursor: SystemMouseCursors.click,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(3),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black.withOpacity(0.55),
+                                                    borderRadius: BorderRadius.circular(4),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons.remove_red_eye_rounded,
+                                                    size: 13,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   )
                                 : AspectRatio(
                                     aspectRatio: 1.0,
@@ -2341,6 +2419,7 @@ class _DetailsFileCard extends StatefulWidget {
   final bool isCut;
   final VoidCallback onSelect;
   final VoidCallback onOpen;
+  final VoidCallback onPreview;
   final VoidCallback onDelete;
   final void Function(BuildContext, Offset) onContextMenu;
 
@@ -2357,6 +2436,7 @@ class _DetailsFileCard extends StatefulWidget {
     required this.isCut,
     required this.onSelect,
     required this.onOpen,
+    required this.onPreview,
     required this.onDelete,
     required this.onContextMenu,
   });
@@ -2445,16 +2525,35 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                           borderRadius: BorderRadius.zero,
                         ),
                         child: widget.isImage
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.zero,
-                                child: Image.file(
-                                  File(widget.file.path),
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Icon(
-                                    widget.icon,
-                                    size: 10 * scaleFactor,
-                                    color: widget.iconColor,
-                                  ),
+                            ? Tooltip(
+                                message: context.text('预览图片', 'Preview Image'),
+                                child: GestureDetector(
+                                  onTap: widget.onPreview,
+                                  child: _isHovered
+                                      ? Container(
+                                          color: widget.isDark
+                                              ? Colors.white10
+                                              : Colors.black.withOpacity(0.08),
+                                          child: Icon(
+                                            Icons.remove_red_eye_rounded,
+                                            size: 11 * scaleFactor,
+                                            color: widget.isDark
+                                                ? Colors.white70
+                                                : Colors.black87,
+                                          ),
+                                        )
+                                      : ClipRRect(
+                                          borderRadius: BorderRadius.zero,
+                                          child: Image.file(
+                                            File(widget.file.path),
+                                            fit: BoxFit.cover,
+                                            errorBuilder: (_, __, ___) => Icon(
+                                              widget.icon,
+                                              size: 10 * scaleFactor,
+                                              color: widget.iconColor,
+                                            ),
+                                          ),
+                                        ),
                                 ),
                               )
                             : Icon(
@@ -2569,3 +2668,678 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
     );
   }
 }
+
+// ══════════════════════════════════════════════════
+// File Image Detail Preview Component (In-App)
+// ══════════════════════════════════════════════════
+class _FileDetailPreview extends StatefulWidget {
+  final File file;
+  final AppState state;
+  final bool isDark;
+  final Color accentColor;
+  final VoidCallback onBack;
+
+  const _FileDetailPreview({
+    required this.file,
+    required this.state,
+    required this.isDark,
+    required this.accentColor,
+    required this.onBack,
+  });
+
+  @override
+  State<_FileDetailPreview> createState() => _FileDetailPreviewState();
+}
+
+class _FileDetailPreviewState extends State<_FileDetailPreview> {
+  late final TransformationController _transformationController;
+  int? _imgWidth;
+  int? _imgHeight;
+  String _fileSizeStr = '';
+  double _lastImageViewportWidth = 320.0;
+  double _lastImageViewportHeight = 220.0;
+  double _swipeDistance = 0;
+  double _trackpadBackSwipeDistance = 0;
+  double _trackpadBackSwipeCrossAxisDistance = 0;
+  bool _didTriggerTrackpadBackSwipe = false;
+  bool _isMouseButtonDown = false;
+  bool _ignoreCurrentBackDrag = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _transformationController = TransformationController();
+    _loadFileStats();
+    _resolveImageSize();
+  }
+
+  void _loadFileStats() {
+    try {
+      if (widget.file.existsSync()) {
+        final bytes = widget.file.lengthSync();
+        if (bytes > 1024 * 1024) {
+          _fileSizeStr = '${(bytes / (1024 * 1024)).toStringAsFixed(2)} MB';
+        } else {
+          _fileSizeStr = '${(bytes / 1024).toStringAsFixed(1)} KB';
+        }
+      }
+    } catch (_) {}
+  }
+
+  void _resolveImageSize() {
+    try {
+      final provider = FileImage(widget.file);
+      final stream = provider.resolve(const ImageConfiguration());
+      late final ImageStreamListener listener;
+      var callbackCalled = false;
+      var listenerAttached = false;
+      listener = ImageStreamListener((ImageInfo info, bool _) {
+        callbackCalled = true;
+        if (listenerAttached) {
+          stream.removeListener(listener);
+          listenerAttached = false;
+        }
+        if (mounted) {
+          setState(() {
+            _imgWidth = info.image.width;
+            _imgHeight = info.image.height;
+          });
+        }
+      });
+      stream.addListener(listener);
+      listenerAttached = true;
+      if (callbackCalled && listenerAttached) {
+        stream.removeListener(listener);
+        listenerAttached = false;
+      }
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    _transformationController.dispose();
+    super.dispose();
+  }
+
+  void _zoomAt(double factor, Offset focalPoint) {
+    final matrix = _transformationController.value.clone();
+    final currentScale = matrix.getMaxScaleOnAxis();
+    final targetScale = (currentScale * factor).clamp(0.5, 5.0);
+    final double actualFactor = targetScale / currentScale;
+
+    if ((actualFactor - 1.0).abs() < 0.001) return;
+
+    final double px = focalPoint.dx;
+    final double py = focalPoint.dy;
+
+    final translation = Matrix4.translationValues(px, py, 0.0);
+    final scale = Matrix4.identity()..scale(actualFactor, actualFactor, 1.0);
+    final invTranslation = Matrix4.translationValues(-px, -py, 0.0);
+
+    final transform = translation * scale * invTranslation;
+    _transformationController.value = transform * matrix;
+  }
+
+  void _zoom(double factor) {
+    _zoomAt(
+      factor,
+      Offset(_lastImageViewportWidth / 2, _lastImageViewportHeight / 2),
+    );
+  }
+
+  void _reset() {
+    _transformationController.value = Matrix4.identity();
+  }
+
+  void _handleBackPointerDown(PointerDownEvent event) {
+    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
+      _isMouseButtonDown = true;
+    }
+    if (event.kind == PointerDeviceKind.mouse &&
+        (event.buttons & kBackMouseButton) != 0) {
+      widget.onBack();
+    }
+  }
+
+  void _handleBackPointerUp(PointerUpEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPointerCancel(PointerCancelEvent event) {
+    if (event.kind == PointerDeviceKind.mouse) {
+      _isMouseButtonDown = false;
+    }
+  }
+
+  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
+    if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
+      return;
+    }
+
+    _trackpadBackSwipeDistance += event.panDelta.dx;
+    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
+
+    if (_trackpadBackSwipeDistance > 80 &&
+        _trackpadBackSwipeDistance.abs() >
+            _trackpadBackSwipeCrossAxisDistance * 1.6) {
+      _didTriggerTrackpadBackSwipe = true;
+      widget.onBack();
+    }
+  }
+
+  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
+    _trackpadBackSwipeDistance = 0;
+    _trackpadBackSwipeCrossAxisDistance = 0;
+    _didTriggerTrackpadBackSwipe = false;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textColor = widget.isDark ? Colors.white : Colors.black87;
+    final subColor = widget.isDark ? Colors.white54 : Colors.black45;
+
+    // Get modified time
+    String modifiedTimeStr = '';
+    try {
+      if (widget.file.existsSync()) {
+        final stat = widget.file.statSync();
+        final modTime = Platform.isWindows ? stat.changed : stat.modified;
+        modifiedTimeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(modTime);
+      }
+    } catch (_) {}
+
+    final hasDimension = _imgWidth != null && _imgHeight != null;
+    final infoText = hasDimension
+        ? '$_imgWidth×$_imgHeight ($_fileSizeStr)'
+        : _fileSizeStr;
+
+    // Get basename
+    final segments = widget.file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+    final fileName = segments.isEmpty ? '' : segments.last;
+
+    final detailBody = Container(
+      width: double.infinity,
+      height: double.infinity,
+      padding: EdgeInsets.zero,
+      child: Column(
+        mainAxisSize: MainAxisSize.max,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Container(
+            height: 26.0,
+            padding: const EdgeInsets.symmetric(horizontal: 8.0),
+            alignment: Alignment.center,
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Expanded(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        context.text('图片预览', 'Image Preview'),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: Text(
+                          '$fileName ${modifiedTimeStr.isNotEmpty ? '($modifiedTimeStr)' : ''} ${infoText.isNotEmpty ? '($infoText)' : ''}',
+                          style: TextStyle(fontSize: 10, color: subColor),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _ToolbarButton(
+                      icon: Icons.arrow_back_rounded,
+                      tooltip: context.text('返回列表', 'Back to List'),
+                      isDark: widget.isDark,
+                      onTap: widget.onBack,
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
+                      icon: Icons.zoom_in_rounded,
+                      tooltip: context.text('放大', 'Zoom In'),
+                      isDark: widget.isDark,
+                      onTap: () => _zoom(1.2),
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
+                      icon: Icons.zoom_out_rounded,
+                      tooltip: context.text('缩小', 'Zoom Out'),
+                      isDark: widget.isDark,
+                      onTap: () => _zoom(0.8),
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
+                      icon: Icons.settings_backup_restore_rounded,
+                      tooltip: context.text('重置', 'Reset'),
+                      isDark: widget.isDark,
+                      onTap: _reset,
+                    ),
+                    const SizedBox(width: 8),
+                    _HeaderSaveImageButton(
+                      imagePath: widget.file.path,
+                      isDark: widget.isDark,
+                    ),
+                    const SizedBox(width: 4),
+                    _HeaderCopyFileButton(
+                      filePath: widget.file.path,
+                      isDark: widget.isDark,
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
+                      icon: Icons.open_in_new_rounded,
+                      tooltip: context.text('用应用打开', 'Open with App'),
+                      isDark: widget.isDark,
+                      onTap: () {
+                        widget.state.openFile(widget.file);
+                      },
+                    ),
+                    const SizedBox(width: 4),
+                    _ToolbarButton(
+                      icon: Icons.close_rounded,
+                      tooltip: context.text('返回列表', 'Back to List'),
+                      isDark: widget.isDark,
+                      onTap: widget.onBack,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 2.0),
+
+          // Content
+          Expanded(
+            child: Container(
+              width: double.infinity,
+              padding: EdgeInsets.zero,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  _lastImageViewportWidth = constraints.maxWidth;
+                  _lastImageViewportHeight = constraints.maxHeight;
+
+                  return ClipRRect(
+                    borderRadius: BorderRadius.circular(6),
+                    child: Stack(
+                      children: [
+                        Positioned.fill(
+                          child: RepaintBoundary(
+                            child: CustomPaint(
+                              painter: _FileCheckerboardPainter(
+                                squareSize: 8.0,
+                                lightColor: widget.isDark
+                                    ? const Color(0xFF1C1C1C)
+                                    : Colors.white,
+                                darkColor: widget.isDark
+                                    ? const Color(0xFF141414)
+                                    : const Color(0xFFF2F2F2),
+                              ),
+                            ),
+                          ),
+                        ),
+                        Positioned.fill(
+                          child: RepaintBoundary(
+                            child: InteractiveViewer(
+                              transformationController: _transformationController,
+                              maxScale: 5.0,
+                              minScale: 0.5,
+                              boundaryMargin: const EdgeInsets.all(240.0),
+                              panEnabled: true,
+                              scaleEnabled: true,
+                              trackpadScrollCausesScale: true,
+                              child: SizedBox(
+                                width: double.infinity,
+                                height: double.infinity,
+                                child: Center(
+                                  child: Image.file(
+                                    widget.file,
+                                    fit: BoxFit.contain,
+                                    filterQuality: FilterQuality.medium,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    final detailWithEsc = Shortcuts(
+      shortcuts: const {
+        SingleActivator(LogicalKeyboardKey.escape): DismissIntent(),
+      },
+      child: Actions(
+        actions: {
+          DismissIntent: CallbackAction<DismissIntent>(
+            onInvoke: (_) {
+              widget.onBack();
+              return null;
+            },
+          ),
+        },
+        child: Focus(autofocus: true, child: detailBody),
+      ),
+    );
+
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: _handleBackPointerDown,
+      onPointerUp: _handleBackPointerUp,
+      onPointerCancel: _handleBackPointerCancel,
+      onPointerSignal: (event) {
+        if (event is PointerScrollEvent &&
+            event.scrollDelta.dx > 48 &&
+            event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
+          widget.onBack();
+        }
+      },
+      onPointerPanZoomStart: _handleBackPanZoomStart,
+      onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
+      onPointerPanZoomEnd: _handleBackPanZoomEnd,
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onHorizontalDragStart: (_) {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = _isMouseButtonDown;
+        },
+        onHorizontalDragUpdate: (details) {
+          if (_ignoreCurrentBackDrag) return;
+          _swipeDistance += details.delta.dx;
+        },
+        onHorizontalDragEnd: (details) {
+          if (!_ignoreCurrentBackDrag) {
+            final velocity = details.primaryVelocity ?? 0;
+            if (_swipeDistance > 80 || velocity > 520) {
+              widget.onBack();
+            }
+          }
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
+        },
+        onHorizontalDragCancel: () {
+          _swipeDistance = 0;
+          _ignoreCurrentBackDrag = false;
+        },
+        child: detailWithEsc,
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Checkerboard Background Painter for File Preview
+// ══════════════════════════════════════════════════
+class _FileCheckerboardPainter extends CustomPainter {
+  final double squareSize;
+  final Color lightColor;
+  final Color darkColor;
+
+  _FileCheckerboardPainter({
+    this.squareSize = 8.0,
+    required this.lightColor,
+    required this.darkColor,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paintLight = Paint()..color = lightColor;
+    final paintDark = Paint()..color = darkColor;
+
+    for (double y = 0; y < size.height; y += squareSize) {
+      int row = (y / squareSize).floor();
+      for (double x = 0; x < size.width; x += squareSize) {
+        int col = (x / squareSize).floor();
+        final rect = Rect.fromLTWH(x, y, squareSize, squareSize);
+        if ((row + col) % 2 == 0) {
+          canvas.drawRect(rect, paintLight);
+        } else {
+          canvas.drawRect(rect, paintDark);
+        }
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// ══════════════════════════════════════════════════
+// Save Image to Desktop Action Button Component
+// ══════════════════════════════════════════════════
+class _HeaderSaveImageButton extends StatefulWidget {
+  final String imagePath;
+  final bool isDark;
+
+  const _HeaderSaveImageButton({required this.imagePath, required this.isDark});
+
+  @override
+  State<_HeaderSaveImageButton> createState() => _HeaderSaveImageButtonState();
+}
+
+class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
+  bool _saved = false;
+  bool _hovered = false;
+
+  Future<void> _save() async {
+    try {
+      String? desktopPath;
+      if (Platform.isWindows) {
+        final userProfile = Platform.environment['USERPROFILE'];
+        if (userProfile != null) desktopPath = '$userProfile\\Desktop';
+      } else if (Platform.isMacOS) {
+        final home = Platform.environment['HOME'];
+        if (home != null) desktopPath = '$home/Desktop';
+      }
+      if (desktopPath == null) return;
+
+      final file = File(widget.imagePath);
+      if (!file.existsSync()) return;
+
+      final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
+      final separator = Platform.isWindows ? '\\' : '/';
+      final destFile = File('$desktopPath${separator}Pod_File_$timestamp.png');
+      await file.copy(destFile.path);
+
+      setState(() {
+        _saved = true;
+      });
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) {
+          setState(() {
+            _saved = false;
+          });
+        }
+      });
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: _saved ? context.text('已保存至桌面', 'Saved to Desktop') : context.text('保存图片到桌面', 'Save Image to Desktop'),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: _save,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _saved
+                  ? Colors.green.withOpacity(0.2)
+                  : (_hovered
+                        ? (widget.isDark
+                              ? Colors.white12
+                              : Colors.black.withOpacity(0.06))
+                        : Colors.transparent),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(
+              _saved ? Icons.check_rounded : Icons.save_alt_rounded,
+              size: 14,
+              color: _saved
+                  ? Colors.green
+                  : (widget.isDark ? Colors.white70 : Colors.black87),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Header Copy File Button Component
+// ══════════════════════════════════════════════════
+class _HeaderCopyFileButton extends StatefulWidget {
+  final String filePath;
+  final bool isDark;
+
+  const _HeaderCopyFileButton({required this.filePath, required this.isDark});
+
+  @override
+  State<_HeaderCopyFileButton> createState() => _HeaderCopyFileButtonState();
+}
+
+class _HeaderCopyFileButtonState extends State<_HeaderCopyFileButton> {
+  bool _copied = false;
+  bool _hovered = false;
+
+  Future<void> _copy() async {
+    try {
+      final path = widget.filePath;
+      if (FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+        await Pasteboard.writeFiles([path]);
+        setState(() {
+          _copied = true;
+        });
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) {
+            setState(() {
+              _copied = false;
+            });
+          }
+        });
+      }
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: _copied ? context.text('已复制文件', 'File Copied') : context.text('复制文件', 'Copy File'),
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _hovered = true),
+        onExit: (_) => setState(() => _hovered = false),
+        child: GestureDetector(
+          onTap: _copy,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _copied
+                  ? Colors.green.withOpacity(0.2)
+                  : (_hovered
+                        ? (widget.isDark
+                              ? Colors.white12
+                              : Colors.black.withOpacity(0.06))
+                        : Colors.transparent),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(
+              _copied ? Icons.check_rounded : Icons.copy_all_rounded,
+              size: 14,
+              color: _copied
+                  ? Colors.green
+                  : (widget.isDark ? Colors.white70 : Colors.black87),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════
+// Toolbar Button Component with Hover State
+// ══════════════════════════════════════════════════
+class _ToolbarButton extends StatefulWidget {
+  final IconData icon;
+  final String tooltip;
+  final bool isDark;
+  final VoidCallback onTap;
+
+  const _ToolbarButton({
+    required this.icon,
+    required this.tooltip,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  State<_ToolbarButton> createState() => _ToolbarButtonState();
+}
+
+class _ToolbarButtonState extends State<_ToolbarButton> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: widget.tooltip,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        onEnter: (_) => setState(() => _isHovered = true),
+        onExit: (_) => setState(() => _isHovered = false),
+        child: GestureDetector(
+          onTap: widget.onTap,
+          child: Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: _isHovered
+                  ? (widget.isDark
+                        ? Colors.white12
+                        : Colors.black.withOpacity(0.06))
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Icon(
+              widget.icon,
+              size: 14,
+              color: widget.isDark ? Colors.white70 : Colors.black87,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+

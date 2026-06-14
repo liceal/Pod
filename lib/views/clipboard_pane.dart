@@ -1793,8 +1793,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         '#${parsedColor.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
     final rgbStr = 'rgb($r, $g, $b)';
     final rgbaStr = 'rgba($r, $g, $b, ${opacity.toStringAsFixed(2)})';
-    final flutterStr =
-        'Color(0x${parsedColor.value.toRadixString(16).toUpperCase()})';
 
     return Container(
       constraints: BoxConstraints(maxHeight: contentMaxHeight),
@@ -1850,12 +1848,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   _buildFormatCopyRow('HEX', hexStr, themeAccent, textColor),
                   _buildFormatCopyRow('RGB', rgbStr, themeAccent, textColor),
                   _buildFormatCopyRow('RGBA', rgbaStr, themeAccent, textColor),
-                  _buildFormatCopyRow(
-                    'Flutter',
-                    flutterStr,
-                    themeAccent,
-                    textColor,
-                  ),
                 ],
               ),
             ),

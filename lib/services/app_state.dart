@@ -77,6 +77,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String? _lastSystemClipImageSignature;
   String? _lastAppCopiedImageSignature;
   bool _isCheckingClipboard = false;
+  bool _ignoreNextClipboardCheck = false;
   int? _lastNativeClipboardSequence;
   bool _nativeClipboardSequenceUnavailable = false;
   bool _hasSequenceChanged = false;
@@ -1830,6 +1831,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (_isShuttingDown) return;
       if (_isCheckingClipboard) return;
       _isCheckingClipboard = true;
+      if (_ignoreNextClipboardCheck) {
+        _ignoreNextClipboardCheck = false;
+        final sequence = await _getNativeClipboardSequence();
+        if (sequence != null) {
+          _lastNativeClipboardSequence = sequence;
+        }
+        _isCheckingClipboard = false;
+        return;
+      }
       try {
         // Avoid touching large clipboard payloads unless content changed.
         if (await _shouldSkipUnchangedClipboard()) {
@@ -2049,6 +2059,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> copyToClipboard(ClipboardItem item) async {
+    _ignoreNextClipboardCheck = true;
     if (item.imagePath != null) {
       final file = File(getImagePath(item));
       if (file.existsSync()) {
