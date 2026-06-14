@@ -11,7 +11,7 @@ class AppSettings {
   static const double defaultTextContentFontSize = 12.0;
   static const double minTextContentFontSize = 11.0;
   static const double maxTextContentFontSize = 22.0;
-  static const int defaultAutoCollapseDelay = 3;
+  static const int defaultAutoCollapseDelay = 0;
   static const int maxAutoCollapseDelay = 30;
   static const String defaultLanguageCode = 'zh';
   static const List<String> supportedLanguageCodes = ['system', 'zh', 'en'];
