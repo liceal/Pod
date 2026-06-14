@@ -17,8 +17,8 @@ class AppSettings {
   static const List<String> supportedLanguageCodes = ['system', 'zh', 'en'];
   static const List<PanelPane> defaultPanelOrder = [
     PanelPane.clipboard,
-    PanelPane.files,
     PanelPane.notes,
+    PanelPane.files,
   ];
 
   final TriggerMode triggerMode;

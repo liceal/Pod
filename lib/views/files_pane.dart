@@ -212,6 +212,7 @@ class _FilesPaneState extends State<FilesPane> {
   @override
   void initState() {
     super.initState();
+    _paneFocusNode.addListener(_onFocusChange);
     _searchController.addListener(() {
       setState(() => _searchQuery = _searchController.text);
     });
@@ -224,8 +225,17 @@ class _FilesPaneState extends State<FilesPane> {
     });
   }
 
+  void _onFocusChange() {
+    if (mounted && !_paneFocusNode.hasFocus && !widget.state.isDialogOpen) {
+      setState(() {
+        _selectedFilePath = null;
+      });
+    }
+  }
+
   @override
   void dispose() {
+    _paneFocusNode.removeListener(_onFocusChange);
     _searchController.dispose();
     _gridScrollController.dispose();
     _detailsScrollController.dispose();
@@ -1025,6 +1035,11 @@ class _FilesPaneState extends State<FilesPane> {
                 child: GestureDetector(
                   behavior: HitTestBehavior.opaque,
                   onTapDown: (_) => _paneFocusNode.requestFocus(),
+                  onTap: () {
+                    setState(() {
+                      _selectedFilePath = null;
+                    });
+                  },
                   onSecondaryTapUp: (details) => _showEmptySpaceContextMenu(
                     context,
                     details.globalPosition,
