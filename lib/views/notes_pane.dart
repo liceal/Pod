@@ -40,6 +40,7 @@ class _NotesPaneState extends State<NotesPane> {
   double _swipeDistance = 0;
   bool _isMouseButtonDown = false;
   bool _ignoreCurrentBackDrag = false;
+  bool _disableDragGesture = false;
 
   @override
   void initState() {
@@ -182,6 +183,21 @@ class _NotesPaneState extends State<NotesPane> {
   void _handleBackPointerDown(PointerDownEvent event) {
     if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
       _isMouseButtonDown = true;
+      if (!_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = true;
+          });
+        }
+      }
+    } else {
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
 
     if (_isMouseBackButton(event)) {
@@ -192,12 +208,26 @@ class _NotesPaneState extends State<NotesPane> {
   void _handleBackPointerUp(PointerUpEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
   }
 
   void _handleBackPointerCancel(PointerCancelEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
   }
 
@@ -237,7 +267,9 @@ class _NotesPaneState extends State<NotesPane> {
         final delta = event.panDelta.dy / 30.0;
         final targetFontSize = currentFontSize + delta;
         widget.state.updateTextContentFontSize(targetFontSize);
-        setState(() {});
+        if (mounted) {
+          setState(() {});
+        }
       }
       return;
     }
@@ -281,15 +313,15 @@ class _NotesPaneState extends State<NotesPane> {
       onPointerPanZoomEnd: _handleBackPanZoomEnd,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) {
+        onHorizontalDragStart: _disableDragGesture ? null : (_) {
           _swipeDistance = 0;
           _ignoreCurrentBackDrag = _isMouseButtonDown;
         },
-        onHorizontalDragUpdate: (details) {
+        onHorizontalDragUpdate: _disableDragGesture ? null : (details) {
           if (_ignoreCurrentBackDrag) return;
           _swipeDistance += details.delta.dx;
         },
-        onHorizontalDragEnd: (details) {
+        onHorizontalDragEnd: _disableDragGesture ? null : (details) {
           if (!_ignoreCurrentBackDrag) {
             final velocity = details.primaryVelocity ?? 0;
             if (_swipeDistance > 80 || velocity > 520) {
@@ -299,7 +331,7 @@ class _NotesPaneState extends State<NotesPane> {
           _swipeDistance = 0;
           _ignoreCurrentBackDrag = false;
         },
-        onHorizontalDragCancel: () {
+        onHorizontalDragCancel: _disableDragGesture ? null : () {
           _swipeDistance = 0;
           _ignoreCurrentBackDrag = false;
         },

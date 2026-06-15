@@ -1161,6 +1161,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   double _swipeDistance = 0;
   bool _isMouseButtonDown = false;
   bool _ignoreCurrentBackDrag = false;
+  bool _disableDragGesture = false;
 
   @override
   void initState() {
@@ -1298,7 +1299,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       widget.state.updateTextContentFontSize(
         widget.state.settings.textContentFontSize + direction,
       );
-      setState(() {});
+      if (mounted) {
+        setState(() {});
+      }
       return;
     }
 
@@ -1364,7 +1367,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         final delta = event.panDelta.dy / 30.0;
         final targetFontSize = currentFontSize + delta;
         widget.state.updateTextContentFontSize(targetFontSize);
-        setState(() {});
+        if (mounted) {
+          setState(() {});
+        }
       }
       return;
     }
@@ -1396,6 +1401,21 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   void _handleBackPointerDown(PointerDownEvent event) {
     if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
       _isMouseButtonDown = true;
+      if (!_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = true;
+          });
+        }
+      }
+    } else {
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
 
     if (!widget.embedded) return;
@@ -1408,12 +1428,26 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   void _handleBackPointerUp(PointerUpEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
   }
 
   void _handleBackPointerCancel(PointerCancelEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+      if (_disableDragGesture) {
+        if (mounted) {
+          setState(() {
+            _disableDragGesture = false;
+          });
+        }
+      }
     }
   }
 
@@ -1673,15 +1707,15 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         onPointerPanZoomEnd: _handleBackPanZoomEnd,
         child: GestureDetector(
           behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: (_) {
+          onHorizontalDragStart: _disableDragGesture ? null : (_) {
             _swipeDistance = 0;
             _ignoreCurrentBackDrag = _isMouseButtonDown;
           },
-          onHorizontalDragUpdate: (details) {
+          onHorizontalDragUpdate: _disableDragGesture ? null : (details) {
             if (_ignoreCurrentBackDrag) return;
             _swipeDistance += details.delta.dx;
           },
-          onHorizontalDragEnd: (details) {
+          onHorizontalDragEnd: _disableDragGesture ? null : (details) {
             if (!_ignoreCurrentBackDrag && !_hasHorizontalOverflow) {
               final velocity = details.primaryVelocity ?? 0;
               if (_swipeDistance > 80 || velocity > 520) {
@@ -1691,7 +1725,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
             _swipeDistance = 0;
             _ignoreCurrentBackDrag = false;
           },
-          onHorizontalDragCancel: () {
+          onHorizontalDragCancel: _disableDragGesture ? null : () {
             _swipeDistance = 0;
             _ignoreCurrentBackDrag = false;
           },
