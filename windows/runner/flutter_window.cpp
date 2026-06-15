@@ -258,6 +258,9 @@ bool FlutterWindow::OnCreate() {
           }
           previous_hwnd_ = nullptr;
           result->Success();
+        } else if (call.method_name() == "grabFocus") {
+          RestoreForegroundWindow(GetHandle());
+          result->Success();
         } else {
           result->NotImplemented();
         }

@@ -64,6 +64,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool isAnimating = false;
   bool isDialogOpen = false;
   bool isMouseInside = false;
+  bool isWindowFocused = false;
   bool _isNoteEditorFocused = false;
   int panelActivationVersion = 0;
   double lastCalculatedWidth = 800.0;
@@ -104,6 +105,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Display? _currentDisplay;
   Map<String, double>? _nativeScreenInfo;
   DateTime _lastScrollAction = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime? _lastExpandTime;
   final Map<String, String> _itemTypeCache = {};
 
   // Cache for file metadata to avoid blocking synchronous IO in widget builds
@@ -646,6 +648,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     isAnimating = true;
     isExpanded = true;
     _restoreFocusAfterCollapse = false;
+    _lastExpandTime = DateTime.now();
 
     try {
       final bool shouldFocus =
@@ -709,6 +712,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           _focusManagerChannel.invokeMethod('savePreviousApp');
           await windowManager.show();
           await windowManager.focus();
+          isWindowFocused = true;
+          await _focusManagerChannel.invokeMethod('grabFocus');
         } else {
           await windowManager.show(inactive: true);
         }
@@ -917,20 +922,42 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // --- Window Listeners ---
   @override
   void onWindowBlur() {
+    isWindowFocused = false;
     // User clicked away — don't restore focus when auto-collapsing later
     _didGrabFocus = false;
-    // 失去焦点时启动自动收起计时器
-    if (Platform.isMacOS) {
-      isMouseInside = false;
-      startAutoCollapseTimer(
-        ignoreEditableFocus: true,
-        collapseImmediatelyWhenZero: true,
-      );
+
+    // Windows / macOS: Avoid closing due to transient blur events during launch
+    if (_lastExpandTime != null &&
+        DateTime.now().difference(_lastExpandTime!) <
+            const Duration(milliseconds: 200)) {
+      return;
     }
+
+    isMouseInside = false;
+
+    if (isAnimating) {
+      // If we are currently animating (expanding), check again once it finishes
+      Timer(const Duration(milliseconds: 300), () {
+        if (!isWindowFocused) {
+          startAutoCollapseTimer(
+            ignoreEditableFocus: true,
+            collapseImmediatelyWhenZero: true,
+          );
+        }
+      });
+      return;
+    }
+
+    // 失去焦点时启动自动收起计时器
+    startAutoCollapseTimer(
+      ignoreEditableFocus: true,
+      collapseImmediatelyWhenZero: true,
+    );
   }
 
   @override
   void onWindowFocus() {
+    isWindowFocused = true;
     // Cancel auto-collapse timer when window is focused
     cancelAutoCollapseTimer();
   }
