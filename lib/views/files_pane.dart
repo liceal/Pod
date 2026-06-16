@@ -29,6 +29,14 @@ class _DeleteFileIntent extends Intent {
   const _DeleteFileIntent();
 }
 
+class _UndoIntent extends Intent {
+  const _UndoIntent();
+}
+
+class _RedoIntent extends Intent {
+  const _RedoIntent();
+}
+
 class FilesPane extends StatefulWidget {
   final AppState state;
   final bool isDark;
@@ -55,6 +63,10 @@ class _FilesPaneState extends State<FilesPane> {
   String? _previewFilePath;
   String? _lastSubdirPath;
   List<FileSystemEntity> _cachedSubdirFiles = [];
+  List<FileSystemEntity>? _allRecursiveFiles;
+  String _lastSearchQueryForRecursive = '';
+  List<FileSystemEntity>? _lastStoredFilesState;
+  String _lastRelativePathForSearch = '';
 
 
 
@@ -98,10 +110,67 @@ class _FilesPaneState extends State<FilesPane> {
     });
   }
 
-  String _getBreadcrumbText() {
-    if (_currentRelativePath.isEmpty) return '';
+  Widget _buildBreadcrumbs() {
+    if (_currentRelativePath.isEmpty) return const SizedBox.shrink();
+
     final rootLabel = context.text('文件', 'Files');
-    return '$rootLabel / ${_currentRelativePath.replaceAll('/', ' / ')}';
+    final textStyle = TextStyle(
+      fontSize: 10,
+      fontWeight: FontWeight.w500,
+      color: widget.isDark ? Colors.white30 : Colors.black38,
+    );
+
+    final List<Widget> items = [];
+
+    Widget buildBreadcrumbItem(String label, String path) {
+      return _BreadcrumbItem(
+        label: label,
+        onTap: () {
+          setState(() {
+            _currentRelativePath = path;
+            _searchController.clear();
+            _selectedFilePath = null;
+          });
+        },
+        style: textStyle,
+        isDark: widget.isDark,
+      );
+    }
+
+    items.add(buildBreadcrumbItem(rootLabel, ''));
+
+    final parts = _currentRelativePath.split('/').where((s) => s.isNotEmpty).toList();
+    String currentAccumulatedPath = '';
+    
+    for (int i = 0; i < parts.length; i++) {
+      final part = parts[i];
+      if (currentAccumulatedPath.isEmpty) {
+        currentAccumulatedPath = part;
+      } else {
+        currentAccumulatedPath = '$currentAccumulatedPath/$part';
+      }
+
+      items.add(
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4.0),
+          child: Text(
+            '/',
+            style: textStyle,
+          ),
+        ),
+      );
+
+      items.add(buildBreadcrumbItem(part, currentAccumulatedPath));
+    }
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: items,
+      ),
+    );
   }
 
   @override
@@ -673,7 +742,11 @@ class _FilesPaneState extends State<FilesPane> {
           try {
             final listed = subDir
                 .listSync()
-                .where((entity) => entity is File || entity is Directory)
+                .where((entity) {
+                  if (entity is! File && entity is! Directory) return false;
+                  final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
+                  return !name.startsWith('.');
+                })
                 .toList();
 
             // Pre-cache file times and stats to avoid O(N log N) statSync calls during sorting and card building
@@ -711,6 +784,116 @@ class _FilesPaneState extends State<FilesPane> {
         });
         rawFiles.addAll(widget.state.storedFiles);
       }
+    }
+
+    // Recursive search cache and grouping logic
+    final groups = <SearchResultGroup>[];
+    if (_searchQuery.isNotEmpty) {
+      final root = _getFilesDirectoryPathSync();
+      final searchStartPath = _currentRelativePath.isEmpty
+          ? root
+          : '$root/$_currentRelativePath';
+
+      final storedFiles = widget.state.storedFiles;
+      final bool storedFilesChanged = _lastStoredFilesState == null ||
+          _lastStoredFilesState!.length != storedFiles.length ||
+          !_areListsEqual(_lastStoredFilesState!, storedFiles);
+
+      if (_allRecursiveFiles == null ||
+          _lastSearchQueryForRecursive.isEmpty ||
+          storedFilesChanged ||
+          _lastRelativePathForSearch != _currentRelativePath) {
+        // Perform disk scan
+        final startDir = Directory(searchStartPath);
+        List<FileSystemEntity> listed = [];
+        if (startDir.existsSync()) {
+          try {
+            listed = startDir
+                .listSync(recursive: true)
+                .where((entity) {
+                  if (entity is! File && entity is! Directory) return false;
+                  final relativePath = entity.path.substring(startDir.path.length);
+                  final segments = relativePath.split(Platform.isWindows ? '\\' : '/');
+                  for (final segment in segments) {
+                    if (segment.startsWith('.')) return false;
+                  }
+                  return true;
+                })
+                .toList();
+          } catch (e) {
+            debugPrint('Error listing recursively: $e');
+          }
+        }
+        _allRecursiveFiles = listed;
+        _lastStoredFilesState = List.from(storedFiles);
+        _lastRelativePathForSearch = _currentRelativePath;
+      }
+      _lastSearchQueryForRecursive = _searchQuery;
+
+      // Filter recursively
+      final queryLower = _searchQuery.toLowerCase();
+      final searchFiltered = _allRecursiveFiles!.where((entity) {
+        final segments = entity.uri.pathSegments
+            .where((s) => s.isNotEmpty)
+            .toList();
+        final fileName = segments.isEmpty ? '' : segments.last.toLowerCase();
+        return fileName.contains(queryLower);
+      }).toList();
+
+      // Group by directory
+      final groupsMap = <String, List<FileSystemEntity>>{};
+      for (final entity in searchFiltered) {
+        final parentRel = _getParentRelativePath(entity.path, searchStartPath);
+        groupsMap.putIfAbsent(parentRel, () => []).add(entity);
+      }
+
+      // Build SearchResultGroup objects
+      for (final entry in groupsMap.entries) {
+        final relPath = entry.key;
+        final segments = relPath.split('/').where((s) => s.isNotEmpty).toList();
+        final depth = segments.length;
+        final entities = entry.value;
+
+        // Cache file stats/times for sorting if not already cached
+        final fileTimes = <String, DateTime>{};
+        for (final entity in entities) {
+          try {
+            final stat = widget.state.getCachedFileStat(entity.path) ?? entity.statSync();
+            widget.state.cacheFileStat(entity.path, stat);
+            widget.state.cacheIsDirectory(entity.path, entity is Directory);
+            fileTimes[entity.path] = Platform.isWindows ? stat.changed : stat.modified;
+          } catch (_) {
+            fileTimes[entity.path] = DateTime(0);
+          }
+        }
+
+        // Sort inside group: directories first, then files (sorted by modified time descending)
+        entities.sort((a, b) {
+          final isDirA = a is Directory;
+          final isDirB = b is Directory;
+          if (isDirA && !isDirB) return -1;
+          if (!isDirA && isDirB) return 1;
+          final timeA = fileTimes[a.path] ?? DateTime(0);
+          final timeB = fileTimes[b.path] ?? DateTime(0);
+          return timeB.compareTo(timeA);
+        });
+
+        groups.add(SearchResultGroup(
+          relativeDirPath: relPath,
+          depth: depth,
+          entities: entities,
+        ));
+      }
+
+      // Sort groups by depth ascending, then alphabetically
+      groups.sort((a, b) {
+        final depthCompare = a.depth.compareTo(b.depth);
+        if (depthCompare != 0) return depthCompare;
+        return a.relativeDirPath.compareTo(b.relativeDirPath);
+      });
+    } else {
+      _allRecursiveFiles = null;
+      _lastSearchQueryForRecursive = '';
     }
 
     final files = rawFiles.where((file) {
@@ -966,18 +1149,7 @@ class _FilesPaneState extends State<FilesPane> {
                       ),
                       const SizedBox(width: 4),
                       Expanded(
-                        child: Text(
-                          _getBreadcrumbText(),
-                          style: TextStyle(
-                            fontSize: 10,
-                            color: widget.isDark
-                                ? Colors.white30
-                                : Colors.black38,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
+                        child: _buildBreadcrumbs(),
                       ),
                     ],
                   ),
@@ -1001,7 +1173,7 @@ class _FilesPaneState extends State<FilesPane> {
                   ),
                   child: BackGestureDetector(
                     onBack: _goBack,
-                    child: files.isEmpty
+                    child: (_searchQuery.isNotEmpty ? groups.isEmpty : files.isEmpty)
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -1034,6 +1206,8 @@ class _FilesPaneState extends State<FilesPane> {
                               ],
                             ),
                           )
+                        : _searchQuery.isNotEmpty
+                        ? _buildGroupedSearchView(groups)
                         : _viewMode == _ViewMode.grid
                         ? _buildGridView(files)
                         : _buildDetailsView(files),
@@ -1179,23 +1353,37 @@ class _FilesPaneState extends State<FilesPane> {
         FocusManager.instance.primaryFocus != _paneFocusNode;
 
     return Shortcuts(
-      shortcuts: const {
-        SingleActivator(LogicalKeyboardKey.keyV, control: true):
-            _PasteFilesIntent(),
-        SingleActivator(LogicalKeyboardKey.keyV, meta: true):
-            _PasteFilesIntent(),
-        SingleActivator(LogicalKeyboardKey.keyC, control: true):
-            _CopyFileIntent(),
-        SingleActivator(LogicalKeyboardKey.keyC, meta: true):
-            _CopyFileIntent(),
-        SingleActivator(LogicalKeyboardKey.keyX, control: true):
-            _CutFileIntent(),
-        SingleActivator(LogicalKeyboardKey.keyX, meta: true):
-            _CutFileIntent(),
-        SingleActivator(LogicalKeyboardKey.delete):
-            _DeleteFileIntent(),
-        SingleActivator(LogicalKeyboardKey.backspace):
-            _DeleteFileIntent(),
+      shortcuts: {
+        const SingleActivator(LogicalKeyboardKey.keyV, control: true):
+            const _PasteFilesIntent(),
+        const SingleActivator(LogicalKeyboardKey.keyV, meta: true):
+            const _PasteFilesIntent(),
+        const SingleActivator(LogicalKeyboardKey.keyC, control: true):
+            const _CopyFileIntent(),
+        const SingleActivator(LogicalKeyboardKey.keyC, meta: true):
+            const _CopyFileIntent(),
+        const SingleActivator(LogicalKeyboardKey.keyX, control: true):
+            const _CutFileIntent(),
+        const SingleActivator(LogicalKeyboardKey.keyX, meta: true):
+            const _CutFileIntent(),
+        if (!isInputFocused) ...{
+          const SingleActivator(LogicalKeyboardKey.delete):
+              const _DeleteFileIntent(),
+          const SingleActivator(LogicalKeyboardKey.backspace):
+              const _DeleteFileIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true):
+              const _UndoIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
+              const _UndoIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true):
+              const _RedoIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
+              const _RedoIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyY, control: true):
+              const _RedoIntent(),
+          const SingleActivator(LogicalKeyboardKey.keyY, meta: true):
+              const _RedoIntent(),
+        },
       },
       child: Actions(
         actions: {
@@ -1227,6 +1415,44 @@ class _FilesPaneState extends State<FilesPane> {
             onInvoke: (_) {
               if (!isInputFocused) {
                 _deleteSelectedFile();
+              }
+              return null;
+            },
+          ),
+          _UndoIntent: CallbackAction<_UndoIntent>(
+            onInvoke: (_) async {
+              if (!isInputFocused) {
+                final success = await widget.state.undoLastAction();
+                if (success && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        context.text('已撤销上一次操作', 'Undid last operation'),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                }
+              }
+              return null;
+            },
+          ),
+          _RedoIntent: CallbackAction<_RedoIntent>(
+            onInvoke: (_) async {
+              if (!isInputFocused) {
+                final success = await widget.state.redoLastAction();
+                if (success && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(
+                        context.text('已重做上一次操作', 'Redid last operation'),
+                        style: const TextStyle(fontSize: 11),
+                      ),
+                      duration: const Duration(seconds: 1),
+                    ),
+                  );
+                }
               }
               return null;
             },
@@ -1418,6 +1644,300 @@ class _FilesPaneState extends State<FilesPane> {
         widget.state.openDirectoryPath(currentPath);
         break;
     }
+  }
+
+  bool _areListsEqual(List<FileSystemEntity> a, List<FileSystemEntity> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].path != b[i].path) return false;
+    }
+    return true;
+  }
+
+  String _getParentRelativePath(String entityPath, String startPath) {
+    final parentPath = Directory(entityPath).parent.path;
+    if (parentPath.length <= startPath.length) {
+      return '';
+    }
+    String relative = parentPath.substring(startPath.length);
+    if (relative.startsWith('/') || relative.startsWith('\\')) {
+      relative = relative.substring(1);
+    }
+    return relative.replaceAll('\\', '/');
+  }
+
+  Widget _buildGroupedSearchView(List<SearchResultGroup> groups) {
+    final scaleFactor = (widget.state.fileDisplaySize / 110.0).clamp(0.8, 1.4);
+    final isGrid = _viewMode == _ViewMode.grid;
+
+    return NotificationListener<OverscrollNotification>(
+      onNotification: (notification) {
+        if (notification.overscroll < 0) {
+          if (widget.state.isExpanded && !widget.state.isAnimating) {
+            widget.state.collapsePanel();
+            return true;
+          }
+        }
+        return false;
+      },
+      child: CustomScrollView(
+        key: const PageStorageKey('files_search_grouped_view'),
+        physics: const BouncingScrollPhysics(),
+        slivers: [
+          if (!isGrid) ...[
+            // Table Header for list view
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        context.text('名称', 'Name'),
+                        style: TextStyle(
+                          fontSize: 10 * scaleFactor,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 3),
+                    SizedBox(
+                      width: 50 * scaleFactor,
+                      child: Text(
+                        context.text('大小', 'Size'),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 10 * scaleFactor,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    SizedBox(
+                      width: 65 * scaleFactor,
+                      child: Text(
+                        context.text('创建时间', 'Created'),
+                        textAlign: TextAlign.right,
+                        style: TextStyle(
+                          fontSize: 10 * scaleFactor,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SliverToBoxAdapter(
+              child: Divider(height: 1, thickness: 1, color: Colors.grey),
+            ),
+          ],
+          for (final group in groups) ...[
+            // Directory header sliver
+            SliverToBoxAdapter(
+              child: _buildGroupHeader(group, scaleFactor),
+            ),
+            if (isGrid)
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                sliver: SliverGrid(
+                  gridDelegate: SliverGridDelegateWithMaxCrossAxisExtent(
+                    maxCrossAxisExtent: widget.state.fileDisplaySize,
+                    crossAxisSpacing: 2,
+                    mainAxisSpacing: 2,
+                    childAspectRatio: 1.0,
+                  ),
+                  delegate: SliverChildBuilderDelegate(
+                    (ctx, index) {
+                      final file = group.entities[index];
+                      final segments = file.uri.pathSegments
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      final fileName = segments.isEmpty
+                          ? context.text('未知', 'Unknown')
+                          : segments.last;
+                      final isDir = file is Directory;
+                      final (icon, iconColor) =
+                          _getFileIconAndColor(file.path, isDir: isDir);
+                      return _GridFileCard(
+                        file: file,
+                        fileName: fileName,
+                        icon: icon,
+                        iconColor: iconColor,
+                        isImage: _isImage(file),
+                        isDark: widget.isDark,
+                        isSelected: _selectedFilePath == file.path,
+                        isCut: _cutFilePath == file.path,
+                        onSelect: () {
+                          _paneFocusNode.requestFocus();
+                          setState(() {
+                            _selectedFilePath = file.path;
+                          });
+                        },
+                        onOpen: () => _onFileOpen(file),
+                        onPreview: () {
+                          setState(() {
+                            _previewFilePath = file.path;
+                          });
+                        },
+                        onDelete: () => widget.state.deleteFile(file),
+                        onContextMenu: (ctx, pos) {
+                          _paneFocusNode.requestFocus();
+                          setState(() {
+                            _selectedFilePath = file.path;
+                          });
+                          _showContextMenu(
+                            ctx,
+                            pos,
+                            file,
+                            () => widget.state.deleteFile(file),
+                          );
+                        },
+                      );
+                    },
+                    childCount: group.entities.length,
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: const EdgeInsets.symmetric(horizontal: 12.0),
+                sliver: SliverList(
+                  delegate: SliverChildBuilderDelegate(
+                    (ctx, index) {
+                      final file = group.entities[index];
+                      final segments = file.uri.pathSegments
+                          .where((s) => s.isNotEmpty)
+                          .toList();
+                      final fileName = segments.isEmpty
+                          ? context.text('未知', 'Unknown')
+                          : segments.last;
+                      final isDir = file is Directory;
+                      final (icon, iconColor) =
+                          _getFileIconAndColor(file.path, isDir: isDir);
+                      final stat =
+                          widget.state.getCachedFileStat(file.path) ??
+                          (file.existsSync() ? file.statSync() : null);
+                      final sizeStr = isDir
+                          ? '—'
+                          : (stat != null ? formatFileSize(stat.size) : '—');
+
+                      String dateStr = '—';
+                      if (stat != null) {
+                        final date = Platform.isWindows
+                            ? stat.changed
+                            : stat.modified;
+                        dateStr =
+                            '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                      }
+
+                      return _DetailsFileCard(
+                        file: file,
+                        fileName: fileName,
+                        sizeStr: sizeStr,
+                        dateStr: dateStr,
+                        icon: icon,
+                        iconColor: iconColor,
+                        isImage: _isImage(file),
+                        isDark: widget.isDark,
+                        isSelected: _selectedFilePath == file.path,
+                        isCut: _cutFilePath == file.path,
+                        onSelect: () {
+                          _paneFocusNode.requestFocus();
+                          setState(() {
+                            _selectedFilePath = file.path;
+                          });
+                        },
+                        onOpen: () => _onFileOpen(file),
+                        onPreview: () {
+                          setState(() {
+                            _previewFilePath = file.path;
+                          });
+                        },
+                        onDelete: () => widget.state.deleteFile(file),
+                        onContextMenu: (ctx, pos) {
+                          _paneFocusNode.requestFocus();
+                          setState(() {
+                            _selectedFilePath = file.path;
+                          });
+                          _showContextMenu(
+                            ctx,
+                            pos,
+                            file,
+                            () => widget.state.deleteFile(file),
+                          );
+                        },
+                      );
+                    },
+                    childCount: group.entities.length,
+                  ),
+                ),
+              ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGroupHeader(SearchResultGroup group, double scaleFactor) {
+    final String displayName;
+    if (group.relativeDirPath.isEmpty) {
+      if (_currentRelativePath.isEmpty) {
+        displayName = context.text('📂 根目录', '📂 Root Directory');
+      } else {
+        final parts = _currentRelativePath.split('/').where((s) => s.isNotEmpty).toList();
+        final folderName = parts.isEmpty ? '' : parts.last;
+        displayName = '📂 $folderName';
+      }
+    } else {
+      displayName = '📂 ${group.relativeDirPath}';
+    }
+
+    // visual indentation based on folder level depth
+    final double indent = group.depth * 16.0;
+
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 12.0 + indent,
+        top: 20.0,
+        bottom: 8.0,
+        right: 12.0,
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
+              displayName,
+              style: TextStyle(
+                fontSize: 11 * scaleFactor,
+                fontWeight: FontWeight.bold,
+                color: widget.isDark ? Colors.white54 : Colors.black54,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: widget.isDark ? Colors.white10 : Colors.black12,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '${group.entities.length}',
+              style: TextStyle(
+                fontSize: 9 * scaleFactor,
+                fontWeight: FontWeight.w600,
+                color: widget.isDark ? Colors.white30 : Colors.black45,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildGridView(List<FileSystemEntity> files) {
@@ -3174,3 +3694,56 @@ class _ToolbarButtonState extends State<_ToolbarButton> {
   }
 }
 
+class SearchResultGroup {
+  final String relativeDirPath;
+  final int depth;
+  final List<FileSystemEntity> entities;
+
+  SearchResultGroup({
+    required this.relativeDirPath,
+    required this.depth,
+    required this.entities,
+  });
+}
+class _BreadcrumbItem extends StatefulWidget {
+  final String label;
+  final VoidCallback onTap;
+  final TextStyle style;
+  final bool isDark;
+
+  const _BreadcrumbItem({
+    required this.label,
+    required this.onTap,
+    required this.style,
+    required this.isDark,
+  });
+
+  @override
+  State<_BreadcrumbItem> createState() => _BreadcrumbItemState();
+}
+
+class _BreadcrumbItemState extends State<_BreadcrumbItem> {
+  bool _isHovered = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return MouseRegion(
+      cursor: SystemMouseCursors.click,
+      onEnter: (_) => setState(() => _isHovered = true),
+      onExit: (_) => setState(() => _isHovered = false),
+      child: GestureDetector(
+        onTap: widget.onTap,
+        child: Text(
+          widget.label,
+          style: widget.style.copyWith(
+            color: _isHovered
+                ? (widget.isDark ? Colors.white70 : Colors.black87)
+                : widget.style.color,
+            decoration: _isHovered ? TextDecoration.underline : null,
+            decorationColor: widget.isDark ? Colors.white54 : Colors.black45,
+          ),
+        ),
+      ),
+    );
+  }
+}
