@@ -2919,10 +2919,6 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
 
     return BackGestureDetector(
       onBack: widget.onBack,
-      shouldIgnore: () {
-        final scale = _transformationController.value.getMaxScaleOnAxis();
-        return scale > 1.05;
-      },
       child: detailWithEsc,
     );
   }

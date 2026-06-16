@@ -1586,8 +1586,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         enabled: widget.embedded,
         shouldIgnore: () {
           if (_isImageDetail) {
-            final scale = _transformationController.value.getMaxScaleOnAxis();
-            return scale > 1.05;
+            return false;
           }
           return _hasHorizontalOverflow;
         },
@@ -1626,8 +1625,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         enabled: true,
         shouldIgnore: () {
           if (_isImageDetail) {
-            final scale = _transformationController.value.getMaxScaleOnAxis();
-            return scale > 1.05;
+            return false;
           }
           return _hasHorizontalOverflow;
         },
