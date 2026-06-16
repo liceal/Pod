@@ -1244,7 +1244,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   void _zoomAt(double factor, Offset focalPoint) {
     final matrix = _transformationController.value.clone();
     final currentScale = matrix.getMaxScaleOnAxis();
-    final targetScale = (currentScale * factor).clamp(0.5, 5.0);
+    final targetScale = (currentScale * factor).clamp(0.5, 20.0);
     final double actualFactor = targetScale / currentScale;
 
     if ((actualFactor - 1.0).abs() < 0.001) return;
@@ -1922,9 +1922,9 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                         child: RepaintBoundary(
                           child: InteractiveViewer(
                             transformationController: _transformationController,
-                            maxScale: 5.0,
+                            maxScale: 20.0,
                             minScale: 0.5,
-                            boundaryMargin: const EdgeInsets.all(240.0),
+                            boundaryMargin: const EdgeInsets.all(480.0),
                             panEnabled: true,
                             scaleEnabled: true,
                             trackpadScrollCausesScale: true,
