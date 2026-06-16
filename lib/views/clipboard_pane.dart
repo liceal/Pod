@@ -128,14 +128,13 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                   onFavoriteToggle: () =>
                       widget.state.toggleFavoriteClipboardItem(item),
                   onDelete: () {
-                    if (_detailItem?.id == item.id) {
-                      _detailItem = null;
-                    }
-                    _imageDetailTransforms.remove(item.id);
-                    widget.state.deleteClipboardItem(item.id);
-                    Future.delayed(Duration.zero, () {
-                      if (mounted) setState(() {});
+                    setState(() {
+                      if (_detailItem?.id == item.id) {
+                        _detailItem = null;
+                      }
+                      _imageDetailTransforms.remove(item.id);
                     });
+                    widget.state.deleteClipboardItem(item.id);
                   },
                 );
               },

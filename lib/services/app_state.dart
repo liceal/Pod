@@ -2164,28 +2164,31 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     clipboardHistory.removeWhere((item) => item.id == id);
     clipboardFavorites.removeWhere((item) => item.id == id);
 
-    if (itemToDelete != null && itemToDelete.imagePath != null) {
-      final path = getImagePath(itemToDelete);
-      final stillHasReference =
-          clipboardHistory.any((x) => getImagePath(x) == path) ||
-          clipboardFavorites.any((x) => getImagePath(x) == path);
-      if (!stillHasReference) {
-        try {
-          final file = File(path);
-          if (file.existsSync()) {
-            file.deleteSync();
-          }
-        } catch (e) {
-          debugPrint('Failed to delete image file on item deletion: $e');
-        }
-      }
-    }
+    notifyListeners();
 
     Future.delayed(Duration.zero, () {
       _saveClipboardHistory();
       _saveClipboardFavorites();
+
+      if (itemToDelete != null && itemToDelete.imagePath != null) {
+        final path = getImagePath(itemToDelete);
+        final stillHasReference =
+            clipboardHistory.any((x) => getImagePath(x) == path) ||
+            clipboardFavorites.any((x) => getImagePath(x) == path);
+        if (!stillHasReference) {
+          final file = File(path);
+          file.exists().then((exists) async {
+            if (exists) {
+              try {
+                await file.delete();
+              } catch (e) {
+                debugPrint('Failed to delete image file on item deletion: $e');
+              }
+            }
+          });
+        }
+      }
     });
-    notifyListeners();
   }
 
   void toggleFavoriteClipboardItem(ClipboardItem item) {
