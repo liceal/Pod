@@ -21,6 +21,13 @@ if %errorlevel% neq 0 (
 echo [成功] Flutter 编译完成。
 echo.
 
+echo 正在复制 Microsoft Visual C++ Runtime 依赖项到 Release 目录 (应用本地部署)...
+copy /Y "C:\Windows\System32\vcruntime140.dll" "build\windows\x64\runner\Release\"
+copy /Y "C:\Windows\System32\vcruntime140_1.dll" "build\windows\x64\runner\Release\"
+copy /Y "C:\Windows\System32\msvcp140.dll" "build\windows\x64\runner\Release\"
+echo 复制完成。
+echo.
+
 echo [2/3] 开始制作「绿色便携版」压缩包 [ZIP]...
 if not exist "build" mkdir build
 powershell -Command "if (Test-Path 'build\Pod_Portable.zip') { Remove-Item 'build\Pod_Portable.zip' -Force }"
