@@ -8,6 +8,7 @@ import '../models/clipboard_item.dart';
 import '../services/app_state.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
+import 'components/back_gesture_detector.dart';
 
 class ClipboardPane extends StatefulWidget {
   final AppState state;
@@ -1155,13 +1156,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
   bool _isImageDetail = false;
-  double _trackpadBackSwipeDistance = 0;
-  double _trackpadBackSwipeCrossAxisDistance = 0;
-  bool _didTriggerTrackpadBackSwipe = false;
-  double _swipeDistance = 0;
-  bool _isMouseButtonDown = false;
-  bool _ignoreCurrentBackDrag = false;
-  bool _disableDragGesture = false;
+
 
   @override
   void initState() {
@@ -1282,13 +1277,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         _horizontalScrollController.position.maxScrollExtent > 0.5;
   }
 
-  bool _isRightSwipeSignal(double dx, double dy) {
-    return widget.embedded &&
-        !_hasHorizontalOverflow &&
-        dx > 48 &&
-        dx.abs() > dy.abs() * 1.2;
-  }
-
   void _handleBackPointerSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
 
@@ -1302,14 +1290,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       if (mounted) {
         setState(() {});
       }
-      return;
-    }
-
-    if (!widget.embedded) return;
-    final dx = event.scrollDelta.dx;
-    final dy = event.scrollDelta.dy;
-    if (_isRightSwipeSignal(dx, dy)) {
-      widget.onBack?.call();
     }
   }
 
@@ -1354,12 +1334,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         pressed.contains(LogicalKeyboardKey.metaRight);
   }
 
-  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
-
   void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
     if (_isTextZoomModifierPressed) {
       if (!_isImageDetail && event.panDelta.dy != 0 && (event.scale - 1.0).abs() < 0.01) {
@@ -1369,83 +1343,6 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         widget.state.updateTextContentFontSize(targetFontSize);
         if (mounted) {
           setState(() {});
-        }
-      }
-      return;
-    }
-
-    if (!widget.embedded ||
-        _hasHorizontalOverflow ||
-        _didTriggerTrackpadBackSwipe ||
-        (event.scale - 1.0).abs() >= 0.01) {
-      return;
-    }
-
-    _trackpadBackSwipeDistance += event.panDelta.dx;
-    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
-
-    if (_trackpadBackSwipeDistance > 80 &&
-        _trackpadBackSwipeDistance.abs() >
-            _trackpadBackSwipeCrossAxisDistance * 1.2) {
-      _didTriggerTrackpadBackSwipe = true;
-      widget.onBack?.call();
-    }
-  }
-
-  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
-
-  void _handleBackPointerDown(PointerDownEvent event) {
-    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
-      _isMouseButtonDown = true;
-      if (!_disableDragGesture) {
-        if (mounted) {
-          setState(() {
-            _disableDragGesture = true;
-          });
-        }
-      }
-    } else {
-      if (_disableDragGesture) {
-        if (mounted) {
-          setState(() {
-            _disableDragGesture = false;
-          });
-        }
-      }
-    }
-
-    if (!widget.embedded) return;
-    if (event.kind == PointerDeviceKind.mouse &&
-        (event.buttons & kBackMouseButton) != 0) {
-      widget.onBack?.call();
-    }
-  }
-
-  void _handleBackPointerUp(PointerUpEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-      if (_disableDragGesture) {
-        if (mounted) {
-          setState(() {
-            _disableDragGesture = false;
-          });
-        }
-      }
-    }
-  }
-
-  void _handleBackPointerCancel(PointerCancelEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-      if (_disableDragGesture) {
-        if (mounted) {
-          setState(() {
-            _disableDragGesture = false;
-          });
         }
       }
     }
@@ -1686,49 +1583,20 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
         ),
       );
 
-      if (isImage) {
-        return Listener(
+      return BackGestureDetector(
+        enabled: widget.embedded,
+        shouldIgnore: () {
+          if (_isImageDetail) {
+            final scale = _transformationController.value.getMaxScaleOnAxis();
+            return scale > 1.05;
+          }
+          return _hasHorizontalOverflow;
+        },
+        onBack: () => widget.onBack?.call(),
+        child: Listener(
           behavior: HitTestBehavior.translucent,
-          onPointerDown: _handleBackPointerDown,
-          onPointerUp: _handleBackPointerUp,
-          onPointerCancel: _handleBackPointerCancel,
-          child: detailWithEsc,
-        );
-      }
-
-      return Listener(
-        behavior: HitTestBehavior.translucent,
-        onPointerDown: _handleBackPointerDown,
-        onPointerUp: _handleBackPointerUp,
-        onPointerCancel: _handleBackPointerCancel,
-        onPointerSignal: _handleBackPointerSignal,
-        onPointerPanZoomStart: _handleBackPanZoomStart,
-        onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
-        onPointerPanZoomEnd: _handleBackPanZoomEnd,
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          onHorizontalDragStart: _disableDragGesture ? null : (_) {
-            _swipeDistance = 0;
-            _ignoreCurrentBackDrag = _isMouseButtonDown;
-          },
-          onHorizontalDragUpdate: _disableDragGesture ? null : (details) {
-            if (_ignoreCurrentBackDrag) return;
-            _swipeDistance += details.delta.dx;
-          },
-          onHorizontalDragEnd: _disableDragGesture ? null : (details) {
-            if (!_ignoreCurrentBackDrag && !_hasHorizontalOverflow) {
-              final velocity = details.primaryVelocity ?? 0;
-              if (_swipeDistance > 80 || velocity > 520) {
-                widget.onBack?.call();
-              }
-            }
-            _swipeDistance = 0;
-            _ignoreCurrentBackDrag = false;
-          },
-          onHorizontalDragCancel: _disableDragGesture ? null : () {
-            _swipeDistance = 0;
-            _ignoreCurrentBackDrag = false;
-          },
+          onPointerSignal: _handleBackPointerSignal,
+          onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
           child: detailWithEsc,
         ),
       );
@@ -1755,9 +1623,22 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
       backgroundColor: bgColor,
       insetPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-      child: Listener(
-        onPointerSignal: _handleBackPointerSignal,
-        child: dialogWithEsc,
+      child: BackGestureDetector(
+        enabled: true,
+        shouldIgnore: () {
+          if (_isImageDetail) {
+            final scale = _transformationController.value.getMaxScaleOnAxis();
+            return scale > 1.05;
+          }
+          return _hasHorizontalOverflow;
+        },
+        onBack: () => Navigator.of(context).pop(),
+        child: Listener(
+          behavior: HitTestBehavior.translucent,
+          onPointerSignal: _handleBackPointerSignal,
+          onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
+          child: dialogWithEsc,
+        ),
       ),
     );
   }

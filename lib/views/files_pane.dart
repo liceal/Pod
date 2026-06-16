@@ -9,6 +9,7 @@ import '../services/app_state.dart';
 import '../utils/localization.dart';
 import '../theme/app_theme.dart';
 import 'components/animated_press.dart';
+import 'components/back_gesture_detector.dart';
 
 enum _ViewMode { grid, details }
 
@@ -55,108 +56,7 @@ class _FilesPaneState extends State<FilesPane> {
   String? _lastSubdirPath;
   List<FileSystemEntity> _cachedSubdirFiles = [];
 
-  double _swipeDistance = 0;
-  double _trackpadBackSwipeDistance = 0;
-  double _trackpadBackSwipeCrossAxisDistance = 0;
-  bool _didTriggerTrackpadBackSwipe = false;
-  bool _isMouseButtonDown = false;
-  bool _ignoreCurrentBackDrag = false;
-  static const int kBackMouseButton = 8; // standard back button on mouse
 
-  void _handleBackPointerDown(PointerDownEvent event) {
-    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
-      _isMouseButtonDown = true;
-    }
-    if (event.kind == PointerDeviceKind.mouse &&
-        (event.buttons & kBackMouseButton) != 0) {
-      _goBack();
-    }
-  }
-
-  void _handleBackPointerUp(PointerUpEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-    }
-  }
-
-  void _handleBackPointerCancel(PointerCancelEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-    }
-  }
-
-  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
-
-  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
-    if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
-      return;
-    }
-
-    _trackpadBackSwipeDistance += event.panDelta.dx;
-    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
-
-    if (_trackpadBackSwipeDistance > 80 &&
-        _trackpadBackSwipeDistance.abs() >
-            _trackpadBackSwipeCrossAxisDistance * 1.6) {
-      _didTriggerTrackpadBackSwipe = true;
-      _goBack();
-    }
-  }
-
-  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
-
-  Widget _wrapDetailBackGesture(Widget child) {
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _handleBackPointerDown,
-      onPointerUp: _handleBackPointerUp,
-      onPointerCancel: _handleBackPointerCancel,
-      onPointerSignal: (event) {
-        if (event is PointerScrollEvent &&
-            event.scrollDelta.dx > 48 &&
-            event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
-          _goBack();
-        }
-      },
-      onPointerPanZoomStart: _handleBackPanZoomStart,
-      onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
-      onPointerPanZoomEnd: _handleBackPanZoomEnd,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = _isMouseButtonDown;
-        },
-        onHorizontalDragUpdate: (details) {
-          if (_ignoreCurrentBackDrag) return;
-          _swipeDistance += details.delta.dx;
-        },
-        onHorizontalDragEnd: (details) {
-          if (!_ignoreCurrentBackDrag) {
-            final velocity = details.primaryVelocity ?? 0;
-            if (_swipeDistance > 80 || velocity > 520) {
-              _goBack();
-            }
-          }
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
-        onHorizontalDragCancel: () {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
-        child: child,
-      ),
-    );
-  }
 
   String _getFilesDirectoryPathSync() {
     final settings = widget.state.settings;
@@ -1099,8 +999,9 @@ class _FilesPaneState extends State<FilesPane> {
                     context,
                     details.globalPosition,
                   ),
-                  child: _wrapDetailBackGesture(
-                    files.isEmpty
+                  child: BackGestureDetector(
+                    onBack: _goBack,
+                    child: files.isEmpty
                         ? Center(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -1120,11 +1021,11 @@ class _FilesPaneState extends State<FilesPane> {
                                           'No matching files found',
                                         )
                                       : context.text(
-                                          '拖拽文件到此处',
-                                          'Drag & drop files here',
+                                          '拖拽文件或图片到这里',
+                                          'Drag and drop files/images here',
                                         ),
                                   style: TextStyle(
-                                    fontSize: 11,
+                                    fontSize: 10,
                                     color: widget.isDark
                                         ? Colors.white30
                                         : Colors.black.withOpacity(0.3),
@@ -2719,12 +2620,7 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
   String _fileSizeStr = '';
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
-  double _swipeDistance = 0;
-  double _trackpadBackSwipeDistance = 0;
-  double _trackpadBackSwipeCrossAxisDistance = 0;
-  bool _didTriggerTrackpadBackSwipe = false;
-  bool _isMouseButtonDown = false;
-  bool _ignoreCurrentBackDrag = false;
+
 
   @override
   void initState() {
@@ -2812,55 +2708,7 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
     _transformationController.value = Matrix4.identity();
   }
 
-  void _handleBackPointerDown(PointerDownEvent event) {
-    if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
-      _isMouseButtonDown = true;
-    }
-    if (event.kind == PointerDeviceKind.mouse &&
-        (event.buttons & kBackMouseButton) != 0) {
-      widget.onBack();
-    }
-  }
 
-  void _handleBackPointerUp(PointerUpEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-    }
-  }
-
-  void _handleBackPointerCancel(PointerCancelEvent event) {
-    if (event.kind == PointerDeviceKind.mouse) {
-      _isMouseButtonDown = false;
-    }
-  }
-
-  void _handleBackPanZoomStart(PointerPanZoomStartEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
-
-  void _handleBackPanZoomUpdate(PointerPanZoomUpdateEvent event) {
-    if (_didTriggerTrackpadBackSwipe || (event.scale - 1.0).abs() >= 0.01) {
-      return;
-    }
-
-    _trackpadBackSwipeDistance += event.panDelta.dx;
-    _trackpadBackSwipeCrossAxisDistance += event.panDelta.dy.abs();
-
-    if (_trackpadBackSwipeDistance > 80 &&
-        _trackpadBackSwipeDistance.abs() >
-            _trackpadBackSwipeCrossAxisDistance * 1.6) {
-      _didTriggerTrackpadBackSwipe = true;
-      widget.onBack();
-    }
-  }
-
-  void _handleBackPanZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadBackSwipeDistance = 0;
-    _trackpadBackSwipeCrossAxisDistance = 0;
-    _didTriggerTrackpadBackSwipe = false;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -3069,47 +2917,13 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
       ),
     );
 
-    return Listener(
-      behavior: HitTestBehavior.translucent,
-      onPointerDown: _handleBackPointerDown,
-      onPointerUp: _handleBackPointerUp,
-      onPointerCancel: _handleBackPointerCancel,
-      onPointerSignal: (event) {
-        if (event is PointerScrollEvent &&
-            event.scrollDelta.dx > 48 &&
-            event.scrollDelta.dx.abs() > event.scrollDelta.dy.abs() * 1.6) {
-          widget.onBack();
-        }
+    return BackGestureDetector(
+      onBack: widget.onBack,
+      shouldIgnore: () {
+        final scale = _transformationController.value.getMaxScaleOnAxis();
+        return scale > 1.05;
       },
-      onPointerPanZoomStart: _handleBackPanZoomStart,
-      onPointerPanZoomUpdate: _handleBackPanZoomUpdate,
-      onPointerPanZoomEnd: _handleBackPanZoomEnd,
-      child: GestureDetector(
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: (_) {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = _isMouseButtonDown;
-        },
-        onHorizontalDragUpdate: (details) {
-          if (_ignoreCurrentBackDrag) return;
-          _swipeDistance += details.delta.dx;
-        },
-        onHorizontalDragEnd: (details) {
-          if (!_ignoreCurrentBackDrag) {
-            final velocity = details.primaryVelocity ?? 0;
-            if (_swipeDistance > 80 || velocity > 520) {
-              widget.onBack();
-            }
-          }
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
-        onHorizontalDragCancel: () {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
-        child: detailWithEsc,
-      ),
+      child: detailWithEsc,
     );
   }
 }
