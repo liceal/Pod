@@ -64,11 +64,21 @@ if "%CSC_PATH%"=="" (
 )
 echo.
 
+echo [4/4] 开始制作「微软商店安装包」 [MSIX]...
+call dart run msix:create
+if %errorlevel% neq 0 (
+    echo [警告] 制作商店 MSIX 安装包失败。
+) else (
+    echo [成功] 商店安装包已生成。
+)
+echo.
+
 echo ===================================================
 echo 打包流程结束！打包产物保存在项目 build 目录下：
 echo.
 if exist "build\Pod_Portable.zip" echo   - 绿色便携版: build\Pod_Portable.zip
 if exist "build\Pod.exe" echo   - 单文件运行程序: build\Pod.exe
+echo   - 商店安装包 (.msix): build\windows\x64\runner\Release\ 下的 .msix 文件
 echo ===================================================
 echo.
 pause

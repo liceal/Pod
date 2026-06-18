@@ -80,6 +80,7 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  msix: ^3.16.1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -133,3 +134,12 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+msix_config:
+  display_name: Pod-工具箱
+  publisher_display_name: liceal
+  identity_name: liceal.Pod-
+  publisher: "CN=D51998C6-B33D-4D61-BA2A-DB4B43560E8F"
+  msix_version: 1.0.3.0
+  logo_path: assets/images/tray_icon.png
+  store: true
