@@ -57,6 +57,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   List<ClipboardItem> clipboardHistory = [];
   List<ClipboardItem> clipboardFavorites = [];
   List<FileSystemEntity> storedFiles = [];
+  final List<FileUndoAction> _undoStack = [];
+  final List<FileUndoAction> _redoStack = [];
   List<Note> notes = [];
   Note? activeNote;
 
@@ -381,8 +383,21 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  Future<void> _clearTrashDir() async {
+    try {
+      final root = await _getFilesDirectoryPath();
+      final trashDir = Directory('$root/.trash');
+      if (trashDir.existsSync()) {
+        await trashDir.delete(recursive: true);
+      }
+    } catch (e) {
+      debugPrint('Failed to clear trash directory on startup: $e');
+    }
+  }
+
   // --- Initializer ---
   Future<void> initialize() async {
+    _clearTrashDir();
     _prefs = await SharedPreferences.getInstance();
     final appSupport = await getApplicationSupportDirectory();
     _defaultDataDirSync = '${appSupport.path}/data'.replaceAll('\\', '/');
@@ -2164,28 +2179,31 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     clipboardHistory.removeWhere((item) => item.id == id);
     clipboardFavorites.removeWhere((item) => item.id == id);
 
-    if (itemToDelete != null && itemToDelete.imagePath != null) {
-      final path = getImagePath(itemToDelete);
-      final stillHasReference =
-          clipboardHistory.any((x) => getImagePath(x) == path) ||
-          clipboardFavorites.any((x) => getImagePath(x) == path);
-      if (!stillHasReference) {
-        try {
-          final file = File(path);
-          if (file.existsSync()) {
-            file.deleteSync();
-          }
-        } catch (e) {
-          debugPrint('Failed to delete image file on item deletion: $e');
-        }
-      }
-    }
+    notifyListeners();
 
     Future.delayed(Duration.zero, () {
       _saveClipboardHistory();
       _saveClipboardFavorites();
+
+      if (itemToDelete != null && itemToDelete.imagePath != null) {
+        final path = getImagePath(itemToDelete);
+        final stillHasReference =
+            clipboardHistory.any((x) => getImagePath(x) == path) ||
+            clipboardFavorites.any((x) => getImagePath(x) == path);
+        if (!stillHasReference) {
+          final file = File(path);
+          file.exists().then((exists) async {
+            if (exists) {
+              try {
+                await file.delete();
+              } catch (e) {
+                debugPrint('Failed to delete image file on item deletion: $e');
+              }
+            }
+          });
+        }
+      }
     });
-    notifyListeners();
   }
 
   void toggleFavoriteClipboardItem(ClipboardItem item) {
@@ -2510,6 +2528,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final List<FileSystemEntity> entities = [];
       await for (final entity in dir.list(recursive: false)) {
         if (entity is File || entity is Directory) {
+          final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
+          if (name.startsWith('.')) continue;
           entities.add(entity);
         }
       }
@@ -2897,12 +2917,43 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Future<void> deleteFile(FileSystemEntity entity) async {
     try {
       if (entity.existsSync()) {
-        await entity.delete(recursive: true);
+        final root = await _getFilesDirectoryPath();
+        final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => 'deleted');
+        
+        // If it is already inside the trash, delete it permanently
+        if (entity.path.contains('/.trash/') || entity.path.contains('\\.trash\\')) {
+          await entity.delete(recursive: true);
+          return;
+        }
+
+        final trashDir = Directory('$root/.trash');
+        if (!trashDir.existsSync()) {
+          await trashDir.create(recursive: true);
+        }
+
+        final uniqueName = '${DateTime.now().millisecondsSinceEpoch}_$name';
+        final trashPath = '${trashDir.path}/$uniqueName';
+
+        await entity.rename(trashPath);
+
+        _pushUndoAction(FileUndoAction(
+          type: FileUndoType.delete,
+          pathA: entity.path,
+          pathB: trashPath,
+          isDirectory: entity is Directory,
+        ));
       }
     } catch (e) {
-      debugPrint('Failed to delete file: $e');
+      debugPrint('Failed to delete file to trash: $e');
+      // Fallback: delete permanently if move fails
+      try {
+        if (entity.existsSync()) {
+          await entity.delete(recursive: true);
+        }
+      } catch (_) {}
+    } finally {
+      await _scanStoredFiles();
     }
-    await _scanStoredFiles();
   }
 
   Future<bool> _openMacPath(String path, {bool reveal = false}) async {
@@ -2981,7 +3032,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         return false;
       }
 
+      final oldPath = entity.path;
       await entity.rename(newPath);
+
+      _pushUndoAction(FileUndoAction(
+        type: FileUndoType.rename,
+        pathA: oldPath,
+        pathB: newPath,
+        isDirectory: entity is Directory,
+      ));
+
       return true;
     } catch (e) {
       debugPrint('Failed to rename file: $e');
@@ -3013,6 +3073,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       await file.create();
+      _pushUndoAction(FileUndoAction(
+        type: FileUndoType.create,
+        pathA: file.path,
+        pathB: '',
+        isDirectory: false,
+      ));
       await _scanStoredFiles();
     } catch (e) {
       debugPrint('Failed to create new file: $e');
@@ -3035,6 +3101,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       await dir.create();
+      _pushUndoAction(FileUndoAction(
+        type: FileUndoType.create,
+        pathA: dir.path,
+        pathB: '',
+        isDirectory: true,
+      ));
       await _scanStoredFiles();
     } catch (e) {
       debugPrint('Failed to create new directory: $e');
@@ -3059,11 +3131,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           return;
         }
 
+        final oldPath = source.path;
         if (source is File) {
           await source.rename(targetPath);
         } else if (source is Directory) {
           await source.rename(targetPath);
         }
+
+        _pushUndoAction(FileUndoAction(
+          type: FileUndoType.move,
+          pathA: oldPath,
+          pathB: targetPath,
+          isDirectory: source is Directory,
+        ));
       }
     } catch (e) {
       debugPrint('Failed to move file to folder: $e');
@@ -3259,4 +3339,163 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       notifyListeners();
     }
   }
+
+  void _pushUndoAction(FileUndoAction action, {bool clearRedo = true}) {
+    _undoStack.add(action);
+    if (clearRedo) {
+      _redoStack.clear();
+    }
+    if (_undoStack.length > 30) {
+      final oldest = _undoStack.removeAt(0);
+      if (oldest.type == FileUndoType.delete) {
+        try {
+          final trashEntity = oldest.isDirectory
+              ? Directory(oldest.pathB)
+              : File(oldest.pathB);
+          if (trashEntity.existsSync()) {
+            trashEntity.deleteSync(recursive: true);
+          }
+        } catch (e) {
+          debugPrint('Failed to clean up old trash item: $e');
+        }
+      }
+    }
+  }
+
+  Future<bool> undoLastAction() async {
+    if (_undoStack.isEmpty) return false;
+    final action = _undoStack.removeLast();
+    bool success = false;
+    try {
+      switch (action.type) {
+        case FileUndoType.rename:
+          final currentEntity = action.isDirectory
+              ? Directory(action.pathB)
+              : File(action.pathB);
+          if (currentEntity.existsSync()) {
+            await currentEntity.rename(action.pathA);
+            success = true;
+          }
+          break;
+        case FileUndoType.move:
+          final currentEntity = action.isDirectory
+              ? Directory(action.pathB)
+              : File(action.pathB);
+          if (currentEntity.existsSync()) {
+            await currentEntity.rename(action.pathA);
+            success = true;
+          }
+          break;
+        case FileUndoType.delete:
+          final trashEntity = action.isDirectory
+              ? Directory(action.pathB)
+              : File(action.pathB);
+          if (trashEntity.existsSync()) {
+            final parent = Directory(action.pathA).parent;
+            if (!parent.existsSync()) {
+              await parent.create(recursive: true);
+            }
+            await trashEntity.rename(action.pathA);
+            success = true;
+          }
+          break;
+        case FileUndoType.create:
+          final createdEntity = action.isDirectory
+              ? Directory(action.pathA)
+              : File(action.pathA);
+          if (createdEntity.existsSync()) {
+            await createdEntity.delete(recursive: true);
+            success = true;
+          }
+          break;
+      }
+      if (success) {
+        _redoStack.add(action);
+      }
+    } catch (e) {
+      debugPrint('Failed to undo action of type ${action.type}: $e');
+    } finally {
+      await _scanStoredFiles();
+    }
+    return success;
+  }
+
+  Future<bool> redoLastAction() async {
+    if (_redoStack.isEmpty) return false;
+    final action = _redoStack.removeLast();
+    bool success = false;
+    try {
+      switch (action.type) {
+        case FileUndoType.rename:
+          final currentEntity = action.isDirectory
+              ? Directory(action.pathA)
+              : File(action.pathA);
+          if (currentEntity.existsSync()) {
+            await currentEntity.rename(action.pathB);
+            success = true;
+          }
+          break;
+        case FileUndoType.move:
+          final currentEntity = action.isDirectory
+              ? Directory(action.pathA)
+              : File(action.pathA);
+          if (currentEntity.existsSync()) {
+            await currentEntity.rename(action.pathB);
+            success = true;
+          }
+          break;
+        case FileUndoType.delete:
+          final currentEntity = action.isDirectory
+              ? Directory(action.pathA)
+              : File(action.pathA);
+          if (currentEntity.existsSync()) {
+            final parent = Directory(action.pathB).parent;
+            if (!parent.existsSync()) {
+              await parent.create(recursive: true);
+            }
+            await currentEntity.rename(action.pathB);
+            success = true;
+          }
+          break;
+        case FileUndoType.create:
+          final createdEntity = action.isDirectory
+              ? Directory(action.pathA)
+              : File(action.pathA);
+          if (!createdEntity.existsSync()) {
+            if (action.isDirectory) {
+              await Directory(action.pathA).create(recursive: true);
+            } else {
+              await File(action.pathA).create();
+            }
+            success = true;
+          }
+          break;
+      }
+      if (success) {
+        _pushUndoAction(action, clearRedo: false);
+      }
+    } catch (e) {
+      debugPrint('Failed to redo action of type ${action.type}: $e');
+    } finally {
+      await _scanStoredFiles();
+    }
+    return success;
+  }
 }
+
+enum FileUndoType { rename, move, delete, create }
+
+class FileUndoAction {
+  final FileUndoType type;
+  final String pathA;
+  final String pathB;
+  final bool isDirectory;
+
+  FileUndoAction({
+    required this.type,
+    required this.pathA,
+    required this.pathB,
+    required this.isDirectory,
+  });
+}
+
