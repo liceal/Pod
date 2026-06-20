@@ -7,6 +7,7 @@
 #include <string>
 #include <chrono>
 #include <new>
+#include <variant>
 
 #include "flutter/generated_plugin_registrant.h"
 #include <flutter/standard_method_codec.h>
@@ -18,11 +19,65 @@ FlutterWindow* FlutterWindow::scroll_hook_window_ = nullptr;
 namespace {
 
 constexpr UINT kGlobalMouseWheelMessage = WM_APP + 1;
+constexpr wchar_t kRunKeyPath[] =
+    L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+constexpr wchar_t kRunValueName[] = L"Pod";
 
 struct MouseWheelEvent {
   POINT point;
   int wheel_delta;
 };
+
+std::wstring GetCurrentExecutablePath() {
+  std::wstring path(MAX_PATH, L'\0');
+  DWORD length = GetModuleFileNameW(nullptr, path.data(),
+                                    static_cast<DWORD>(path.size()));
+  while (length == path.size()) {
+    path.resize(path.size() * 2, L'\0');
+    length =
+        GetModuleFileNameW(nullptr, path.data(),
+                           static_cast<DWORD>(path.size()));
+  }
+  if (length == 0) {
+    return L"";
+  }
+  path.resize(length);
+  return path;
+}
+
+std::wstring QuoteForRunKey(const std::wstring& path) {
+  return L"\"" + path + L"\"";
+}
+
+bool IsLaunchAtStartupEnabled() {
+  DWORD type = 0;
+  DWORD bytes = 0;
+  const LSTATUS size_status =
+      RegGetValueW(HKEY_CURRENT_USER, kRunKeyPath, kRunValueName,
+                   RRF_RT_REG_SZ, &type, nullptr, &bytes);
+  return size_status == ERROR_SUCCESS && bytes > sizeof(wchar_t);
+}
+
+bool SetLaunchAtStartupEnabled(bool enabled) {
+  if (!enabled) {
+    const LSTATUS delete_status =
+        RegDeleteKeyValueW(HKEY_CURRENT_USER, kRunKeyPath, kRunValueName);
+    return delete_status == ERROR_SUCCESS ||
+           delete_status == ERROR_FILE_NOT_FOUND;
+  }
+
+  const std::wstring exe_path = GetCurrentExecutablePath();
+  if (exe_path.empty()) {
+    return false;
+  }
+  const std::wstring command = QuoteForRunKey(exe_path);
+  const DWORD bytes =
+      static_cast<DWORD>((command.size() + 1) * sizeof(wchar_t));
+  const LSTATUS set_status =
+      RegSetKeyValueW(HKEY_CURRENT_USER, kRunKeyPath, kRunValueName,
+                      REG_SZ, command.c_str(), bytes);
+  return set_status == ERROR_SUCCESS;
+}
 
 void RestoreForegroundWindow(HWND target) {
   if (!target || !IsWindow(target)) {
@@ -271,6 +326,40 @@ bool FlutterWindow::OnCreate() {
       "app.pod/menu_bar_scroll",
       &flutter::StandardMethodCodec::GetInstance());
 
+  startup_channel_ = std::make_unique<flutter::MethodChannel<>>(
+      flutter_controller_->engine()->messenger(),
+      "app.pod/launch_at_startup",
+      &flutter::StandardMethodCodec::GetInstance());
+
+  startup_channel_->SetMethodCallHandler(
+      [](const flutter::MethodCall<>& call,
+         std::unique_ptr<flutter::MethodResult<>> result) {
+        if (call.method_name() == "isEnabled") {
+          result->Success(flutter::EncodableValue(IsLaunchAtStartupEnabled()));
+        } else if (call.method_name() == "setEnabled") {
+          bool enabled = false;
+          const auto* arguments = std::get_if<flutter::EncodableMap>(
+              call.arguments());
+          if (arguments) {
+            const auto enabled_it =
+                arguments->find(flutter::EncodableValue("enabled"));
+            if (enabled_it != arguments->end()) {
+              if (const auto* value = std::get_if<bool>(&enabled_it->second)) {
+                enabled = *value;
+              }
+            }
+          }
+          if (SetLaunchAtStartupEnabled(enabled)) {
+            result->Success(flutter::EncodableValue(enabled));
+          } else {
+            result->Error("STARTUP_UPDATE_FAILED",
+                          "Failed to update launch-at-startup setting.");
+          }
+        } else {
+          result->NotImplemented();
+        }
+      });
+
   InstallMouseHook();
 
   flutter_controller_->ForceRedraw();
@@ -295,6 +384,9 @@ void FlutterWindow::OnDestroy() {
   }
   if (menu_bar_scroll_channel_) {
     menu_bar_scroll_channel_ = nullptr;
+  }
+  if (startup_channel_) {
+    startup_channel_ = nullptr;
   }
 
   if (gdiplus_initialized_) {

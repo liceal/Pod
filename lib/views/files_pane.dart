@@ -3235,20 +3235,8 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
     final textColor = widget.isDark ? Colors.white : Colors.black87;
     final subColor = widget.isDark ? Colors.white54 : Colors.black45;
 
-    // Get modified time
-    String modifiedTimeStr = '';
-    try {
-      if (widget.file.existsSync()) {
-        final stat = widget.file.statSync();
-        final modTime = Platform.isWindows ? stat.changed : stat.modified;
-        modifiedTimeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(modTime);
-      }
-    } catch (_) {}
-
     final hasDimension = _imgWidth != null && _imgHeight != null;
-    final infoText = hasDimension
-        ? '$_imgWidth×$_imgHeight ($_fileSizeStr)'
-        : _fileSizeStr;
+    final dimensionText = hasDimension ? '$_imgWidth×$_imgHeight' : '';
 
     // Get basename
     final segments = widget.file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
@@ -3283,13 +3271,28 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
                         ),
                       ),
                       const SizedBox(width: 4),
-                      Expanded(
-                        child: Text(
-                          '$fileName ${modifiedTimeStr.isNotEmpty ? '($modifiedTimeStr)' : ''} ${infoText.isNotEmpty ? '($infoText)' : ''}',
-                          style: TextStyle(fontSize: 10, color: subColor),
-                          overflow: TextOverflow.ellipsis,
+                      if (fileName.isNotEmpty)
+                        Flexible(
+                          child: Text(
+                            fileName,
+                            style: TextStyle(fontSize: 10, color: subColor),
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
-                      ),
+                      if (dimensionText.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          dimensionText,
+                          style: TextStyle(fontSize: 10, color: subColor),
+                        ),
+                      ],
+                      if (_fileSizeStr.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          _fileSizeStr,
+                          style: TextStyle(fontSize: 10, color: subColor),
+                        ),
+                      ],
                     ],
                   ),
                 ),

@@ -54,6 +54,9 @@ class FlutterWindow : public Win32Window {
   // Method channel for native top-edge scroll events
   std::unique_ptr<flutter::MethodChannel<>> menu_bar_scroll_channel_;
 
+  // Method channel for launch-at-startup settings
+  std::unique_ptr<flutter::MethodChannel<>> startup_channel_;
+
   HHOOK mouse_hook_ = nullptr;
   bool resources_destroyed_ = false;
   bool gdiplus_initialized_ = false;

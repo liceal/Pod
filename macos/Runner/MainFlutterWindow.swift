@@ -287,6 +287,40 @@ class MainFlutterWindow: NSPanel {
       }
     }
 
+    let launchAtStartupChannel = FlutterMethodChannel(
+      name: "app.pod/launch_at_startup",
+      binaryMessenger: flutterViewController.engine.binaryMessenger
+    )
+
+    launchAtStartupChannel.setMethodCallHandler { [weak self] (call, result) in
+      guard let self = self else { return }
+      if call.method == "isEnabled" {
+        result(self.isLaunchAtStartupEnabled())
+      } else if call.method == "setEnabled" {
+        guard let args = call.arguments as? [String: Any],
+              let enabled = args["enabled"] as? Bool else {
+          result(FlutterError(
+            code: "INVALID_ARGS",
+            message: "Missing enabled flag",
+            details: nil
+          ))
+          return
+        }
+        do {
+          try self.setLaunchAtStartupEnabled(enabled)
+          result(enabled)
+        } catch {
+          result(FlutterError(
+            code: "STARTUP_UPDATE_FAILED",
+            message: "Failed to update launch-at-startup setting",
+            details: error.localizedDescription
+          ))
+        }
+      } else {
+        result(FlutterMethodNotImplemented)
+      }
+    }
+
     globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
       self?.handleScrollEvent(event, channel: channel)
     }
@@ -345,5 +379,54 @@ class MainFlutterWindow: NSPanel {
       "visibleHeight": visibleFrame.height,
     ]
     channel.invokeMethod("onMenuBarScroll", arguments: args)
+  }
+
+  private var launchAgentIdentifier: String {
+    let bundleIdentifier =
+      Bundle.main.bundleIdentifier ?? "com.liceal.unclutter.pod"
+    return "\(bundleIdentifier).launchAtStartup"
+  }
+
+  private var launchAgentURL: URL {
+    FileManager.default.homeDirectoryForCurrentUser
+      .appendingPathComponent("Library")
+      .appendingPathComponent("LaunchAgents")
+      .appendingPathComponent("\(launchAgentIdentifier).plist")
+  }
+
+  private func isLaunchAtStartupEnabled() -> Bool {
+    FileManager.default.fileExists(atPath: launchAgentURL.path)
+  }
+
+  private func setLaunchAtStartupEnabled(_ enabled: Bool) throws {
+    let fileManager = FileManager.default
+    let url = launchAgentURL
+
+    if !enabled {
+      if fileManager.fileExists(atPath: url.path) {
+        try fileManager.removeItem(at: url)
+      }
+      return
+    }
+
+    let launchAgentsDir = url.deletingLastPathComponent()
+    try fileManager.createDirectory(
+      at: launchAgentsDir,
+      withIntermediateDirectories: true,
+      attributes: nil
+    )
+
+    let appPath = Bundle.main.bundlePath
+    let plist: [String: Any] = [
+      "Label": launchAgentIdentifier,
+      "ProgramArguments": ["/usr/bin/open", appPath],
+      "RunAtLoad": true,
+    ]
+    let data = try PropertyListSerialization.data(
+      fromPropertyList: plist,
+      format: .xml,
+      options: 0
+    )
+    try data.write(to: url, options: .atomic)
   }
 }

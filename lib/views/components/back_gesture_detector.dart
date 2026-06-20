@@ -29,6 +29,12 @@ class _BackGestureDetectorState extends State<BackGestureDetector> {
   bool _didTriggerTrackpadBackSwipe = false;
   bool _isMouseButtonDown = false;
   bool _ignoreCurrentBackDrag = false;
+  int _activeTouchPointerCount = 0;
+  int? _backSwipePointer;
+  double _pointerBackSwipeDistance = 0;
+  double _pointerBackSwipeCrossAxisDistance = 0;
+  bool _didTriggerPointerBackSwipe = false;
+  bool _suppressDragRecognizerBack = false;
 
   bool _isModifierPressed() {
     final pressed = HardwareKeyboard.instance.logicalKeysPressed;
@@ -43,6 +49,21 @@ class _BackGestureDetectorState extends State<BackGestureDetector> {
     if (event.kind == PointerDeviceKind.mouse && event.buttons != 0) {
       _isMouseButtonDown = true;
     }
+    if (event.kind != PointerDeviceKind.mouse) {
+      _activeTouchPointerCount++;
+      if (_activeTouchPointerCount == 1) {
+        _backSwipePointer = event.pointer;
+        _pointerBackSwipeDistance = 0;
+        _pointerBackSwipeCrossAxisDistance = 0;
+        _didTriggerPointerBackSwipe = false;
+        _suppressDragRecognizerBack = false;
+      } else {
+        _backSwipePointer = null;
+        _pointerBackSwipeDistance = 0;
+        _pointerBackSwipeCrossAxisDistance = 0;
+        _didTriggerPointerBackSwipe = false;
+      }
+    }
     if (event.kind == PointerDeviceKind.mouse &&
         (event.buttons & kBackMouseButton) != 0) {
       if (widget.shouldIgnore?.call() ?? false) return;
@@ -50,15 +71,58 @@ class _BackGestureDetectorState extends State<BackGestureDetector> {
     }
   }
 
+  void _handlePointerMove(PointerMoveEvent event) {
+    if (!widget.enabled ||
+        event.kind == PointerDeviceKind.mouse ||
+        _backSwipePointer != event.pointer ||
+        _activeTouchPointerCount != 1 ||
+        _didTriggerPointerBackSwipe ||
+        _isModifierPressed()) {
+      return;
+    }
+    if (widget.shouldIgnore?.call() ?? false) return;
+
+    _pointerBackSwipeDistance += event.delta.dx;
+    _pointerBackSwipeCrossAxisDistance += event.delta.dy.abs();
+
+    if (_pointerBackSwipeDistance > 80 &&
+        _pointerBackSwipeDistance.abs() >
+            _pointerBackSwipeCrossAxisDistance * 1.6) {
+      _didTriggerPointerBackSwipe = true;
+      _suppressDragRecognizerBack = true;
+      widget.onBack();
+    }
+  }
+
   void _handlePointerUp(PointerUpEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+    } else {
+      _activeTouchPointerCount = (_activeTouchPointerCount - 1)
+          .clamp(0, 1000)
+          .toInt();
+      if (_backSwipePointer == event.pointer || _activeTouchPointerCount == 0) {
+        _backSwipePointer = null;
+        _pointerBackSwipeDistance = 0;
+        _pointerBackSwipeCrossAxisDistance = 0;
+        _didTriggerPointerBackSwipe = false;
+      }
     }
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
     if (event.kind == PointerDeviceKind.mouse) {
       _isMouseButtonDown = false;
+    } else {
+      _activeTouchPointerCount = (_activeTouchPointerCount - 1)
+          .clamp(0, 1000)
+          .toInt();
+      if (_backSwipePointer == event.pointer || _activeTouchPointerCount == 0) {
+        _backSwipePointer = null;
+        _pointerBackSwipeDistance = 0;
+        _pointerBackSwipeCrossAxisDistance = 0;
+        _didTriggerPointerBackSwipe = false;
+      }
     }
   }
 
@@ -99,6 +163,7 @@ class _BackGestureDetectorState extends State<BackGestureDetector> {
     return Listener(
       behavior: HitTestBehavior.translucent,
       onPointerDown: _handlePointerDown,
+      onPointerMove: _handlePointerMove,
       onPointerUp: _handlePointerUp,
       onPointerCancel: _handlePointerCancel,
       onPointerSignal: (event) {
@@ -118,35 +183,42 @@ class _BackGestureDetectorState extends State<BackGestureDetector> {
         gestures: <Type, GestureRecognizerFactory>{
           MouseExcludingHorizontalDragGestureRecognizer:
               GestureRecognizerFactoryWithHandlers<
-                  MouseExcludingHorizontalDragGestureRecognizer>(
-            () => MouseExcludingHorizontalDragGestureRecognizer(),
-            (MouseExcludingHorizontalDragGestureRecognizer instance) {
-              instance
-                ..onStart = (_) {
-                  _swipeDistance = 0;
-                  _ignoreCurrentBackDrag = _isMouseButtonDown;
-                }
-                ..onUpdate = (details) {
-                  if (!widget.enabled || _ignoreCurrentBackDrag) return;
-                  if (widget.shouldIgnore?.call() ?? false) return;
-                  _swipeDistance += details.delta.dx;
-                }
-                ..onEnd = (details) {
-                  if (!widget.enabled || _ignoreCurrentBackDrag) return;
-                  if (widget.shouldIgnore?.call() ?? false) return;
-                  final velocity = details.primaryVelocity ?? 0;
-                  if (_swipeDistance > 80 || velocity > 520) {
-                    widget.onBack();
+                MouseExcludingHorizontalDragGestureRecognizer
+              >(() => MouseExcludingHorizontalDragGestureRecognizer(), (
+                MouseExcludingHorizontalDragGestureRecognizer instance,
+              ) {
+                instance
+                  ..onStart = (_) {
+                    _swipeDistance = 0;
+                    _ignoreCurrentBackDrag = _isMouseButtonDown;
                   }
-                  _swipeDistance = 0;
-                  _ignoreCurrentBackDrag = false;
-                }
-                ..onCancel = () {
-                  _swipeDistance = 0;
-                  _ignoreCurrentBackDrag = false;
-                };
-            },
-          ),
+                  ..onUpdate = (details) {
+                    if (!widget.enabled || _ignoreCurrentBackDrag) return;
+                    if (widget.shouldIgnore?.call() ?? false) return;
+                    _swipeDistance += details.delta.dx;
+                  }
+                  ..onEnd = (details) {
+                    if (_suppressDragRecognizerBack) {
+                      _swipeDistance = 0;
+                      _ignoreCurrentBackDrag = false;
+                      _suppressDragRecognizerBack = false;
+                      return;
+                    }
+                    if (!widget.enabled || _ignoreCurrentBackDrag) return;
+                    if (widget.shouldIgnore?.call() ?? false) return;
+                    final velocity = details.primaryVelocity ?? 0;
+                    if (_swipeDistance > 80 || velocity > 520) {
+                      widget.onBack();
+                    }
+                    _swipeDistance = 0;
+                    _ignoreCurrentBackDrag = false;
+                  }
+                  ..onCancel = () {
+                    _swipeDistance = 0;
+                    _ignoreCurrentBackDrag = false;
+                    _suppressDragRecognizerBack = false;
+                  };
+              }),
         },
         child: widget.child,
       ),
@@ -166,4 +238,3 @@ class MouseExcludingHorizontalDragGestureRecognizer
     return super.isPointerAllowed(event);
   }
 }
-

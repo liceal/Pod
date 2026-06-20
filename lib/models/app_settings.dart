@@ -42,6 +42,7 @@ class AppSettings {
   final Map<PanelPane, double> panelWeights;
   final double textContentFontSize;
   final String languageCode;
+  final bool launchAtStartup;
 
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
@@ -72,6 +73,7 @@ class AppSettings {
     Map<PanelPane, double>? panelWeights,
     double? textContentFontSize,
     String? languageCode,
+    this.launchAtStartup = false,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
@@ -160,6 +162,7 @@ class AppSettings {
     Map<PanelPane, double>? panelWeights,
     double? textContentFontSize,
     String? languageCode,
+    bool? launchAtStartup,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -181,6 +184,7 @@ class AppSettings {
       panelWeights: panelWeights ?? this.panelWeights,
       textContentFontSize: textContentFontSize ?? this.textContentFontSize,
       languageCode: languageCode ?? this.languageCode,
+      launchAtStartup: launchAtStartup ?? this.launchAtStartup,
     );
   }
 
@@ -204,6 +208,7 @@ class AppSettings {
       'panelWeights': panelWeights.map((pane, w) => MapEntry(pane.name, w)),
       'textContentFontSize': textContentFontSize,
       'languageCode': languageCode,
+      'launchAtStartup': launchAtStartup,
     };
   }
 
@@ -279,6 +284,7 @@ class AppSettings {
           (json['textContentFontSize'] as num?)?.toDouble() ??
           (json['noteEditorFontSize'] as num?)?.toDouble(),
       languageCode: json['languageCode'] as String?,
+      launchAtStartup: json['launchAtStartup'] as bool? ?? false,
     );
   }
 }

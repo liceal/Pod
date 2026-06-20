@@ -1398,7 +1398,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      isImage ? context.text('图片详情', 'Image Details') : context.text('内容详情', 'Content Details'),
+                      isImage ? context.text('图片预览', 'Image Preview') : context.text('内容详情', 'Content Details'),
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.bold,

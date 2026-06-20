@@ -29,6 +29,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   static const _macFileOpenerChannel = MethodChannel('app.pod/file_opener');
 
+  static const _launchAtStartupChannel = MethodChannel(
+    'app.pod/launch_at_startup',
+  );
+
   // Singleton
   static final AppState _instance = AppState._internal();
   factory AppState() => _instance;
@@ -407,6 +411,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Load Local Data
     _loadSettings();
+    await _syncLaunchAtStartupSetting();
     await _migrateLegacyDirectories();
 
     // Load historical items, notes and stored files in parallel
@@ -1016,6 +1021,41 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  bool get _supportsLaunchAtStartup => Platform.isWindows || Platform.isMacOS;
+
+  Future<void> _syncLaunchAtStartupSetting() async {
+    if (!_supportsLaunchAtStartup) return;
+    try {
+      final enabled = await _launchAtStartupChannel.invokeMethod<bool>(
+        'isEnabled',
+      );
+      if (enabled == null || enabled == settings.launchAtStartup) return;
+      settings = settings.copyWith(launchAtStartup: enabled);
+      await _prefs.setString('settings', jsonEncode(settings.toJson()));
+    } catch (e) {
+      debugPrint('Failed to sync launch-at-startup setting: $e');
+    }
+  }
+
+  Future<void> toggleLaunchAtStartup() async {
+    if (!_supportsLaunchAtStartup) return;
+    final enabled = !settings.launchAtStartup;
+    try {
+      await _launchAtStartupChannel.invokeMethod('setEnabled', {
+        'enabled': enabled,
+      });
+      settings = settings.copyWith(launchAtStartup: enabled);
+      await _prefs.setString('settings', jsonEncode(settings.toJson()));
+      await _setupTray();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Failed to update launch-at-startup setting: $e');
+      await _syncLaunchAtStartupSetting();
+      await _setupTray();
+      notifyListeners();
+    }
+  }
+
   void updateTextContentFontSize(double value) {
     final normalized = AppSettings.normalizeTextContentFontSize(value);
     if ((settings.textContentFontSize - normalized).abs() < 0.01) return;
@@ -1164,6 +1204,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     final menuItems = [
       MenuItem(key: 'toggle', label: text('显示/隐藏 Pod', 'Show/Hide Pod')),
+      if (_supportsLaunchAtStartup)
+        MenuItem.checkbox(
+          key: 'launchAtStartup',
+          label: text('开机自启动', 'Launch at Startup'),
+          checked: settings.launchAtStartup,
+        ),
       MenuItem.separator(),
       MenuItem(key: 'quit', label: text('退出', 'Quit')),
     ];
@@ -1186,6 +1232,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (_isShuttingDown) return;
     if (menuItem.key == 'toggle') {
       togglePanel();
+    } else if (menuItem.key == 'launchAtStartup') {
+      unawaited(toggleLaunchAtStartup());
     } else if (menuItem.key == 'quit') {
       unawaited(quit());
     }
@@ -2919,7 +2967,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (entity.existsSync()) {
         final root = await _getFilesDirectoryPath();
         final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => 'deleted');
-        
+
         // If it is already inside the trash, delete it permanently
         if (entity.path.contains('/.trash/') || entity.path.contains('\\.trash\\')) {
           await entity.delete(recursive: true);
@@ -3498,4 +3546,3 @@ class FileUndoAction {
     required this.isDirectory,
   });
 }
-
