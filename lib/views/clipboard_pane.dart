@@ -870,12 +870,14 @@ class _ToolbarButton extends StatefulWidget {
   final String tooltip;
   final bool isDark;
   final VoidCallback onTap;
+  final Color? iconColor;
 
   const _ToolbarButton({
     required this.icon,
     required this.tooltip,
     required this.isDark,
     required this.onTap,
+    this.iconColor,
   });
 
   @override
@@ -908,7 +910,7 @@ class _ToolbarButtonState extends State<_ToolbarButton> {
             child: Icon(
               widget.icon,
               size: 14,
-              color: widget.isDark ? Colors.white70 : Colors.black87,
+              color: widget.iconColor ?? (widget.isDark ? Colors.white70 : Colors.black87),
             ),
           ),
         ),
@@ -1361,6 +1363,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
     final isImage = itemType == 'IMAGE';
     final isLargeText = widget.item.content.length > 200000;
+    final isFavorite = widget.state.isItemFavorite(widget.item.content);
 
     final dialogWidth = isImage
         ? (screenWidth * 0.92).clamp(300.0, 720.0)
@@ -1505,6 +1508,24 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
                       ),
                       const SizedBox(width: 4),
                     ],
+                    // Favorite button
+                    _ToolbarButton(
+                      icon: isFavorite
+                          ? Icons.star_rounded
+                          : Icons.star_outline_rounded,
+                      iconColor: isFavorite
+                          ? Colors.amber
+                          : null,
+                      tooltip: isFavorite
+                          ? context.text('取消收藏', 'Remove from Favorites')
+                          : context.text('收藏', 'Add to Favorites'),
+                      isDark: widget.isDark,
+                      onTap: () {
+                        widget.state.toggleFavoriteClipboardItem(widget.item);
+                        setState(() {});
+                      },
+                    ),
+                    const SizedBox(width: 4),
                     // Copy button
                     _HeaderCopyButton(
                       isDark: widget.isDark,
