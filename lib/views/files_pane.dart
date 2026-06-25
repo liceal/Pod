@@ -48,6 +48,10 @@ class FilesPane extends StatefulWidget {
 }
 
 class _FilesPaneState extends State<FilesPane> {
+  static const double _minFileDisplaySize = 60.0;
+  static const double _maxFileDisplaySize = 160.0;
+  static const double _fileDisplaySizeWheelStep = 8.0;
+
   bool _isDragging = false;
   String _searchQuery = '';
   _ViewMode _viewMode = _ViewMode.grid;
@@ -68,7 +72,32 @@ class _FilesPaneState extends State<FilesPane> {
   List<FileSystemEntity>? _lastStoredFilesState;
   String _lastRelativePathForSearch = '';
 
+  bool get _isFileDisplaySizeModifierPressed {
+    final pressed = HardwareKeyboard.instance.logicalKeysPressed;
+    return pressed.contains(LogicalKeyboardKey.controlLeft) ||
+        pressed.contains(LogicalKeyboardKey.controlRight) ||
+        pressed.contains(LogicalKeyboardKey.metaLeft) ||
+        pressed.contains(LogicalKeyboardKey.metaRight);
+  }
 
+  void _handleFileDisplaySizePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_isFileDisplaySizeModifierPressed) {
+      return;
+    }
+
+    final dy = event.scrollDelta.dy;
+    if (dy == 0) {
+      return;
+    }
+
+    final direction = dy < 0 ? 1.0 : -1.0;
+    final nextSize =
+        widget.state.fileDisplaySize + direction * _fileDisplaySizeWheelStep;
+    widget.state.updateFileDisplaySize(
+      nextSize.clamp(_minFileDisplaySize, _maxFileDisplaySize).toDouble(),
+    );
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {});
+  }
 
   String _getFilesDirectoryPathSync() {
     final settings = widget.state.settings;
@@ -79,7 +108,6 @@ class _FilesPaneState extends State<FilesPane> {
     final dataDir = widget.state.getDataDirectoryPathSync();
     return '$dataDir/files';
   }
-
 
   void _onFileOpen(FileSystemEntity file) {
     final root = _getFilesDirectoryPathSync();
@@ -139,9 +167,12 @@ class _FilesPaneState extends State<FilesPane> {
 
     items.add(buildBreadcrumbItem(rootLabel, ''));
 
-    final parts = _currentRelativePath.split('/').where((s) => s.isNotEmpty).toList();
+    final parts = _currentRelativePath
+        .split('/')
+        .where((s) => s.isNotEmpty)
+        .toList();
     String currentAccumulatedPath = '';
-    
+
     for (int i = 0; i < parts.length; i++) {
       final part = parts[i];
       if (currentAccumulatedPath.isEmpty) {
@@ -153,10 +184,7 @@ class _FilesPaneState extends State<FilesPane> {
       items.add(
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4.0),
-          child: Text(
-            '/',
-            style: textStyle,
-          ),
+          child: Text('/', style: textStyle),
         ),
       );
 
@@ -166,10 +194,7 @@ class _FilesPaneState extends State<FilesPane> {
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: items,
-      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: items),
     );
   }
 
@@ -233,7 +258,8 @@ class _FilesPaneState extends State<FilesPane> {
 
   void _copySelectedFile() {
     final path = _selectedFilePath;
-    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+    if (path != null &&
+        FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
       Pasteboard.writeFiles([path]);
       setState(() {
         _cutFilePath = null;
@@ -252,7 +278,8 @@ class _FilesPaneState extends State<FilesPane> {
 
   void _cutSelectedFile() {
     final path = _selectedFilePath;
-    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+    if (path != null &&
+        FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
       Pasteboard.writeFiles([path]);
       setState(() {
         _cutFilePath = path;
@@ -271,7 +298,8 @@ class _FilesPaneState extends State<FilesPane> {
 
   void _deleteSelectedFile() {
     final path = _selectedFilePath;
-    if (path != null && FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
+    if (path != null &&
+        FileSystemEntity.typeSync(path) != FileSystemEntityType.notFound) {
       final entity = FileSystemEntity.isDirectorySync(path)
           ? Directory(path)
           : File(path);
@@ -305,7 +333,9 @@ class _FilesPaneState extends State<FilesPane> {
             await widget.state.moveFileToFolder(entity, targetDir);
             setState(() {
               _cutFilePath = null;
-              final name = entity.uri.pathSegments.where((s) => s.isNotEmpty).last;
+              final name = entity.uri.pathSegments
+                  .where((s) => s.isNotEmpty)
+                  .last;
               _selectedFilePath = '${targetDir.path}/$name';
             });
             ScaffoldMessenger.of(context).showSnackBar(
@@ -740,14 +770,14 @@ class _FilesPaneState extends State<FilesPane> {
         if (_lastSubdirPath != subDirPath) {
           _lastSubdirPath = subDirPath;
           try {
-            final listed = subDir
-                .listSync()
-                .where((entity) {
-                  if (entity is! File && entity is! Directory) return false;
-                  final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => '');
-                  return !name.startsWith('.');
-                })
-                .toList();
+            final listed = subDir.listSync().where((entity) {
+              if (entity is! File && entity is! Directory) return false;
+              final name = entity.uri.pathSegments.lastWhere(
+                (s) => s.isNotEmpty,
+                orElse: () => '',
+              );
+              return !name.startsWith('.');
+            }).toList();
 
             // Pre-cache file times and stats to avoid O(N log N) statSync calls during sorting and card building
             final fileTimes = <String, DateTime>{};
@@ -756,7 +786,9 @@ class _FilesPaneState extends State<FilesPane> {
                 final stat = entity.statSync();
                 widget.state.cacheFileStat(entity.path, stat);
                 widget.state.cacheIsDirectory(entity.path, entity is Directory);
-                fileTimes[entity.path] = Platform.isWindows ? stat.changed : stat.modified;
+                fileTimes[entity.path] = Platform.isWindows
+                    ? stat.changed
+                    : stat.modified;
               } catch (_) {
                 fileTimes[entity.path] = DateTime(0);
               }
@@ -795,7 +827,8 @@ class _FilesPaneState extends State<FilesPane> {
           : '$root/$_currentRelativePath';
 
       final storedFiles = widget.state.storedFiles;
-      final bool storedFilesChanged = _lastStoredFilesState == null ||
+      final bool storedFilesChanged =
+          _lastStoredFilesState == null ||
           _lastStoredFilesState!.length != storedFiles.length ||
           !_areListsEqual(_lastStoredFilesState!, storedFiles);
 
@@ -808,18 +841,17 @@ class _FilesPaneState extends State<FilesPane> {
         List<FileSystemEntity> listed = [];
         if (startDir.existsSync()) {
           try {
-            listed = startDir
-                .listSync(recursive: true)
-                .where((entity) {
-                  if (entity is! File && entity is! Directory) return false;
-                  final relativePath = entity.path.substring(startDir.path.length);
-                  final segments = relativePath.split(Platform.isWindows ? '\\' : '/');
-                  for (final segment in segments) {
-                    if (segment.startsWith('.')) return false;
-                  }
-                  return true;
-                })
-                .toList();
+            listed = startDir.listSync(recursive: true).where((entity) {
+              if (entity is! File && entity is! Directory) return false;
+              final relativePath = entity.path.substring(startDir.path.length);
+              final segments = relativePath.split(
+                Platform.isWindows ? '\\' : '/',
+              );
+              for (final segment in segments) {
+                if (segment.startsWith('.')) return false;
+              }
+              return true;
+            }).toList();
           } catch (e) {
             debugPrint('Error listing recursively: $e');
           }
@@ -858,10 +890,14 @@ class _FilesPaneState extends State<FilesPane> {
         final fileTimes = <String, DateTime>{};
         for (final entity in entities) {
           try {
-            final stat = widget.state.getCachedFileStat(entity.path) ?? entity.statSync();
+            final stat =
+                widget.state.getCachedFileStat(entity.path) ??
+                entity.statSync();
             widget.state.cacheFileStat(entity.path, stat);
             widget.state.cacheIsDirectory(entity.path, entity is Directory);
-            fileTimes[entity.path] = Platform.isWindows ? stat.changed : stat.modified;
+            fileTimes[entity.path] = Platform.isWindows
+                ? stat.changed
+                : stat.modified;
           } catch (_) {
             fileTimes[entity.path] = DateTime(0);
           }
@@ -878,11 +914,13 @@ class _FilesPaneState extends State<FilesPane> {
           return timeB.compareTo(timeA);
         });
 
-        groups.add(SearchResultGroup(
-          relativeDirPath: relPath,
-          depth: depth,
-          entities: entities,
-        ));
+        groups.add(
+          SearchResultGroup(
+            relativeDirPath: relPath,
+            depth: depth,
+            entities: entities,
+          ),
+        );
       }
 
       // Sort groups by depth ascending, then alphabetically
@@ -949,273 +987,293 @@ class _FilesPaneState extends State<FilesPane> {
                     });
                   },
                 )
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // ── Search + View Toggle ──
-              Listener(
-                onPointerSignal: (pointerSignal) {
-                  if (pointerSignal is PointerScrollEvent &&
-                      pointerSignal.scrollDelta.dy < 0) {
-                    widget.state.collapsePanel();
-                  }
-                },
-                child: Row(
-                  children: [
-                    if (_currentRelativePath.isNotEmpty) ...[
-                      Tooltip(
-                        message: context.text('返回上级', 'Back'),
-                        child: MouseRegion(
-                          cursor: SystemMouseCursors.click,
-                          child: AnimatedPress(
-                            onTap: _goBack,
-                            child: Container(
-                              width: 26,
-                              height: 26,
-                              decoration: BoxDecoration(
-                                color: widget.isDark
-                                    ? Colors.white.withOpacity(0.06)
-                                    : Colors.black.withOpacity(0.04),
-                                borderRadius: BorderRadius.zero,
-                              ),
-                              child: Icon(
-                                Icons.arrow_back_rounded,
-                                size: 15,
-                                color: widget.isDark
-                                    ? Colors.white60
-                                    : Colors.black54,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                    ],
-                    Expanded(
-                      child: _SearchBar(
-                        controller: _searchController,
-                        isDark: widget.isDark,
-                        showFolderBtn: _searchController.text.isEmpty,
-                        onOpenFolder: () {
-                          final currentPath = _currentRelativePath.isEmpty
-                              ? _getFilesDirectoryPathSync()
-                              : '${_getFilesDirectoryPathSync()}/$_currentRelativePath';
-                          widget.state.openDirectoryPath(currentPath);
-                        },
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    Tooltip(
-                      message: context.text('粘贴文件或图片', 'Paste files or images'),
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: AnimatedPress(
-                          onTap: _pasteFromClipboard,
-                          child: Container(
-                            width: 26,
-                            height: 26,
-                            decoration: BoxDecoration(
-                              color: widget.isDark
-                                  ? Colors.white.withOpacity(0.06)
-                                  : Colors.black.withOpacity(0.04),
-                              borderRadius: BorderRadius.zero,
-                            ),
-                            child: Icon(
-                              Icons.content_paste_rounded,
-                              size: 15,
-                              color: widget.isDark
-                                  ? Colors.white60
-                                  : Colors.black54,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    if (_showSizeSlider) ...[
-                      SizedBox(
-                        width: 80,
-                        child: SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 2,
-                            thumbShape: const RoundSliderThumbShape(
-                              enabledThumbRadius: 5,
-                            ),
-                            overlayShape: const RoundSliderOverlayShape(
-                              overlayRadius: 10,
-                            ),
-                            activeTrackColor: widget.isDark
-                                ? Colors.white60
-                                : Colors.black54,
-                            inactiveTrackColor: widget.isDark
-                                ? Colors.white12
-                                : Colors.black12,
-                            thumbColor: widget.isDark
-                                ? Colors.white
-                                : Colors.black87,
-                          ),
-                          child: Slider(
-                            value: widget.state.fileDisplaySize,
-                            min: 60.0,
-                            max: 160.0,
-                            onChanged: (val) {
-                              widget.state.updateFileDisplaySize(val);
-                            },
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 2),
-                    ],
-                    Tooltip(
-                      message: context.text('调整显示大小', 'Adjust display size'),
-                      child: MouseRegion(
-                        cursor: SystemMouseCursors.click,
-                        child: AnimatedPress(
-                          onTap: () => setState(
-                            () => _showSizeSlider = !_showSizeSlider,
-                          ),
-                          child: Container(
-                            width: 26,
-                            height: 26,
-                            decoration: BoxDecoration(
-                              color: _showSizeSlider
-                                  ? (widget.isDark
-                                        ? Colors.white.withOpacity(0.12)
-                                        : Colors.black.withOpacity(0.08))
-                                  : (widget.isDark
-                                        ? Colors.white.withOpacity(0.06)
-                                        : Colors.black.withOpacity(0.04)),
-                              borderRadius: BorderRadius.zero,
-                            ),
-                            child: Icon(
-                              Icons.photo_size_select_large_rounded,
-                              size: 15,
-                              color: widget.isDark
-                                  ? Colors.white60
-                                  : Colors.black54,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 2),
-                    MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: AnimatedPress(
-                        onTap: () => setState(() {
-                          if (_viewMode == _ViewMode.grid) {
-                            _viewMode = _ViewMode.details;
-                          } else {
-                            _viewMode = _ViewMode.grid;
-                          }
-                        }),
-                        child: Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: widget.isDark
-                                ? Colors.white.withOpacity(0.06)
-                                : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.zero,
-                          ),
-                          child: Icon(
-                            _viewMode == _ViewMode.grid
-                                ? Icons.view_list_rounded
-                                : Icons.grid_view_rounded,
-                            size: 15,
-                            color: widget.isDark
-                                ? Colors.white60
-                                : Colors.black54,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (_currentRelativePath.isNotEmpty) ...[
-                const SizedBox(height: 2),
-                Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 4.0,
-                    vertical: 1.0,
-                  ),
-                  child: Row(
+              : Listener(
+                  onPointerSignal: _handleFileDisplaySizePointerSignal,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.folder_open_rounded,
-                        size: 13,
-                        color: widget.isDark ? Colors.white30 : Colors.black38,
-                      ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: _buildBreadcrumbs(),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-              const SizedBox(height: 2),
-
-              // ── File Content ──
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTapDown: (_) => _paneFocusNode.requestFocus(),
-                  onTap: () {
-                    setState(() {
-                      _selectedFilePath = null;
-                    });
-                  },
-                  onSecondaryTapUp: (details) => _showEmptySpaceContextMenu(
-                    context,
-                    details.globalPosition,
-                  ),
-                  child: BackGestureDetector(
-                    onBack: _goBack,
-                    child: (_searchQuery.isNotEmpty ? groups.isEmpty : files.isEmpty)
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(
-                                  Icons.move_to_inbox_outlined,
-                                  size: 32,
-                                  color: widget.isDark
-                                      ? Colors.white24
-                                      : Colors.black26,
-                                ),
-                                const SizedBox(height: 6),
-                                Text(
-                                  _searchQuery.isNotEmpty
-                                      ? context.text(
-                                          '未找到匹配文件',
-                                          'No matching files found',
-                                        )
-                                      : context.text(
-                                          '拖拽文件或图片到这里',
-                                          'Drag and drop files/images here',
-                                        ),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: widget.isDark
-                                        ? Colors.white30
-                                        : Colors.black.withOpacity(0.3),
+                      // ── Search + View Toggle ──
+                      Listener(
+                        onPointerSignal: (pointerSignal) {
+                          if (pointerSignal is PointerScrollEvent &&
+                              !_isFileDisplaySizeModifierPressed &&
+                              pointerSignal.scrollDelta.dy < 0) {
+                            widget.state.collapsePanel();
+                          }
+                        },
+                        child: Row(
+                          children: [
+                            if (_currentRelativePath.isNotEmpty) ...[
+                              Tooltip(
+                                message: context.text('返回上级', 'Back'),
+                                child: MouseRegion(
+                                  cursor: SystemMouseCursors.click,
+                                  child: AnimatedPress(
+                                    onTap: _goBack,
+                                    child: Container(
+                                      width: 26,
+                                      height: 26,
+                                      decoration: BoxDecoration(
+                                        color: widget.isDark
+                                            ? Colors.white.withOpacity(0.06)
+                                            : Colors.black.withOpacity(0.04),
+                                        borderRadius: BorderRadius.zero,
+                                      ),
+                                      child: Icon(
+                                        Icons.arrow_back_rounded,
+                                        size: 15,
+                                        color: widget.isDark
+                                            ? Colors.white60
+                                            : Colors.black54,
+                                      ),
+                                    ),
                                   ),
                                 ),
-                              ],
+                              ),
+                              const SizedBox(width: 2),
+                            ],
+                            Expanded(
+                              child: _SearchBar(
+                                controller: _searchController,
+                                isDark: widget.isDark,
+                                showFolderBtn: _searchController.text.isEmpty,
+                                onOpenFolder: () {
+                                  final currentPath =
+                                      _currentRelativePath.isEmpty
+                                      ? _getFilesDirectoryPathSync()
+                                      : '${_getFilesDirectoryPathSync()}/$_currentRelativePath';
+                                  widget.state.openDirectoryPath(currentPath);
+                                },
+                              ),
                             ),
-                          )
-                        : _searchQuery.isNotEmpty
-                        ? _buildGroupedSearchView(groups)
-                        : _viewMode == _ViewMode.grid
-                        ? _buildGridView(files)
-                        : _buildDetailsView(files),
+                            const SizedBox(width: 2),
+                            Tooltip(
+                              message: context.text(
+                                '粘贴文件或图片',
+                                'Paste files or images',
+                              ),
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: AnimatedPress(
+                                  onTap: _pasteFromClipboard,
+                                  child: Container(
+                                    width: 26,
+                                    height: 26,
+                                    decoration: BoxDecoration(
+                                      color: widget.isDark
+                                          ? Colors.white.withOpacity(0.06)
+                                          : Colors.black.withOpacity(0.04),
+                                      borderRadius: BorderRadius.zero,
+                                    ),
+                                    child: Icon(
+                                      Icons.content_paste_rounded,
+                                      size: 15,
+                                      color: widget.isDark
+                                          ? Colors.white60
+                                          : Colors.black54,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            if (_showSizeSlider) ...[
+                              SizedBox(
+                                width: 80,
+                                child: SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 2,
+                                    thumbShape: const RoundSliderThumbShape(
+                                      enabledThumbRadius: 5,
+                                    ),
+                                    overlayShape: const RoundSliderOverlayShape(
+                                      overlayRadius: 10,
+                                    ),
+                                    activeTrackColor: widget.isDark
+                                        ? Colors.white60
+                                        : Colors.black54,
+                                    inactiveTrackColor: widget.isDark
+                                        ? Colors.white12
+                                        : Colors.black12,
+                                    thumbColor: widget.isDark
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  ),
+                                  child: Slider(
+                                    value: widget.state.fileDisplaySize,
+                                    min: _minFileDisplaySize,
+                                    max: _maxFileDisplaySize,
+                                    onChanged: (val) {
+                                      widget.state.updateFileDisplaySize(val);
+                                    },
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                            ],
+                            Tooltip(
+                              message: context.text(
+                                '调整显示大小',
+                                'Adjust display size',
+                              ),
+                              child: MouseRegion(
+                                cursor: SystemMouseCursors.click,
+                                child: AnimatedPress(
+                                  onTap: () => setState(
+                                    () => _showSizeSlider = !_showSizeSlider,
+                                  ),
+                                  child: Container(
+                                    width: 26,
+                                    height: 26,
+                                    decoration: BoxDecoration(
+                                      color: _showSizeSlider
+                                          ? (widget.isDark
+                                                ? Colors.white.withOpacity(0.12)
+                                                : Colors.black.withOpacity(
+                                                    0.08,
+                                                  ))
+                                          : (widget.isDark
+                                                ? Colors.white.withOpacity(0.06)
+                                                : Colors.black.withOpacity(
+                                                    0.04,
+                                                  )),
+                                      borderRadius: BorderRadius.zero,
+                                    ),
+                                    child: Icon(
+                                      Icons.photo_size_select_large_rounded,
+                                      size: 15,
+                                      color: widget.isDark
+                                          ? Colors.white60
+                                          : Colors.black54,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 2),
+                            MouseRegion(
+                              cursor: SystemMouseCursors.click,
+                              child: AnimatedPress(
+                                onTap: () => setState(() {
+                                  if (_viewMode == _ViewMode.grid) {
+                                    _viewMode = _ViewMode.details;
+                                  } else {
+                                    _viewMode = _ViewMode.grid;
+                                  }
+                                }),
+                                child: Container(
+                                  width: 26,
+                                  height: 26,
+                                  decoration: BoxDecoration(
+                                    color: widget.isDark
+                                        ? Colors.white.withOpacity(0.06)
+                                        : Colors.black.withOpacity(0.04),
+                                    borderRadius: BorderRadius.zero,
+                                  ),
+                                  child: Icon(
+                                    _viewMode == _ViewMode.grid
+                                        ? Icons.view_list_rounded
+                                        : Icons.grid_view_rounded,
+                                    size: 15,
+                                    color: widget.isDark
+                                        ? Colors.white60
+                                        : Colors.black54,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (_currentRelativePath.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4.0,
+                            vertical: 1.0,
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                Icons.folder_open_rounded,
+                                size: 13,
+                                color: widget.isDark
+                                    ? Colors.white30
+                                    : Colors.black38,
+                              ),
+                              const SizedBox(width: 4),
+                              Expanded(child: _buildBreadcrumbs()),
+                            ],
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 2),
+
+                      // ── File Content ──
+                      Expanded(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onTapDown: (_) => _paneFocusNode.requestFocus(),
+                          onTap: () {
+                            setState(() {
+                              _selectedFilePath = null;
+                            });
+                          },
+                          onSecondaryTapUp: (details) =>
+                              _showEmptySpaceContextMenu(
+                                context,
+                                details.globalPosition,
+                              ),
+                          child: BackGestureDetector(
+                            onBack: _goBack,
+                            child:
+                                (_searchQuery.isNotEmpty
+                                    ? groups.isEmpty
+                                    : files.isEmpty)
+                                ? Center(
+                                    child: Column(
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.center,
+                                      children: [
+                                        Icon(
+                                          Icons.move_to_inbox_outlined,
+                                          size: 32,
+                                          color: widget.isDark
+                                              ? Colors.white24
+                                              : Colors.black26,
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(
+                                          _searchQuery.isNotEmpty
+                                              ? context.text(
+                                                  '未找到匹配文件',
+                                                  'No matching files found',
+                                                )
+                                              : context.text(
+                                                  '拖拽文件或图片到这里',
+                                                  'Drag and drop files/images here',
+                                                ),
+                                          style: TextStyle(
+                                            fontSize: 10,
+                                            color: widget.isDark
+                                                ? Colors.white30
+                                                : Colors.black.withOpacity(0.3),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  )
+                                : _searchQuery.isNotEmpty
+                                ? _buildGroupedSearchView(groups)
+                                : _viewMode == _ViewMode.grid
+                                ? _buildGridView(files)
+                                : _buildDetailsView(files),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
-            ],
-          ),
         ),
 
         // ── Drag overlay ──
@@ -1349,7 +1407,8 @@ class _FilesPaneState extends State<FilesPane> {
           )
         : mainContent;
 
-    final bool isInputFocused = FocusManager.instance.primaryFocus != null &&
+    final bool isInputFocused =
+        FocusManager.instance.primaryFocus != null &&
         FocusManager.instance.primaryFocus != _paneFocusNode;
 
     return Shortcuts(
@@ -1375,10 +1434,16 @@ class _FilesPaneState extends State<FilesPane> {
               const _UndoIntent(),
           const SingleActivator(LogicalKeyboardKey.keyZ, meta: true):
               const _UndoIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyZ, control: true, shift: true):
-              const _RedoIntent(),
-          const SingleActivator(LogicalKeyboardKey.keyZ, meta: true, shift: true):
-              const _RedoIntent(),
+          const SingleActivator(
+            LogicalKeyboardKey.keyZ,
+            control: true,
+            shift: true,
+          ): const _RedoIntent(),
+          const SingleActivator(
+            LogicalKeyboardKey.keyZ,
+            meta: true,
+            shift: true,
+          ): const _RedoIntent(),
           const SingleActivator(LogicalKeyboardKey.keyY, control: true):
               const _RedoIntent(),
           const SingleActivator(LogicalKeyboardKey.keyY, meta: true):
@@ -1688,7 +1753,10 @@ class _FilesPaneState extends State<FilesPane> {
             // Table Header for list view
             SliverToBoxAdapter(
               child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 12.0, vertical: 8.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12.0,
+                  vertical: 8.0,
+                ),
                 child: Row(
                   children: [
                     Expanded(
@@ -1737,9 +1805,7 @@ class _FilesPaneState extends State<FilesPane> {
           ],
           for (final group in groups) ...[
             // Directory header sliver
-            SliverToBoxAdapter(
-              child: _buildGroupHeader(group, scaleFactor),
-            ),
+            SliverToBoxAdapter(child: _buildGroupHeader(group, scaleFactor)),
             if (isGrid)
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 12.0),
@@ -1750,130 +1816,128 @@ class _FilesPaneState extends State<FilesPane> {
                     mainAxisSpacing: 2,
                     childAspectRatio: 1.0,
                   ),
-                  delegate: SliverChildBuilderDelegate(
-                    (ctx, index) {
-                      final file = group.entities[index];
-                      final segments = file.uri.pathSegments
-                          .where((s) => s.isNotEmpty)
-                          .toList();
-                      final fileName = segments.isEmpty
-                          ? context.text('未知', 'Unknown')
-                          : segments.last;
-                      final isDir = file is Directory;
-                      final (icon, iconColor) =
-                          _getFileIconAndColor(file.path, isDir: isDir);
-                      return _GridFileCard(
-                        file: file,
-                        fileName: fileName,
-                        icon: icon,
-                        iconColor: iconColor,
-                        isImage: _isImage(file),
-                        isDark: widget.isDark,
-                        isSelected: _selectedFilePath == file.path,
-                        isCut: _cutFilePath == file.path,
-                        onSelect: () {
-                          _paneFocusNode.requestFocus();
-                          setState(() {
-                            _selectedFilePath = file.path;
-                          });
-                        },
-                        onOpen: () => _onFileOpen(file),
-                        onPreview: () {
-                          setState(() {
-                            _previewFilePath = file.path;
-                          });
-                        },
-                        onDelete: () => widget.state.deleteFile(file),
-                        onContextMenu: (ctx, pos) {
-                          _paneFocusNode.requestFocus();
-                          setState(() {
-                            _selectedFilePath = file.path;
-                          });
-                          _showContextMenu(
-                            ctx,
-                            pos,
-                            file,
-                            () => widget.state.deleteFile(file),
-                          );
-                        },
-                      );
-                    },
-                    childCount: group.entities.length,
-                  ),
+                  delegate: SliverChildBuilderDelegate((ctx, index) {
+                    final file = group.entities[index];
+                    final segments = file.uri.pathSegments
+                        .where((s) => s.isNotEmpty)
+                        .toList();
+                    final fileName = segments.isEmpty
+                        ? context.text('未知', 'Unknown')
+                        : segments.last;
+                    final isDir = file is Directory;
+                    final (icon, iconColor) = _getFileIconAndColor(
+                      file.path,
+                      isDir: isDir,
+                    );
+                    return _GridFileCard(
+                      file: file,
+                      fileName: fileName,
+                      icon: icon,
+                      iconColor: iconColor,
+                      isImage: _isImage(file),
+                      isDark: widget.isDark,
+                      isSelected: _selectedFilePath == file.path,
+                      isCut: _cutFilePath == file.path,
+                      onSelect: () {
+                        _paneFocusNode.requestFocus();
+                        setState(() {
+                          _selectedFilePath = file.path;
+                        });
+                      },
+                      onOpen: () => _onFileOpen(file),
+                      onPreview: () {
+                        setState(() {
+                          _previewFilePath = file.path;
+                        });
+                      },
+                      onDelete: () => widget.state.deleteFile(file),
+                      onContextMenu: (ctx, pos) {
+                        _paneFocusNode.requestFocus();
+                        setState(() {
+                          _selectedFilePath = file.path;
+                        });
+                        _showContextMenu(
+                          ctx,
+                          pos,
+                          file,
+                          () => widget.state.deleteFile(file),
+                        );
+                      },
+                    );
+                  }, childCount: group.entities.length),
                 ),
               )
             else
               SliverPadding(
                 padding: const EdgeInsets.symmetric(horizontal: 12.0),
                 sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (ctx, index) {
-                      final file = group.entities[index];
-                      final segments = file.uri.pathSegments
-                          .where((s) => s.isNotEmpty)
-                          .toList();
-                      final fileName = segments.isEmpty
-                          ? context.text('未知', 'Unknown')
-                          : segments.last;
-                      final isDir = file is Directory;
-                      final (icon, iconColor) =
-                          _getFileIconAndColor(file.path, isDir: isDir);
-                      final stat =
-                          widget.state.getCachedFileStat(file.path) ??
-                          (file.existsSync() ? file.statSync() : null);
-                      final sizeStr = isDir
-                          ? '—'
-                          : (stat != null ? formatFileSize(stat.size) : '—');
+                  delegate: SliverChildBuilderDelegate((ctx, index) {
+                    final file = group.entities[index];
+                    final segments = file.uri.pathSegments
+                        .where((s) => s.isNotEmpty)
+                        .toList();
+                    final fileName = segments.isEmpty
+                        ? context.text('未知', 'Unknown')
+                        : segments.last;
+                    final isDir = file is Directory;
+                    final (icon, iconColor) = _getFileIconAndColor(
+                      file.path,
+                      isDir: isDir,
+                    );
+                    final stat =
+                        widget.state.getCachedFileStat(file.path) ??
+                        (file.existsSync() ? file.statSync() : null);
+                    final sizeStr = isDir
+                        ? '—'
+                        : (stat != null ? formatFileSize(stat.size) : '—');
 
-                      String dateStr = '—';
-                      if (stat != null) {
-                        final date = Platform.isWindows
-                            ? stat.changed
-                            : stat.modified;
-                        dateStr =
-                            '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-                      }
+                    String dateStr = '—';
+                    if (stat != null) {
+                      final date = Platform.isWindows
+                          ? stat.changed
+                          : stat.modified;
+                      dateStr =
+                          '${date.month.toString().padLeft(2, '0')}-${date.day.toString().padLeft(2, '0')} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+                    }
 
-                      return _DetailsFileCard(
-                        file: file,
-                        fileName: fileName,
-                        sizeStr: sizeStr,
-                        dateStr: dateStr,
-                        icon: icon,
-                        iconColor: iconColor,
-                        isImage: _isImage(file),
-                        isDark: widget.isDark,
-                        isSelected: _selectedFilePath == file.path,
-                        isCut: _cutFilePath == file.path,
-                        onSelect: () {
-                          _paneFocusNode.requestFocus();
-                          setState(() {
-                            _selectedFilePath = file.path;
-                          });
-                        },
-                        onOpen: () => _onFileOpen(file),
-                        onPreview: () {
-                          setState(() {
-                            _previewFilePath = file.path;
-                          });
-                        },
-                        onDelete: () => widget.state.deleteFile(file),
-                        onContextMenu: (ctx, pos) {
-                          _paneFocusNode.requestFocus();
-                          setState(() {
-                            _selectedFilePath = file.path;
-                          });
-                          _showContextMenu(
-                            ctx,
-                            pos,
-                            file,
-                            () => widget.state.deleteFile(file),
-                          );
-                        },
-                      );
-                    },
-                    childCount: group.entities.length,
-                  ),
+                    return _DetailsFileCard(
+                      file: file,
+                      fileName: fileName,
+                      sizeStr: sizeStr,
+                      dateStr: dateStr,
+                      icon: icon,
+                      iconColor: iconColor,
+                      isImage: _isImage(file),
+                      isDark: widget.isDark,
+                      isSelected: _selectedFilePath == file.path,
+                      isCut: _cutFilePath == file.path,
+                      onSelect: () {
+                        _paneFocusNode.requestFocus();
+                        setState(() {
+                          _selectedFilePath = file.path;
+                        });
+                      },
+                      onOpen: () => _onFileOpen(file),
+                      onPreview: () {
+                        setState(() {
+                          _previewFilePath = file.path;
+                        });
+                      },
+                      onDelete: () => widget.state.deleteFile(file),
+                      onContextMenu: (ctx, pos) {
+                        _paneFocusNode.requestFocus();
+                        setState(() {
+                          _selectedFilePath = file.path;
+                        });
+                        _showContextMenu(
+                          ctx,
+                          pos,
+                          file,
+                          () => widget.state.deleteFile(file),
+                        );
+                      },
+                    );
+                  }, childCount: group.entities.length),
                 ),
               ),
           ],
@@ -1888,7 +1952,10 @@ class _FilesPaneState extends State<FilesPane> {
       if (_currentRelativePath.isEmpty) {
         displayName = context.text('📂 根目录', '📂 Root Directory');
       } else {
-        final parts = _currentRelativePath.split('/').where((s) => s.isNotEmpty).toList();
+        final parts = _currentRelativePath
+            .split('/')
+            .where((s) => s.isNotEmpty)
+            .toList();
         final folderName = parts.isEmpty ? '' : parts.last;
         displayName = '📂 $folderName';
       }
@@ -1972,7 +2039,10 @@ class _FilesPaneState extends State<FilesPane> {
               ? context.text('未知', 'Unknown')
               : segments.last;
           final isDir = file is Directory;
-          final (icon, iconColor) = _getFileIconAndColor(file.path, isDir: isDir);
+          final (icon, iconColor) = _getFileIconAndColor(
+            file.path,
+            isDir: isDir,
+          );
           return _GridFileCard(
             file: file,
             fileName: fileName,
@@ -2088,7 +2158,10 @@ class _FilesPaneState extends State<FilesPane> {
                     ? context.text('未知', 'Unknown')
                     : segments.last;
                 final isDir = file is Directory;
-                final (icon, iconColor) = _getFileIconAndColor(file.path, isDir: isDir);
+                final (icon, iconColor) = _getFileIconAndColor(
+                  file.path,
+                  isDir: isDir,
+                );
                 final stat =
                     widget.state.getCachedFileStat(file.path) ??
                     (file.existsSync() ? file.statSync() : null);
@@ -2395,19 +2468,21 @@ class _GridFileCardState extends State<_GridFileCard> {
                     color: widget.isSelected
                         ? accentColor.withOpacity(widget.isDark ? 0.15 : 0.1)
                         : (_isHovered
-                            ? (widget.isDark
-                                  ? Colors.white.withOpacity(0.07)
-                                  : Colors.black.withOpacity(0.05))
-                            : (widget.isDark
-                                  ? Colors.white.withOpacity(0.03)
-                                  : Colors.black.withOpacity(0.02))),
+                              ? (widget.isDark
+                                    ? Colors.white.withOpacity(0.07)
+                                    : Colors.black.withOpacity(0.05))
+                              : (widget.isDark
+                                    ? Colors.white.withOpacity(0.03)
+                                    : Colors.black.withOpacity(0.02))),
                     borderRadius: BorderRadius.zero,
                     border: Border.all(
                       color: widget.isSelected
                           ? accentColor
                           : (_isHovered
-                              ? (widget.isDark ? Colors.white12 : Colors.black12)
-                              : Colors.transparent),
+                                ? (widget.isDark
+                                      ? Colors.white12
+                                      : Colors.black12)
+                                : Colors.transparent),
                       width: widget.isSelected ? 1.5 : 1.0,
                     ),
                   ),
@@ -2448,19 +2523,30 @@ class _GridFileCardState extends State<_GridFileCard> {
                                           top: 2,
                                           right: 2,
                                           child: Tooltip(
-                                            message: context.text('预览图片', 'Preview Image'),
+                                            message: context.text(
+                                              '预览图片',
+                                              'Preview Image',
+                                            ),
                                             child: GestureDetector(
                                               onTap: widget.onPreview,
                                               child: MouseRegion(
-                                                cursor: SystemMouseCursors.click,
+                                                cursor:
+                                                    SystemMouseCursors.click,
                                                 child: Container(
-                                                  padding: const EdgeInsets.all(3),
+                                                  padding: const EdgeInsets.all(
+                                                    3,
+                                                  ),
                                                   decoration: BoxDecoration(
-                                                    color: Colors.black.withOpacity(0.55),
-                                                    borderRadius: BorderRadius.circular(4),
+                                                    color: Colors.black
+                                                        .withOpacity(0.55),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          4,
+                                                        ),
                                                   ),
                                                   child: const Icon(
-                                                    Icons.remove_red_eye_rounded,
+                                                    Icons
+                                                        .remove_red_eye_rounded,
                                                     size: 13,
                                                     color: Colors.white,
                                                   ),
@@ -2563,10 +2649,7 @@ class _GridFileCardState extends State<_GridFileCard> {
           )
         : card;
 
-    return Opacity(
-      opacity: widget.isCut ? 0.55 : 1.0,
-      child: resultWidget,
-    );
+    return Opacity(opacity: widget.isCut ? 0.55 : 1.0, child: resultWidget);
   }
 }
 
@@ -2946,13 +3029,15 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                     color: widget.isSelected
                         ? accentColor.withOpacity(widget.isDark ? 0.15 : 0.1)
                         : (_isHovered
-                            ? (widget.isDark
-                                  ? Colors.white.withOpacity(0.06)
-                                  : Colors.black.withOpacity(0.04))
-                            : Colors.transparent),
+                              ? (widget.isDark
+                                    ? Colors.white.withOpacity(0.06)
+                                    : Colors.black.withOpacity(0.04))
+                              : Colors.transparent),
                     borderRadius: BorderRadius.zero,
                     border: Border.all(
-                      color: widget.isSelected ? accentColor : Colors.transparent,
+                      color: widget.isSelected
+                          ? accentColor
+                          : Colors.transparent,
                       width: 1.0,
                     ),
                   ),
@@ -3104,10 +3189,7 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
           )
         : card;
 
-    return Opacity(
-      opacity: widget.isCut ? 0.55 : 1.0,
-      child: resultWidget,
-    );
+    return Opacity(opacity: widget.isCut ? 0.55 : 1.0, child: resultWidget);
   }
 }
 
@@ -3140,7 +3222,6 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
   String _fileSizeStr = '';
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
-
 
   @override
   void initState() {
@@ -3228,8 +3309,6 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
     _transformationController.value = Matrix4.identity();
   }
 
-
-
   @override
   Widget build(BuildContext context) {
     final textColor = widget.isDark ? Colors.white : Colors.black87;
@@ -3239,7 +3318,9 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
     final dimensionText = hasDimension ? '$_imgWidth×$_imgHeight' : '';
 
     // Get basename
-    final segments = widget.file.uri.pathSegments.where((s) => s.isNotEmpty).toList();
+    final segments = widget.file.uri.pathSegments
+        .where((s) => s.isNotEmpty)
+        .toList();
     final fileName = segments.isEmpty ? '' : segments.last;
 
     final detailBody = Container(
@@ -3391,7 +3472,8 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
                         Positioned.fill(
                           child: RepaintBoundary(
                             child: InteractiveViewer(
-                              transformationController: _transformationController,
+                              transformationController:
+                                  _transformationController,
                               maxScale: 20.0,
                               minScale: 0.5,
                               boundaryMargin: const EdgeInsets.all(480.0),
@@ -3440,10 +3522,7 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
       ),
     );
 
-    return BackGestureDetector(
-      onBack: widget.onBack,
-      child: detailWithEsc,
-    );
+    return BackGestureDetector(onBack: widget.onBack, child: detailWithEsc);
   }
 }
 
@@ -3537,7 +3616,9 @@ class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: _saved ? context.text('已保存至桌面', 'Saved to Desktop') : context.text('保存图片到桌面', 'Save Image to Desktop'),
+      message: _saved
+          ? context.text('已保存至桌面', 'Saved to Desktop')
+          : context.text('保存图片到桌面', 'Save Image to Desktop'),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -3609,7 +3690,9 @@ class _HeaderCopyFileButtonState extends State<_HeaderCopyFileButton> {
   @override
   Widget build(BuildContext context) {
     return Tooltip(
-      message: _copied ? context.text('已复制文件', 'File Copied') : context.text('复制文件', 'Copy File'),
+      message: _copied
+          ? context.text('已复制文件', 'File Copied')
+          : context.text('复制文件', 'Copy File'),
       child: MouseRegion(
         cursor: SystemMouseCursors.click,
         onEnter: (_) => setState(() => _hovered = true),
@@ -3708,6 +3791,7 @@ class SearchResultGroup {
     required this.entities,
   });
 }
+
 class _BreadcrumbItem extends StatefulWidget {
   final String label;
   final VoidCallback onTap;
