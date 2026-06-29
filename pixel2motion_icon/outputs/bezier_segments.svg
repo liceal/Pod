@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="386" height="373" viewBox="0 0 386 373">
+<rect width="100%" height="100%" fill="#ffffff"/>
+<path d="M55 180C55 169.5 63.5 161 74 161H314C324.5 161 333 169.5 333 180V276C333 290.4 321.4 302 307 302H81C66.6 302 55 290.4 55 276V180Z" fill="#111111" opacity="0.16"/>
+<g fill="none" stroke-linecap="round" stroke-linejoin="round">
+<path d="M 55.0 180.0 C 55.0 169.5, 63.5 161.0, 74.0 161.0" stroke="#ef4444" stroke-width="4.5"/>
+<path d="M 74.0 161.0 L 314.0 161.0" stroke="#f97316" stroke-width="4.5"/>
+<path d="M 314.0 161.0 C 324.5 161.0, 333.0 169.5, 333.0 180.0" stroke="#eab308" stroke-width="4.5"/>
+<path d="M 333.0 180.0 L 333.0 276.0" stroke="#22c55e" stroke-width="4.5"/>
+<path d="M 333.0 276.0 C 333.0 290.4, 321.4 302.0, 307.0 302.0" stroke="#06b6d4" stroke-width="4.5"/>
+<path d="M 307.0 302.0 L 81.0 302.0" stroke="#3b82f6" stroke-width="4.5"/>
+<path d="M 81.0 302.0 C 66.6 302.0, 55.0 290.4, 55.0 276.0" stroke="#8b5cf6" stroke-width="4.5"/>
+<path d="M 55.0 276.0 L 55.0 180.0" stroke="#ec4899" stroke-width="4.5"/>
+</g>
+<g stroke="#64748b" stroke-width="1.2" stroke-dasharray="5 5" opacity="0.58">
+<path d="M 55.0 180.0 L 55.0 169.5 M 74.0 161.0 L 63.5 161.0"/>
+<path d="M 314.0 161.0 L 324.5 161.0 M 333.0 180.0 L 333.0 169.5"/>
+<path d="M 333.0 276.0 L 333.0 290.4 M 307.0 302.0 L 321.4 302.0"/>
+<path d="M 81.0 302.0 L 66.6 302.0 M 55.0 276.0 L 55.0 290.4"/>
+</g>
+<g font-family="Arial, Helvetica, sans-serif">
+<circle cx="55.0" cy="180.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<circle cx="55.0" cy="169.5" r="2.4" fill="#2563eb" opacity="0.72"/>
+<circle cx="63.5" cy="161.0" r="2.4" fill="#2563eb" opacity="0.72"/>
+<text x="60.6" y="159.6" text-anchor="middle" font-size="10" font-weight="700" fill="#ef4444" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">1</text>
+<circle cx="74.0" cy="161.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<text x="194.0" y="154.0" text-anchor="middle" font-size="10" font-weight="700" fill="#f97316" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">2</text>
+<circle cx="314.0" cy="161.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<circle cx="324.5" cy="161.0" r="2.4" fill="#2563eb" opacity="0.72"/>
+<circle cx="333.0" cy="169.5" r="2.4" fill="#2563eb" opacity="0.72"/>
+<text x="327.4" y="159.6" text-anchor="middle" font-size="10" font-weight="700" fill="#eab308" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">3</text>
+<circle cx="333.0" cy="180.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<text x="333.0" y="221.0" text-anchor="middle" font-size="10" font-weight="700" fill="#22c55e" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">4</text>
+<circle cx="333.0" cy="276.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<circle cx="333.0" cy="290.4" r="2.4" fill="#2563eb" opacity="0.72"/>
+<circle cx="321.4" cy="302.0" r="2.4" fill="#2563eb" opacity="0.72"/>
+<text x="325.4" y="287.4" text-anchor="middle" font-size="10" font-weight="700" fill="#06b6d4" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">5</text>
+<circle cx="307.0" cy="302.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<text x="194.0" y="295.0" text-anchor="middle" font-size="10" font-weight="700" fill="#3b82f6" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">6</text>
+<circle cx="81.0" cy="302.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<circle cx="66.6" cy="302.0" r="2.4" fill="#2563eb" opacity="0.72"/>
+<circle cx="55.0" cy="290.4" r="2.4" fill="#2563eb" opacity="0.72"/>
+<text x="62.6" y="287.4" text-anchor="middle" font-size="10" font-weight="700" fill="#8b5cf6" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">7</text>
+<circle cx="55.0" cy="276.0" r="3.1" fill="#ffffff" stroke="#111827" stroke-width="1.5"/>
+<text x="55.0" y="221.0" text-anchor="middle" font-size="10" font-weight="700" fill="#ec4899" stroke="#ffffff" stroke-width="3.5" paint-order="stroke fill">8</text>
+</g>
+<g font-family="Arial, Helvetica, sans-serif" fill="#111827">
+<rect x="18" y="16" width="430" height="82" rx="8" fill="#ffffff" opacity="0.90" stroke="#cbd5e1"/>
+<text x="34" y="42" font-size="14" font-weight="700">Path audit: 4 cubic segments (no fixed budget)</text>
+<text x="34" y="64" font-size="12" fill="#475569">Join warnings: 0; short segments: 0</text>
+<text x="34" y="84" font-size="12" fill="#475569">Colored curves = segments; blue dots/gray lines = Bezier handles</text>
+</g>
+</svg>

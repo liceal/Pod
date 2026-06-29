@@ -1,0 +1,187 @@
+:root {
+  --p2m-duration: 1500ms;
+  --p2m-ease-enter: cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  --p2m-ease-settle: cubic-bezier(0.22, 1, 0.36, 1);
+  --p2m-ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --p2m-overshoot: 1.04;
+}
+
+#logo,
+#icon-bg,
+#paper-back,
+#paper-front,
+#film-strip,
+#folder,
+#folder-lip,
+#edge-highlight {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+#logo {
+  animation: p2m-logo-root var(--p2m-duration) linear both;
+}
+
+#icon-bg {
+  animation: p2m-bg var(--p2m-duration) linear both;
+}
+
+#paper-back {
+  animation: p2m-back-paper var(--p2m-duration) linear both;
+}
+
+#film-strip {
+  animation: p2m-film var(--p2m-duration) linear both;
+}
+
+#paper-front {
+  animation: p2m-front-paper var(--p2m-duration) linear both;
+}
+
+#folder {
+  animation: p2m-folder var(--p2m-duration) linear both;
+}
+
+#folder-lip,
+#edge-highlight {
+  animation: p2m-lip var(--p2m-duration) linear both;
+}
+
+@keyframes p2m-logo-root {
+  0% {
+    opacity: 0;
+    transform: translateY(18px) scale(0.92);
+    animation-timing-function: cubic-bezier(0.34, 0, 0.14, 1); /* --p2m-ease-narrative */
+  }
+  20% {
+    opacity: 0.92;
+    transform: translateY(24px) scale(0.88);
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* --p2m-ease-enter */
+  }
+  60% {
+    opacity: 1;
+    transform: translateY(-4px) scale(1.035);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  82% {
+    opacity: 1;
+    transform: translateY(1px) scale(0.997);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes p2m-bg {
+  0% {
+    transform: scale(0.86);
+    opacity: 0;
+    animation-timing-function: cubic-bezier(0.34, 1.56, 0.64, 1); /* --p2m-ease-pop */
+  }
+  18% {
+    transform: scale(0.82);
+    opacity: 0.85;
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); /* --p2m-ease-out-universal */
+  }
+  54% {
+    transform: scale(1.025);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes p2m-back-paper {
+  0%, 26% {
+    opacity: 0;
+    transform: translateY(36px) scale(0.96);
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* --p2m-ease-enter */
+  }
+  58% {
+    opacity: 1;
+    transform: translateY(-6px) scale(1.018);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes p2m-film {
+  0%, 34% {
+    opacity: 0;
+    transform: translateY(-24px) scaleY(0.72);
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* --p2m-ease-enter */
+  }
+  67% {
+    opacity: 1;
+    transform: translateY(4px) scaleY(1.035);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+@keyframes p2m-front-paper {
+  0%, 30% {
+    opacity: 0;
+    transform: translateY(30px) translateX(-10px) rotate(-3deg) scale(0.96);
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* --p2m-ease-enter */
+  }
+  62% {
+    opacity: 1;
+    transform: translateY(-5px) translateX(2px) rotate(0.8deg) scale(1.018);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) translateX(0) rotate(0deg) scale(1);
+  }
+}
+
+@keyframes p2m-folder {
+  0%, 20% {
+    opacity: 0;
+    transform: translateY(46px) scaleX(0.94) scaleY(0.88);
+    animation-timing-function: cubic-bezier(0.25, 0.46, 0.45, 0.94); /* --p2m-ease-enter */
+  }
+  56% {
+    opacity: 1;
+    transform: translateY(-5px) scaleX(1.025) scaleY(1.01);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  78% {
+    opacity: 1;
+    transform: translateY(2px) scaleX(0.998) scaleY(1.004);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scaleX(1) scaleY(1);
+  }
+}
+
+@keyframes p2m-lip {
+  0%, 24% {
+    opacity: 0;
+    transform: scaleX(0.62);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1); /* --p2m-ease-out-universal */
+  }
+  64% {
+    opacity: 1;
+    transform: scaleX(1.025);
+    animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1); /* --p2m-ease-settle */
+  }
+  100% {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}

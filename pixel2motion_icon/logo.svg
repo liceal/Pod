@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="386" height="373" viewBox="0 0 386 373" role="img" aria-labelledby="title desc">
+  <title id="title">Folder media icon</title>
+  <desc id="desc">A blue rounded app icon containing a pale folder, paper sheets, and a vertical film strip.</desc>
+  <defs>
+    <linearGradient id="bgGradient" x1="34" y1="24" x2="348" y2="350" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#45B9F5"/>
+      <stop offset="0.48" stop-color="#3198EA"/>
+      <stop offset="1" stop-color="#245BD3"/>
+    </linearGradient>
+    <linearGradient id="bgSheen" x1="71" y1="13" x2="300" y2="357" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#73D3FF" stop-opacity="0.64"/>
+      <stop offset="0.55" stop-color="#5FB3FF" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#1E4EBB" stop-opacity="0.24"/>
+    </linearGradient>
+    <linearGradient id="paperGradient" x1="223" y1="58" x2="223" y2="188" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FEFEFB"/>
+      <stop offset="0.78" stop-color="#ECEFEB"/>
+      <stop offset="1" stop-color="#D9E6E4"/>
+    </linearGradient>
+    <linearGradient id="frontPaperGradient" x1="145" y1="115" x2="145" y2="226" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.72" stop-color="#EEF4F1"/>
+      <stop offset="1" stop-color="#D5E3E0"/>
+    </linearGradient>
+    <linearGradient id="folderGradient" x1="194" y1="162" x2="194" y2="302" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C7F2FF"/>
+      <stop offset="0.35" stop-color="#BFE9F8"/>
+      <stop offset="1" stop-color="#ABD6EA"/>
+    </linearGradient>
+    <linearGradient id="lipGradient" x1="26" y1="168" x2="362" y2="168" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#C1F0FF"/>
+      <stop offset="0.5" stop-color="#D6F9FF"/>
+      <stop offset="1" stop-color="#B2E9FF"/>
+    </linearGradient>
+    <linearGradient id="filmGradient" x1="249" y1="58" x2="278" y2="58" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0E1114"/>
+      <stop offset="0.45" stop-color="#20272A"/>
+      <stop offset="0.72" stop-color="#101315"/>
+      <stop offset="1" stop-color="#30383A"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="7" stdDeviation="8" flood-color="#0E2D72" flood-opacity="0.36"/>
+    </filter>
+    <filter id="paperShadow" x="-25%" y="-25%" width="150%" height="160%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#122C5E" flood-opacity="0.28"/>
+    </filter>
+    <filter id="folderShadow" x="-15%" y="-20%" width="130%" height="150%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="7" stdDeviation="6" flood-color="#0A2A68" flood-opacity="0.34"/>
+    </filter>
+    <clipPath id="backPaperClip">
+      <rect x="127" y="58" width="193" height="136" rx="22" ry="22"/>
+    </clipPath>
+    <clipPath id="folderClip">
+      <path d="M55 180C55 169.5 63.5 161 74 161H314C324.5 161 333 169.5 333 180V276C333 290.4 321.4 302 307 302H81C66.6 302 55 290.4 55 276V180Z"/>
+    </clipPath>
+  </defs>
+  <g id="logo">
+    <g id="icon-bg">
+      <rect x="10" y="2" width="368" height="368" rx="51" fill="url(#bgGradient)" filter="url(#softShadow)"/>
+      <rect x="21" y="14" width="346" height="344" rx="40" fill="none" stroke="#78D1FF" stroke-opacity="0.28"/>
+      <rect x="10" y="2" width="368" height="368" rx="51" fill="url(#bgSheen)" opacity="0.75"/>
+    </g>
+    <g id="paper-back" filter="url(#paperShadow)">
+      <rect x="127" y="58" width="193" height="136" rx="22" fill="url(#paperGradient)"/>
+      <g id="film-strip" clip-path="url(#backPaperClip)">
+        <rect x="249" y="58" width="29" height="130" fill="url(#filmGradient)"/>
+        <g id="film-perfs" opacity="0.24" fill="#3E4749">
+          <rect x="253" y="60" width="5" height="9" rx="1"/>
+          <rect x="269" y="60" width="5" height="9" rx="1"/>
+          <rect x="253" y="74" width="5" height="9" rx="1"/>
+          <rect x="269" y="74" width="5" height="9" rx="1"/>
+          <rect x="253" y="88" width="5" height="9" rx="1"/>
+          <rect x="269" y="88" width="5" height="9" rx="1"/>
+          <rect x="253" y="102" width="5" height="9" rx="1"/>
+          <rect x="269" y="102" width="5" height="9" rx="1"/>
+          <rect x="253" y="116" width="5" height="9" rx="1"/>
+          <rect x="269" y="116" width="5" height="9" rx="1"/>
+          <rect x="253" y="130" width="5" height="9" rx="1"/>
+          <rect x="269" y="130" width="5" height="9" rx="1"/>
+          <rect x="253" y="144" width="5" height="9" rx="1"/>
+          <rect x="269" y="144" width="5" height="9" rx="1"/>
+        </g>
+      </g>
+    </g>
+    <g id="paper-front" filter="url(#paperShadow)">
+      <rect x="69" y="115" width="152" height="112" rx="16" fill="url(#frontPaperGradient)"/>
+    </g>
+    <g id="folder" filter="url(#folderShadow)">
+      <path id="folder-body" d="M55 180C55 169.5 63.5 161 74 161H314C324.5 161 333 169.5 333 180V276C333 290.4 321.4 302 307 302H81C66.6 302 55 290.4 55 276V180Z" fill="url(#folderGradient)"/>
+      <path id="folder-shade" d="M55 180C55 169.5 63.5 161 74 161H314C324.5 161 333 169.5 333 180V203C267 190 137 191 55 205V180Z" fill="#D9FAFF" opacity="0.38" clip-path="url(#folderClip)"/>
+      <rect id="folder-lip" x="26" y="161" width="336" height="15" rx="7.5" fill="url(#lipGradient)"/>
+      <rect id="edge-highlight" x="27" y="162" width="334" height="3" rx="1.5" fill="#E8FFFF" opacity="0.6"/>
+    </g>
+  </g>
+</svg>
