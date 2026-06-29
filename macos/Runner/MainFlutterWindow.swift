@@ -119,7 +119,7 @@ class MainFlutterWindow: NSPanel {
 
     // Register MethodChannel for scroll events
     let channel = FlutterMethodChannel(
-      name: "app.pod/menu_bar_scroll",
+      name: "app.podquick/menu_bar_scroll",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
 
@@ -216,7 +216,7 @@ class MainFlutterWindow: NSPanel {
 
     // Register MethodChannel for clipboard owner info (app icon and name)
     let clipboardOwnerChannel = FlutterMethodChannel(
-      name: "app.pod/clipboard_owner",
+      name: "app.podquick/clipboard_owner",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
 
@@ -237,7 +237,7 @@ class MainFlutterWindow: NSPanel {
              let bitmapImage = NSBitmapImageRep(data: tiffData),
              let pngData = bitmapImage.representation(using: .png, properties: [:]) {
             let tempDir = FileManager.default.temporaryDirectory
-            let iconsDir = tempDir.appendingPathComponent("pod_icons")
+            let iconsDir = tempDir.appendingPathComponent("podquick_icons")
             try? FileManager.default.createDirectory(at: iconsDir, withIntermediateDirectories: true, attributes: nil)
             let destURL = iconsDir.appendingPathComponent("\(appName).png")
             do {
@@ -259,7 +259,7 @@ class MainFlutterWindow: NSPanel {
     }
 
     let fileOpenerChannel = FlutterMethodChannel(
-      name: "app.pod/file_opener",
+      name: "app.podquick/file_opener",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
 
@@ -288,7 +288,7 @@ class MainFlutterWindow: NSPanel {
     }
 
     let launchAtStartupChannel = FlutterMethodChannel(
-      name: "app.pod/launch_at_startup",
+      name: "app.podquick/launch_at_startup",
       binaryMessenger: flutterViewController.engine.binaryMessenger
     )
 
@@ -383,7 +383,7 @@ class MainFlutterWindow: NSPanel {
 
   private var launchAgentIdentifier: String {
     let bundleIdentifier =
-      Bundle.main.bundleIdentifier ?? "com.liceal.unclutter.pod"
+      Bundle.main.bundleIdentifier ?? "com.liceal.podquick"
     return "\(bundleIdentifier).launchAtStartup"
   }
 

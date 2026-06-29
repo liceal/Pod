@@ -101,7 +101,7 @@ abstract class AppLocalizations {
   /// Application title
   ///
   /// In zh, this message translates to:
-  /// **'Pod'**
+  /// **'PodQuick'**
   String get appTitle;
 }
 

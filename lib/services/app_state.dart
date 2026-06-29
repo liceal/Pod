@@ -20,17 +20,17 @@ import '../models/app_settings.dart';
 
 class AppState extends ChangeNotifier with WindowListener, TrayListener {
   static const _clipboardOwnerChannel = MethodChannel(
-    'app.pod/clipboard_owner',
+    'app.podquick/clipboard_owner',
   );
 
-  static const _menuBarScrollChannel = MethodChannel('app.pod/menu_bar_scroll');
+  static const _menuBarScrollChannel = MethodChannel('app.podquick/menu_bar_scroll');
 
-  static const _focusManagerChannel = MethodChannel('app.pod/focus_manager');
+  static const _focusManagerChannel = MethodChannel('app.podquick/focus_manager');
 
-  static const _macFileOpenerChannel = MethodChannel('app.pod/file_opener');
+  static const _macFileOpenerChannel = MethodChannel('app.podquick/file_opener');
 
   static const _launchAtStartupChannel = MethodChannel(
-    'app.pod/launch_at_startup',
+    'app.podquick/launch_at_startup',
   );
 
   // Singleton
@@ -1203,7 +1203,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
 
     final menuItems = [
-      MenuItem(key: 'toggle', label: text('显示/隐藏 Pod', 'Show/Hide Pod')),
+      MenuItem(key: 'toggle', label: text('显示/隐藏 PodQuick', 'Show/Hide PodQuick')),
       if (_supportsLaunchAtStartup)
         MenuItem.checkbox(
           key: 'launchAtStartup',
@@ -1214,7 +1214,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       MenuItem(key: 'quit', label: text('退出', 'Quit')),
     ];
     await trayManager.setContextMenu(Menu(items: menuItems));
-    await trayManager.setToolTip(text('Pod 助手', 'Pod Helper'));
+    await trayManager.setToolTip(text('PodQuick 助手', 'PodQuick Helper'));
   }
 
   @override
@@ -1523,12 +1523,27 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   String _getOldDefaultFilesPath() {
     late String basePath;
+    String folderName = 'PodQuick暂存';
+    if (Platform.isWindows) {
+      final userProfile = Platform.environment['USERPROFILE'] ?? '';
+      final oldPath = '$userProfile\\Documents\\Pod暂存';
+      if (Directory(oldPath).existsSync()) {
+        folderName = 'Pod暂存';
+      }
+    } else if (Platform.isMacOS) {
+      final home = Platform.environment['HOME'] ?? '';
+      final oldPath = '$home/Documents/Pod暂存';
+      if (Directory(oldPath).existsSync()) {
+        folderName = 'Pod暂存';
+      }
+    }
+
     if (Platform.isWindows) {
       basePath = Platform.environment['USERPROFILE'] ?? '';
-      basePath = '$basePath\\Documents\\Pod暂存';
+      basePath = '$basePath\\Documents\\$folderName';
     } else if (Platform.isMacOS) {
       basePath = Platform.environment['HOME'] ?? '';
-      basePath = '$basePath/Documents/Pod暂存';
+      basePath = '$basePath/Documents/$folderName';
     } else {
       basePath = '';
     }
@@ -1877,9 +1892,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           .first
           .toLowerCase();
       final lowerName = appName.toLowerCase();
-      return lowerName == exeName || lowerName == 'pod';
+      return lowerName == exeName ||
+          lowerName == 'podquick' ||
+          lowerName == 'pod_quick' ||
+          lowerName == 'pod';
     } catch (_) {
-      return appName.toLowerCase() == 'pod';
+      return appName.toLowerCase() == 'podquick' ||
+          appName.toLowerCase() == 'pod_quick' ||
+          appName.toLowerCase() == 'pod';
     }
   }
 

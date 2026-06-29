@@ -12,10 +12,10 @@ public class Program {
     [STAThread]
     public static void Main() {
         try {
-            // Path to extract: %LOCALAPPDATA%\Liceal\Pod\App
+            // Path to extract: %LOCALAPPDATA%\Liceal\PodQuick\App
             string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
-            string appDir = Path.Combine(localAppData, "Liceal", "Pod", "App");
-            string exePath = Path.Combine(appDir, "Pod.exe");
+            string appDir = Path.Combine(localAppData, "Liceal", "PodQuick", "App");
+            string exePath = Path.Combine(appDir, "PodQuick.exe");
             string versionFile = Path.Combine(appDir, "launcher.version");
             
             // Use the launcher's write time or a hash of the assembly to determine version change
@@ -33,11 +33,11 @@ public class Program {
             }
 
             if (needExtract) {
-                // Check if Pod is running (excluding the current launcher process itself)
+                // Check if PodQuick is running (excluding the current launcher process itself)
                 bool processesRunning = true;
                 while (processesRunning) {
                     Process currentProcess = Process.GetCurrentProcess();
-                    Process[] processes = Process.GetProcessesByName("Pod");
+                    Process[] processes = Process.GetProcessesByName("PodQuick");
                     
                     bool otherInstanceRunning = false;
                     foreach (Process p in processes) {
@@ -49,7 +49,7 @@ public class Program {
 
                     if (otherInstanceRunning) {
                         DialogResult result = MessageBox.Show(
-                            "检测到 Pod 正在运行。请先关闭它以完成软件更新。",
+                            "检测到 PodQuick 正在运行。请先关闭它以完成软件更新。",
                             "提示",
                             MessageBoxButtons.RetryCancel,
                             MessageBoxIcon.Warning
@@ -71,7 +71,7 @@ public class Program {
                         Directory.CreateDirectory(appDir);
                         
                         Assembly assembly = Assembly.GetExecutingAssembly();
-                        using (Stream stream = assembly.GetManifestResourceStream("Pod.zip")) {
+                        using (Stream stream = assembly.GetManifestResourceStream("PodQuick.zip")) {
                             if (stream == null) {
                                 MessageBox.Show("嵌入式资源丢失，请重新打包。", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                                 return;

@@ -947,7 +947,7 @@ class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
       if (!file.existsSync()) return;
 
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
-      final destFile = File('$desktopPath\\Pod_Clip_$timestamp.png');
+      final destFile = File('$desktopPath\\PodQuick_Clip_$timestamp.png');
       await file.copy(destFile.path);
 
       setState(() {

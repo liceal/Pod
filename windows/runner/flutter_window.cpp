@@ -21,7 +21,7 @@ namespace {
 constexpr UINT kGlobalMouseWheelMessage = WM_APP + 1;
 constexpr wchar_t kRunKeyPath[] =
     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-constexpr wchar_t kRunValueName[] = L"Pod";
+constexpr wchar_t kRunValueName[] = L"PodQuick";
 
 struct MouseWheelEvent {
   POINT point;
@@ -166,7 +166,7 @@ bool FlutterWindow::OnCreate() {
   // Register Method Channel
   method_channel_ = std::make_unique<flutter::MethodChannel<>>(
       flutter_controller_->engine()->messenger(),
-      "app.pod/clipboard_owner",
+      "app.podquick/clipboard_owner",
       &flutter::StandardMethodCodec::GetInstance());
 
   method_channel_->SetMethodCallHandler(
@@ -220,7 +220,7 @@ bool FlutterWindow::OnCreate() {
           // Get temp directory and icon directory
           wchar_t temp_path[MAX_PATH];
           GetTempPathW(MAX_PATH, temp_path);
-          std::wstring icon_dir = std::wstring(temp_path) + L"pod_icons";
+          std::wstring icon_dir = std::wstring(temp_path) + L"podquick_icons";
           CreateDirectoryW(icon_dir.c_str(), NULL);
 
           std::wstring dest_file = icon_dir + L"\\" + exe_name + L".png";
@@ -295,7 +295,7 @@ bool FlutterWindow::OnCreate() {
   // Register focus management Method Channel
   focus_channel_ = std::make_unique<flutter::MethodChannel<>>(
       flutter_controller_->engine()->messenger(),
-      "app.pod/focus_manager",
+      "app.podquick/focus_manager",
       &flutter::StandardMethodCodec::GetInstance());
 
   focus_channel_->SetMethodCallHandler(
@@ -323,12 +323,12 @@ bool FlutterWindow::OnCreate() {
 
   menu_bar_scroll_channel_ = std::make_unique<flutter::MethodChannel<>>(
       flutter_controller_->engine()->messenger(),
-      "app.pod/menu_bar_scroll",
+      "app.podquick/menu_bar_scroll",
       &flutter::StandardMethodCodec::GetInstance());
 
   startup_channel_ = std::make_unique<flutter::MethodChannel<>>(
       flutter_controller_->engine()->messenger(),
-      "app.pod/launch_at_startup",
+      "app.podquick/launch_at_startup",
       &flutter::StandardMethodCodec::GetInstance());
 
   startup_channel_->SetMethodCallHandler(

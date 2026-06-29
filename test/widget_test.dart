@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pod/models/app_settings.dart';
+import 'package:pod_quick/models/app_settings.dart';
 
 void main() {
   test('Placeholder Test', () {

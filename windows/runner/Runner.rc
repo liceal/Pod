@@ -89,13 +89,13 @@ BEGIN
     BEGIN
         BLOCK "040904e4"
         BEGIN
-            VALUE "CompanyName", "com.liceal.pod" "\0"
-            VALUE "FileDescription", "Pod" "\0"
+            VALUE "CompanyName", "com.liceal.podquick" "\0"
+            VALUE "FileDescription", "PodQuick" "\0"
             VALUE "FileVersion", VERSION_AS_STRING "\0"
-            VALUE "InternalName", "Pod" "\0"
-            VALUE "LegalCopyright", "Copyright (C) 2026 com.liceal.pod. All rights reserved." "\0"
-            VALUE "OriginalFilename", "Pod.exe" "\0"
-            VALUE "ProductName", "Pod" "\0"
+            VALUE "InternalName", "PodQuick" "\0"
+            VALUE "LegalCopyright", "Copyright (C) 2026 com.liceal.podquick. All rights reserved." "\0"
+            VALUE "OriginalFilename", "PodQuick.exe" "\0"
+            VALUE "ProductName", "PodQuick" "\0"
             VALUE "ProductVersion", VERSION_AS_STRING "\0"
         END
     END

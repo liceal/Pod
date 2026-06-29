@@ -5,13 +5,13 @@
 // 'flutter create' template.
 
 // The application's name. By default this is also the title of the Flutter window.
-PRODUCT_NAME = Pod
+PRODUCT_NAME = PodQuick
 
 // The application's bundle identifier
-PRODUCT_BUNDLE_IDENTIFIER = com.liceal.pod
+PRODUCT_BUNDLE_IDENTIFIER = com.liceal.podquick
 
 // Apple Developer Team ID used by Xcode automatic signing.
 DEVELOPMENT_TEAM = T5BNJPBUL5
 
 // The copyright displayed in application information
-PRODUCT_COPYRIGHT = Copyright © 2026 com.liceal.pod. All rights reserved.
+PRODUCT_COPYRIGHT = Copyright © 2026 com.liceal.podquick. All rights reserved.

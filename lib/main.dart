@@ -21,7 +21,7 @@ void main() async {
       builder: (context, _) {
         return MaterialApp(
           navigatorKey: appState.navigatorKey,
-          title: 'Pod',
+          title: 'PodQuick',
           debugShowCheckedModeBanner: false,
           color: Colors.transparent,
           locale: appState.settings.locale,

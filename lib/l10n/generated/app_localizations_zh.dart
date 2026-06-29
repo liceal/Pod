@@ -9,5 +9,5 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
-  String get appTitle => 'Pod';
+  String get appTitle => 'PodQuick';
 }

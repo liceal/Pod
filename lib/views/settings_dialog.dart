@@ -559,7 +559,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
           children: [
             // Title
             Text(
-              _text('Pod 设置', 'Pod Settings'),
+              _text('PodQuick 设置', 'PodQuick Settings'),
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,

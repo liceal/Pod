@@ -3597,7 +3597,7 @@ class _HeaderSaveImageButtonState extends State<_HeaderSaveImageButton> {
 
       final timestamp = DateFormat('yyyyMMdd_HHmmss').format(DateTime.now());
       final separator = Platform.isWindows ? '\\' : '/';
-      final destFile = File('$desktopPath${separator}Pod_File_$timestamp.png');
+      final destFile = File('$desktopPath${separator}PodQuick_File_$timestamp.png');
       await file.copy(destFile.path);
 
       setState(() {
