@@ -327,8 +327,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return type;
   }
 
-  bool isItemFavorite(String content) {
-    return clipboardFavorites.any((x) => x.content == content);
+  bool isItemFavorite(ClipboardItem item) {
+    if (item.imagePath != null) {
+      return clipboardFavorites.any((x) =>
+          x.imagePath != null &&
+          (x.id == item.id ||
+           (x.imageSignature != null && item.imageSignature != null && x.imageSignature == item.imageSignature) ||
+           (x.imageSignature == null && item.imageSignature == null && getImagePath(x) == getImagePath(item))));
+    }
+    return clipboardFavorites.any((x) => x.content == item.content);
   }
 
   List<ClipboardItem> get filteredClipboardHistory {
@@ -2275,9 +2282,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   void toggleFavoriteClipboardItem(ClipboardItem item) {
-    final isFav = isItemFavorite(item.content);
+    final isFav = isItemFavorite(item);
     if (isFav) {
-      clipboardFavorites.removeWhere((x) => x.content == item.content);
+      if (item.imagePath != null) {
+        clipboardFavorites.removeWhere((x) =>
+            x.imagePath != null &&
+            (x.id == item.id ||
+             (x.imageSignature != null && item.imageSignature != null && x.imageSignature == item.imageSignature) ||
+             (x.imageSignature == null && item.imageSignature == null && getImagePath(x) == getImagePath(item))));
+      } else {
+        clipboardFavorites.removeWhere((x) => x.content == item.content);
+      }
     } else {
       clipboardFavorites.insert(
         0,

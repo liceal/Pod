@@ -122,7 +122,7 @@ class _ClipboardPaneState extends State<ClipboardPane> {
                   item: item,
                   isDark: widget.isDark,
                   accentColor: accentColor,
-                  isFavorite: widget.state.isItemFavorite(item.content),
+                  isFavorite: widget.state.isItemFavorite(item),
                   onCopy: () => widget.state.copyToClipboard(item),
                   onOpenDetail: () => _openDetail(item),
                   onFavoriteToggle: () =>
@@ -731,7 +731,21 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                               ),
                               const SizedBox(width: 4),
                             ],
-                            if (_isHovered || widget.isFavorite) ...[
+                            if (_isHovered) ...[
+                              _IconActionButton(
+                                icon: Icons.close,
+                                iconColor: widget.isDark
+                                    ? Colors.red.withOpacity(0.7)
+                                    : Colors.red,
+                                hoverBgColor: widget.isDark
+                                    ? Colors.red.withOpacity(0.15)
+                                    : Colors.red.withOpacity(0.1),
+                                isDark: widget.isDark,
+                                onTap: _handleDelete,
+                              ),
+                              const SizedBox(width: 4),
+                            ],
+                            if (_isHovered || widget.isFavorite)
                               _IconActionButton(
                                 icon: widget.isFavorite
                                     ? Icons.star_rounded
@@ -746,20 +760,6 @@ class _ClipboardItemCardState extends State<ClipboardItemCard> {
                                     : Colors.amber.withOpacity(0.1),
                                 isDark: widget.isDark,
                                 onTap: _handleFavoriteToggle,
-                              ),
-                              if (_isHovered) const SizedBox(width: 4),
-                            ],
-                            if (_isHovered)
-                              _IconActionButton(
-                                icon: Icons.close,
-                                iconColor: widget.isDark
-                                    ? Colors.red.withOpacity(0.7)
-                                    : Colors.red,
-                                hoverBgColor: widget.isDark
-                                    ? Colors.red.withOpacity(0.15)
-                                    : Colors.red.withOpacity(0.1),
-                                isDark: widget.isDark,
-                                onTap: _handleDelete,
                               ),
                           ],
                         ),
@@ -1363,7 +1363,7 @@ class _DetailDialogContentState extends State<_DetailDialogContent> {
 
     final isImage = itemType == 'IMAGE';
     final isLargeText = widget.item.content.length > 200000;
-    final isFavorite = widget.state.isItemFavorite(widget.item.content);
+    final isFavorite = widget.state.isItemFavorite(widget.item);
 
     final dialogWidth = isImage
         ? (screenWidth * 0.92).clamp(300.0, 720.0)
