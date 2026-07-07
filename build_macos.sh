@@ -6,10 +6,10 @@ set -e
 # Change directory to the script's directory (project root)
 cd "$(dirname "$0")"
 
-APP_NAME="Pod"
+APP_NAME="PodQuick"
 RELEASE_DIR="build/macos/Build/Products/Release"
 APP_BUNDLE="${RELEASE_DIR}/${APP_NAME}.app"
-DMG_OUTPUT="${RELEASE_DIR}/Pod.dmg"
+DMG_OUTPUT="${RELEASE_DIR}/PodQuick.dmg"
 STAGING_DIR="${RELEASE_DIR}/dmg_staging"
 ENABLE_FINDER_DMG_LAYOUT="${ENABLE_FINDER_DMG_LAYOUT:-0}"
 
@@ -42,12 +42,12 @@ fi
 
 cleanup() {
   rm -rf "${STAGING_DIR}"
-  rm -f "${RELEASE_DIR}"/rw.*.Pod.dmg
+  rm -f "${RELEASE_DIR}"/rw.*.PodQuick.dmg
 }
 trap cleanup EXIT
 
 echo "========================================="
-echo " 📦 Packaging Pod into DMG (macOS)       "
+echo " 📦 Packaging PodQuick into DMG (macOS)       "
 echo "========================================="
 
 echo ""
@@ -112,10 +112,10 @@ echo "Step 6: Creating DMG with create-dmg..."
 # On non-Retina (1x): image larger than window, Finder clips to window → still fills
 #
 # Icon positions (in logical points):
-#   Pod.app:      left-center  x=190, y=240
+#   PodQuick.app:      left-center  x=190, y=240
 #   Applications: right-center x=530, y=240
 CREATE_DMG_ARGS=(
-  --volname "Pod"
+  --volname "PodQuick"
   --window-pos 200 120
   --window-size 540 380
   --icon-size 110
@@ -137,7 +137,7 @@ if ! create-dmg "${CREATE_DMG_ARGS[@]}" "${DMG_OUTPUT}" "${STAGING_DIR}/"; then
   cp -R "${APP_BUNDLE}" "${STAGING_DIR}/"
   rm -f "${DMG_OUTPUT}"
   create-dmg \
-    --volname "Pod" \
+    --volname "PodQuick" \
     --app-drop-link 405 190 \
     --hdiutil-quiet \
     --skip-jenkins \
