@@ -89,6 +89,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   bool _nativeClipboardSequenceUnavailable = false;
   bool _hasSequenceChanged = false;
   Timer? _clipboardTimer;
+  Timer? _clipboardDebounceTimer;
   Timer? _notesSaveTimer;
   Timer? _autoCollapseTimer;
   Timer? _panelActivationRefreshTimer;
@@ -468,6 +469,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   void _cancelRuntimeTimers() {
+    _clipboardDebounceTimer?.cancel();
     _clipboardTimer?.cancel();
     _notesSaveTimer?.cancel();
     _autoCollapseTimer?.cancel();
@@ -1951,144 +1953,161 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   void _startClipboardMonitoring() {
-    _clipboardTimer = Timer.periodic(const Duration(seconds: 1), (timer) async {
-      if (_isShuttingDown) return;
-      if (_isCheckingClipboard) return;
-      _isCheckingClipboard = true;
-      if (_ignoreNextClipboardCheck) {
-        _ignoreNextClipboardCheck = false;
-        final sequence = await _getNativeClipboardSequence();
-        if (sequence != null) {
-          _lastNativeClipboardSequence = sequence;
-        }
-        _isCheckingClipboard = false;
+    _clipboardOwnerChannel.setMethodCallHandler((call) async {
+      if (call.method == 'onClipboardChanged') {
+        _scheduleClipboardCheck();
+      }
+      return null;
+    });
+
+    // Schedule an initial check shortly after startup
+    _scheduleClipboardCheck(delayMs: 300);
+  }
+
+  void _scheduleClipboardCheck({int delayMs = 120}) {
+    _clipboardDebounceTimer?.cancel();
+    _clipboardDebounceTimer = Timer(Duration(milliseconds: delayMs), () {
+      _processClipboardCheck();
+    });
+  }
+
+  Future<void> _processClipboardCheck() async {
+    if (_isShuttingDown) return;
+    if (_isCheckingClipboard) return;
+    _isCheckingClipboard = true;
+    if (_ignoreNextClipboardCheck) {
+      _ignoreNextClipboardCheck = false;
+      final sequence = await _getNativeClipboardSequence();
+      if (sequence != null) {
+        _lastNativeClipboardSequence = sequence;
+      }
+      _isCheckingClipboard = false;
+      return;
+    }
+    try {
+      // Avoid touching large clipboard payloads unless content changed.
+      if (await _shouldSkipUnchangedClipboard()) {
         return;
       }
-      try {
-        // Avoid touching large clipboard payloads unless content changed.
-        if (await _shouldSkipUnchangedClipboard()) {
-          return;
-        }
 
-        // 1. 先检查文本，因为绝大多数情况下剪贴板中都是文本，且 Clipboard.getData 极轻量
-        final data = await Clipboard.getData(Clipboard.kTextPlain);
-        if (data != null && data.text != null && data.text!.isNotEmpty) {
-          final text = data.text!;
-          if (text != _lastSystemClipText || _hasSequenceChanged) {
-            _lastSystemClipText = text;
-            _lastSystemClipImageSignature =
-                null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
+      // 1. 先检查文本，因为绝大多数情况下剪贴板中都是文本，且 Clipboard.getData 极轻量
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
+      if (data != null && data.text != null && data.text!.isNotEmpty) {
+        final text = data.text!;
+        if (text != _lastSystemClipText || _hasSequenceChanged) {
+          _lastSystemClipText = text;
+          _lastSystemClipImageSignature =
+              null; // 切换到文本时，清空图片特征缓存，确保下次可以重新识别相同图片
 
-            String? appName;
-            String? appIconPath;
-            if (Platform.isWindows || Platform.isMacOS) {
-              try {
-                final result = await _clipboardOwnerChannel.invokeMethod(
-                  'getClipboardOwner',
-                );
-                if (result is Map) {
-                  appName = result['name'] as String?;
-                  appIconPath = result['iconPath'] as String?;
-                }
-              } catch (e) {
-                debugPrint('Failed to get clipboard owner info: $e');
-              }
-            }
-
-            final isOwn = _isOwnApp(appName);
-            final isInternalCopy = isOwn && (text == _lastAppCopiedText);
-
-            if (!isInternalCopy) {
-              await addClipboardItem(
-                text,
-                appName: appName,
-                appIconPath: appIconPath,
+          String? appName;
+          String? appIconPath;
+          if (Platform.isWindows || Platform.isMacOS) {
+            try {
+              final result = await _clipboardOwnerChannel.invokeMethod(
+                'getClipboardOwner',
               );
-            }
-          }
-        } else {
-          // 2. 文本为空或没有文本时，才去检查图片
-          // 首先判断剪贴板里是否是文件，如果是文件，且全是非图片文件，则忽略其图片数据（那是文件图标）
-          bool isFileIcon = false;
-          try {
-            final files = await Pasteboard.files();
-            if (files.isNotEmpty) {
-              final imageExtensions = {
-                'png',
-                'jpg',
-                'jpeg',
-                'gif',
-                'webp',
-                'bmp',
-                'ico',
-                'tiff',
-                'tif',
-                'heic',
-                'heif',
-              };
-              final hasImageFile = files.any((path) {
-                final ext = path.split('.').last.toLowerCase();
-                return imageExtensions.contains(ext);
-              });
-              if (!hasImageFile) {
-                isFileIcon = true;
+              if (result is Map) {
+                appName = result['name'] as String?;
+                appIconPath = result['iconPath'] as String?;
               }
+            } catch (e) {
+              debugPrint('Failed to get clipboard owner info: $e');
             }
-          } catch (e) {
-            debugPrint('Failed to check pasteboard files: $e');
           }
 
-          if (!isFileIcon) {
-            final imageBytes = await Pasteboard.image;
-            if (imageBytes != null && imageBytes.isNotEmpty) {
-              final imageSignature = _imageSignature(imageBytes);
-              if (imageSignature != _lastSystemClipImageSignature ||
-                  _hasSequenceChanged) {
-                _lastSystemClipImageSignature = imageSignature;
-                _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
+          final isOwn = _isOwnApp(appName);
+          final isInternalCopy = isOwn && (text == _lastAppCopiedText);
 
-                String? appName;
-                String? appIconPath;
-                if (Platform.isWindows || Platform.isMacOS) {
-                  try {
-                    final result = await _clipboardOwnerChannel.invokeMethod(
-                      'getClipboardOwner',
-                    );
-                    if (result is Map) {
-                      appName = result['name'] as String?;
-                      appIconPath = result['iconPath'] as String?;
-                    }
-                  } catch (e) {
-                    debugPrint('Failed to get clipboard owner info: $e');
-                  }
-                }
+          if (!isInternalCopy) {
+            await addClipboardItem(
+              text,
+              appName: appName,
+              appIconPath: appIconPath,
+            );
+          }
+        }
+      } else {
+        // 2. 文本为空或没有文本时，才去检查图片
+        // 首先判断剪贴板里是否是文件，如果是文件，且全是非图片文件，则忽略其图片数据（那是文件图标）
+        bool isFileIcon = false;
+        try {
+          final files = await Pasteboard.files();
+          if (files.isNotEmpty) {
+            final imageExtensions = {
+              'png',
+              'jpg',
+              'jpeg',
+              'gif',
+              'webp',
+              'bmp',
+              'ico',
+              'tiff',
+              'tif',
+              'heic',
+              'heif',
+            };
+            final hasImageFile = files.any((path) {
+              final ext = path.split('.').last.toLowerCase();
+              return imageExtensions.contains(ext);
+            });
+            if (!hasImageFile) {
+              isFileIcon = true;
+            }
+          }
+        } catch (e) {
+          debugPrint('Failed to check pasteboard files: $e');
+        }
 
-                final isOwn = _isOwnApp(appName);
-                final isInternalCopy =
-                    isOwn && (imageSignature == _lastAppCopiedImageSignature);
+        if (!isFileIcon) {
+          final imageBytes = await Pasteboard.image;
+          if (imageBytes != null && imageBytes.isNotEmpty) {
+            final imageSignature = _imageSignature(imageBytes);
+            if (imageSignature != _lastSystemClipImageSignature ||
+                _hasSequenceChanged) {
+              _lastSystemClipImageSignature = imageSignature;
+              _lastSystemClipText = ''; // 切换到图片时，清空文本缓存，确保下次可以重新识别相同文本
 
-                if (!isInternalCopy) {
-                  await addClipboardImageItem(
-                    imageBytes,
-                    appName: appName,
-                    appIconPath: appIconPath,
-                    imageSignature: imageSignature,
+              String? appName;
+              String? appIconPath;
+              if (Platform.isWindows || Platform.isMacOS) {
+                try {
+                  final result = await _clipboardOwnerChannel.invokeMethod(
+                    'getClipboardOwner',
                   );
-                } else {
-                  // 同步当前图片的签名，以防 owner 再次判定异常
-                  _lastAppCopiedImageSignature = imageSignature;
-                  _lastSystemClipImageSignature = imageSignature;
+                  if (result is Map) {
+                    appName = result['name'] as String?;
+                    appIconPath = result['iconPath'] as String?;
+                  }
+                } catch (e) {
+                  debugPrint('Failed to get clipboard owner info: $e');
                 }
+              }
+
+              final isOwn = _isOwnApp(appName);
+              final isInternalCopy =
+                  isOwn && (imageSignature == _lastAppCopiedImageSignature);
+
+              if (!isInternalCopy) {
+                await addClipboardImageItem(
+                  imageBytes,
+                  appName: appName,
+                  appIconPath: appIconPath,
+                  imageSignature: imageSignature,
+                );
+              } else {
+                // 同步当前图片的签名，以防 owner 再次判定异常
+                _lastAppCopiedImageSignature = imageSignature;
+                _lastSystemClipImageSignature = imageSignature;
               }
             }
           }
         }
-      } catch (e) {
-        debugPrint('Clipboard monitoring error: $e');
-      } finally {
-        _isCheckingClipboard = false;
       }
-    });
+    } catch (e) {
+      debugPrint('Clipboard monitoring error: $e');
+    } finally {
+      _isCheckingClipboard = false;
+    }
   }
 
   Future<void> addClipboardItem(

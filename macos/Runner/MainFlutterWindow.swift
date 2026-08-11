@@ -253,8 +253,16 @@ class MainFlutterWindow: NSPanel {
         response["name"] = appName
         response["iconPath"] = iconPath
         result(response)
-      } else {
-        result(FlutterMethodNotImplemented)
+      }
+    }
+
+    // Native pasteboard change observer for macOS
+    var lastPasteboardChangeCount = NSPasteboard.general.changeCount
+    Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { _ in
+      let currentCount = NSPasteboard.general.changeCount
+      if currentCount != lastPasteboardChangeCount {
+        lastPasteboardChangeCount = currentCount
+        clipboardOwnerChannel.invokeMethod("onClipboardChanged", arguments: nil)
       }
     }
 

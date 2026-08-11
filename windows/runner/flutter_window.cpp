@@ -143,6 +143,9 @@ bool FlutterWindow::OnCreate() {
   SetWindowLong(hwnd, GWL_STYLE, style);
   SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
+  // Register clipboard format listener for OS native clipboard change events
+  AddClipboardFormatListener(hwnd);
+
   // Initialize GDI+
   Gdiplus::GdiplusStartupInput gdiplusStartupInput;
   if (Gdiplus::GdiplusStartup(&gdiplus_token_, &gdiplusStartupInput, NULL) ==
@@ -375,6 +378,7 @@ void FlutterWindow::OnDestroy() {
   resources_destroyed_ = true;
 
   RemoveMouseHook();
+  RemoveClipboardFormatListener(GetHandle());
 
   if (method_channel_) {
     method_channel_ = nullptr;
@@ -521,6 +525,13 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     if (event) {
       HandleGlobalMouseWheel(event->point, event->wheel_delta);
       delete event;
+    }
+    return 0;
+  }
+
+  if (message == WM_CLIPBOARDUPDATE) {
+    if (method_channel_) {
+      method_channel_->InvokeMethod("onClipboardChanged", nullptr);
     }
     return 0;
   }
