@@ -44,6 +44,17 @@ class AppSettings {
   final String languageCode;
   final bool launchAtStartup;
 
+  // Cloudflare R2 Data Synchronization Settings
+  final bool r2Enabled;
+  final String? r2AccountId;
+  final String? r2AccessKeyId;
+  final String? r2SecretAccessKey;
+  final String? r2BucketName;
+  final String? r2CustomEndpoint;
+  final bool r2AutoSync;
+  final int r2SyncIntervalMinutes;
+  final int? r2LastSyncTime;
+
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
   Locale? get locale {
@@ -74,6 +85,15 @@ class AppSettings {
     double? textContentFontSize,
     String? languageCode,
     this.launchAtStartup = false,
+    this.r2Enabled = false,
+    this.r2AccountId,
+    this.r2AccessKeyId,
+    this.r2SecretAccessKey,
+    this.r2BucketName,
+    this.r2CustomEndpoint,
+    this.r2AutoSync = true,
+    this.r2SyncIntervalMinutes = 5,
+    this.r2LastSyncTime,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
@@ -163,6 +183,15 @@ class AppSettings {
     double? textContentFontSize,
     String? languageCode,
     bool? launchAtStartup,
+    bool? r2Enabled,
+    String? r2AccountId,
+    String? r2AccessKeyId,
+    String? r2SecretAccessKey,
+    String? r2BucketName,
+    String? r2CustomEndpoint,
+    bool? r2AutoSync,
+    int? r2SyncIntervalMinutes,
+    int? r2LastSyncTime,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -185,6 +214,15 @@ class AppSettings {
       textContentFontSize: textContentFontSize ?? this.textContentFontSize,
       languageCode: languageCode ?? this.languageCode,
       launchAtStartup: launchAtStartup ?? this.launchAtStartup,
+      r2Enabled: r2Enabled ?? this.r2Enabled,
+      r2AccountId: r2AccountId ?? this.r2AccountId,
+      r2AccessKeyId: r2AccessKeyId ?? this.r2AccessKeyId,
+      r2SecretAccessKey: r2SecretAccessKey ?? this.r2SecretAccessKey,
+      r2BucketName: r2BucketName ?? this.r2BucketName,
+      r2CustomEndpoint: r2CustomEndpoint ?? this.r2CustomEndpoint,
+      r2AutoSync: r2AutoSync ?? this.r2AutoSync,
+      r2SyncIntervalMinutes: r2SyncIntervalMinutes ?? this.r2SyncIntervalMinutes,
+      r2LastSyncTime: r2LastSyncTime ?? this.r2LastSyncTime,
     );
   }
 
@@ -209,6 +247,15 @@ class AppSettings {
       'textContentFontSize': textContentFontSize,
       'languageCode': languageCode,
       'launchAtStartup': launchAtStartup,
+      'r2Enabled': r2Enabled,
+      'r2AccountId': r2AccountId,
+      'r2AccessKeyId': r2AccessKeyId,
+      'r2SecretAccessKey': r2SecretAccessKey,
+      'r2BucketName': r2BucketName,
+      'r2CustomEndpoint': r2CustomEndpoint,
+      'r2AutoSync': r2AutoSync,
+      'r2SyncIntervalMinutes': r2SyncIntervalMinutes,
+      'r2LastSyncTime': r2LastSyncTime,
     };
   }
 
@@ -285,6 +332,15 @@ class AppSettings {
           (json['noteEditorFontSize'] as num?)?.toDouble(),
       languageCode: json['languageCode'] as String?,
       launchAtStartup: json['launchAtStartup'] as bool? ?? false,
+      r2Enabled: json['r2Enabled'] as bool? ?? false,
+      r2AccountId: json['r2AccountId'] as String?,
+      r2AccessKeyId: json['r2AccessKeyId'] as String?,
+      r2SecretAccessKey: json['r2SecretAccessKey'] as String?,
+      r2BucketName: json['r2BucketName'] as String?,
+      r2CustomEndpoint: json['r2CustomEndpoint'] as String?,
+      r2AutoSync: json['r2AutoSync'] as bool? ?? true,
+      r2SyncIntervalMinutes: (json['r2SyncIntervalMinutes'] as num?)?.toInt() ?? 5,
+      r2LastSyncTime: (json['r2LastSyncTime'] as num?)?.toInt(),
     );
   }
 }

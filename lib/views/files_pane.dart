@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
@@ -2689,9 +2690,10 @@ class _FilePreviewDialogState extends State<_FilePreviewDialog> {
     if (widget.isText) {
       _loadingText = true;
       File(widget.file.path)
-          .readAsString()
-          .then((content) {
+          .readAsBytes()
+          .then((bytes) {
             if (mounted) {
+              final content = utf8.decode(bytes, allowMalformed: true);
               setState(() {
                 _textContent = content.length > 4000
                     ? '${content.substring(0, 4000)}\n' +

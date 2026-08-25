@@ -13,10 +13,12 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:uuid/uuid.dart';
 import 'package:pasteboard/pasteboard.dart';
+import 'package:intl/intl.dart';
 
 import '../models/clipboard_item.dart';
 import '../models/note.dart';
 import '../models/app_settings.dart';
+import 'r2_sync_service.dart';
 
 class AppState extends ChangeNotifier with WindowListener, TrayListener {
   static const _clipboardOwnerChannel = MethodChannel(
@@ -105,6 +107,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   String? _lastFavoritesJsonCache;
   Timer? _reloadNotesDebounce;
   Timer? _reloadHistoryDebounce;
+  Timer? _r2SyncTimer;
+  bool _isR2Syncing = false;
+  String? _r2SyncStatusMessage;
+  double _r2SyncProgress = 0.0;
+  final List<String> _r2SyncLogs = [];
+
+  bool get isR2Syncing => _isR2Syncing;
+  String? get r2SyncStatusMessage => _r2SyncStatusMessage;
+  double get r2SyncProgress => _r2SyncProgress;
+  List<String> get r2SyncLogs => List.unmodifiable(_r2SyncLogs);
 
   bool _didGrabFocus = false;
   bool _restoreFocusAfterCollapse = false;
@@ -451,6 +463,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // Position window
     await windowManager.setMinimumSize(const Size(1, 1));
     await applyWindowTriggerConfiguration(isStartup: true);
+
+    // Schedule R2 Auto Sync if configured
+    _scheduleR2AutoSync();
   }
 
   @override
@@ -478,6 +493,130 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _settingsSaveDebounce?.cancel();
     _reloadNotesDebounce?.cancel();
     _reloadHistoryDebounce?.cancel();
+    _r2SyncTimer?.cancel();
+  }
+
+  // --- Cloudflare R2 Sync Methods ---
+
+  R2SyncService? _createR2SyncService([AppSettings? overrideSettings]) {
+    final s = overrideSettings ?? settings;
+    if (s.r2AccountId == null ||
+        s.r2AccountId!.trim().isEmpty ||
+        s.r2AccessKeyId == null ||
+        s.r2AccessKeyId!.trim().isEmpty ||
+        s.r2SecretAccessKey == null ||
+        s.r2SecretAccessKey!.trim().isEmpty ||
+        s.r2BucketName == null ||
+        s.r2BucketName!.trim().isEmpty) {
+      return null;
+    }
+    return R2SyncService(
+      accountId: s.r2AccountId!.trim(),
+      accessKeyId: s.r2AccessKeyId!.trim(),
+      secretAccessKey: s.r2SecretAccessKey!.trim(),
+      bucketName: s.r2BucketName!.trim(),
+      customEndpoint: s.r2CustomEndpoint?.trim(),
+    );
+  }
+
+  Future<R2TestResult> testR2Connection(AppSettings testSettings) async {
+    final service = _createR2SyncService(testSettings);
+    if (service == null) {
+      return R2TestResult(
+        success: false,
+        message: '请填满所有必需的 Cloudflare R2 参数（Account ID、Access Key、Secret Key、Bucket）。',
+      );
+    }
+    return await service.testConnection();
+  }
+
+  Future<R2SyncResult> syncWithR2({bool isManual = false}) async {
+    if (!settings.r2Enabled && !isManual) {
+      return R2SyncResult(success: false, message: 'Cloudflare R2 同步功能未开启');
+    }
+    if (_isR2Syncing) {
+      return R2SyncResult(success: false, message: '正在同步中，请稍候...');
+    }
+
+    final service = _createR2SyncService();
+    if (service == null) {
+      return R2SyncResult(
+        success: false,
+        message: 'R2 配置不完整，请在设置中填写完整的 Account ID、Key 与 Bucket。',
+      );
+    }
+
+    _isR2Syncing = true;
+    _r2SyncStatusMessage = '正在准备同步...';
+    _r2SyncProgress = 0.0;
+    _r2SyncLogs.clear();
+    final timeStr = DateFormat('HH:mm:ss').format(DateTime.now());
+    _r2SyncLogs.add('[$timeStr] 开始云端双向同步...');
+    notifyListeners();
+
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final result = await service.syncAllData(
+        dataDirectoryPath: dataDir,
+        onProgress: (status, current, total) {
+          final nowTime = DateFormat('HH:mm:ss').format(DateTime.now());
+          _r2SyncStatusMessage = status;
+          if (total > 0) {
+            _r2SyncProgress = current / total;
+          } else {
+            _r2SyncProgress = 0.0;
+          }
+          _r2SyncLogs.add('[$nowTime] $status');
+          if (_r2SyncLogs.length > 100) {
+            _r2SyncLogs.removeAt(0);
+          }
+          notifyListeners();
+        },
+      );
+
+      if (result.success) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        settings = settings.copyWith(r2LastSyncTime: now);
+        await _prefs.setString('settings', jsonEncode(settings.toJson()));
+        _r2SyncStatusMessage = result.syncedCount > 0
+            ? '同步成功 (${result.syncedCount} 个文件已处理)'
+            : '同步成功 (数据已保持最新)';
+
+        if (result.syncedCount > 0) {
+          await _loadNotes();
+          await _loadClipboardHistory();
+          await _scanStoredFiles();
+        }
+      } else {
+        _r2SyncStatusMessage = '同步失败: ${result.message}';
+      }
+
+      _isR2Syncing = false;
+      notifyListeners();
+      return result;
+    } catch (e) {
+      _isR2Syncing = false;
+      _r2SyncStatusMessage = '同步异常: $e';
+      notifyListeners();
+      return R2SyncResult(success: false, message: '同步异常: $e');
+    }
+  }
+
+  void _scheduleR2AutoSync() {
+    _r2SyncTimer?.cancel();
+    if (!settings.r2Enabled || !settings.r2AutoSync) return;
+
+    final intervalMinutes =
+        settings.r2SyncIntervalMinutes > 0 ? settings.r2SyncIntervalMinutes : 5;
+    _r2SyncTimer = Timer.periodic(Duration(minutes: intervalMinutes), (_) {
+      syncWithR2(isManual: false);
+    });
+
+    Timer(const Duration(seconds: 5), () {
+      if (settings.r2Enabled && settings.r2AutoSync && !_isR2Syncing) {
+        syncWithR2(isManual: false);
+      }
+    });
   }
 
   Future<void> quit() async {
@@ -1027,6 +1166,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (oldPath != newSettings.customFilesPath) {
       await _scanStoredFiles();
     }
+    _scheduleR2AutoSync();
     notifyListeners();
   }
 

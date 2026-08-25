@@ -77,6 +77,10 @@ dependencies:
   # Markdown rendering for notes
   flutter_markdown_plus: ^1.0.7
 
+  # Cloudflare R2 S3 HTTP Client & Cryptography
+  http: ^1.2.1
+  crypto: ^3.0.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
