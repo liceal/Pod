@@ -33,36 +33,20 @@ public class Program {
             }
 
             if (needExtract) {
-                // Check if PodQuick is running (excluding the current launcher process itself)
-                bool processesRunning = true;
-                while (processesRunning) {
+                // Kill lingering instances if updating payload
+                try {
                     Process currentProcess = Process.GetCurrentProcess();
-                    Process[] processes = Process.GetProcessesByName("PodQuick");
-                    
-                    bool otherInstanceRunning = false;
-                    foreach (Process p in processes) {
+                    foreach (Process p in Process.GetProcessesByName("PodQuick")) {
                         if (p.Id != currentProcess.Id) {
-                            otherInstanceRunning = true;
-                            break;
+                            try {
+                                p.Kill();
+                                p.WaitForExit(2000);
+                            } catch {}
                         }
                     }
+                } catch {}
 
-                    if (otherInstanceRunning) {
-                        DialogResult result = MessageBox.Show(
-                            "检测到 PodQuick 正在运行。请先关闭它以完成软件更新。",
-                            "提示",
-                            MessageBoxButtons.RetryCancel,
-                            MessageBoxIcon.Warning
-                        );
-                        if (result == DialogResult.Cancel) {
-                            return; // Exit launcher
-                        }
-                    } else {
-                        processesRunning = false;
-                    }
-                }
-
-                int retryCount = 5;
+                int retryCount = 30;
                 while (retryCount > 0) {
                     try {
                         if (Directory.Exists(appDir)) {
@@ -88,7 +72,7 @@ public class Program {
                             MessageBox.Show("解压程序失败，可能是文件被占用，请稍后重试。\n错误信息: " + ex.Message, "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
                             return;
                         }
-                        System.Threading.Thread.Sleep(500);
+                        System.Threading.Thread.Sleep(1000);
                     }
                 }
             }
@@ -97,6 +81,8 @@ public class Program {
             if (File.Exists(exePath)) {
                 ProcessStartInfo startInfo = new ProcessStartInfo(exePath);
                 startInfo.WorkingDirectory = appDir;
+                startInfo.UseShellExecute = false;
+                startInfo.EnvironmentVariables["PODQUICK_LAUNCHER_PATH"] = launcherPath;
                 
                 // Forward command line args
                 string[] args = Environment.GetCommandLineArgs();

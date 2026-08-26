@@ -4,6 +4,7 @@ import 'package:window_manager/window_manager.dart';
 import 'package:intl/intl.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
+import '../services/update_service.dart';
 import '../theme/app_theme.dart';
 
 class SettingsDialog extends StatefulWidget {
@@ -16,6 +17,8 @@ class SettingsDialog extends StatefulWidget {
 }
 
 class _SettingsDialogState extends State<SettingsDialog> {
+  bool _isCheckingUpdate = false;
+  String? _updateCheckResult;
   late TriggerMode _triggerMode;
   late String _hotkey;
   late bool _isDarkTheme;
@@ -1449,6 +1452,74 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ],
                 ),
               ),
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 12),
+
+            // Software Update Section
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    Text(
+                      _text('当前版本 v${UpdateService.currentVersion}', 'Version v${UpdateService.currentVersion}'),
+                      style: TextStyle(fontSize: 12, color: subColor),
+                    ),
+                    if (_updateCheckResult != null) ...[
+                      const SizedBox(width: 8),
+                      Text(
+                        _updateCheckResult!,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: _updateCheckResult!.contains('最新') || _updateCheckResult!.contains('up to date')
+                              ? Colors.green
+                              : Colors.orangeAccent,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                OutlinedButton.icon(
+                  onPressed: _isCheckingUpdate
+                      ? null
+                      : () async {
+                          setState(() {
+                            _isCheckingUpdate = true;
+                            _updateCheckResult = null;
+                          });
+                          final info = await UpdateService.checkUpdate();
+                          if (mounted) {
+                            setState(() => _isCheckingUpdate = false);
+                            if (info != null) {
+                              UpdateService.showUpdateDialog(context, info, isDark: _isDarkTheme);
+                            } else {
+                              setState(() {
+                                _updateCheckResult = _text('已是最新版本', 'Up to date');
+                              });
+                            }
+                          }
+                        },
+                  icon: _isCheckingUpdate
+                      ? const SizedBox(
+                          width: 12,
+                          height: 12,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.system_update_rounded, size: 14),
+                  label: Text(
+                    _isCheckingUpdate
+                        ? _text('正在检查...', 'Checking...')
+                        : _text('检查更新', 'Check Updates'),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: accentColor,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             const Divider(height: 1),

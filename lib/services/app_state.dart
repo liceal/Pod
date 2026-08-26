@@ -19,6 +19,7 @@ import '../models/clipboard_item.dart';
 import '../models/note.dart';
 import '../models/app_settings.dart';
 import 'r2_sync_service.dart';
+import 'update_service.dart';
 
 class AppState extends ChangeNotifier with WindowListener, TrayListener {
   static const _clipboardOwnerChannel = MethodChannel(
@@ -431,6 +432,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Load Local Data
     _loadSettings();
+    await UpdateService.loadLocalVersion();
     await _syncLaunchAtStartupSetting();
     await _migrateLegacyDirectories();
 

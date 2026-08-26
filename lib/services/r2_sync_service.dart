@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 
@@ -348,8 +349,53 @@ class R2SyncService {
     return false;
   }
 
+  /// Fetch remote object metadata via HTTP HEAD (0 byte payload)
+  Future<R2ObjectInfo?> getObjectInfo(String remoteKey) async {
+    final cleanKey = remoteKey.startsWith('/') ? remoteKey.substring(1) : remoteKey;
+    final rawPath = '/${bucketName.trim()}/$cleanKey';
+    final canonicalPath = _encodePath(rawPath);
+
+    final headers = _buildHeaders(
+      method: 'HEAD',
+      path: canonicalPath,
+    );
+
+    try {
+      final client = http.Client();
+      try {
+        final uri = Uri.parse('$_baseUrl$canonicalPath');
+        final response = await client.head(uri, headers: headers).timeout(
+          const Duration(seconds: 8),
+        );
+
+        if (response.statusCode == 200) {
+          final etag = (response.headers['etag'] ?? '').replaceAll('"', '');
+          final size = int.tryParse(response.headers['content-length'] ?? '0') ?? 0;
+          final lastModStr = response.headers['last-modified'] ?? '';
+          final lastMod = DateTime.tryParse(lastModStr) ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+          return R2ObjectInfo(
+            key: cleanKey,
+            etag: etag,
+            size: size,
+            lastModified: lastMod,
+          );
+        }
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      debugPrint('R2 getObjectInfo error: $e');
+    }
+    return null;
+  }
+
   /// Download file from R2
-  Future<bool> downloadFile(String remoteKey, File localTargetFile) async {
+  Future<bool> downloadFile(
+    String remoteKey,
+    File localTargetFile, {
+    void Function(int downloadedBytes, int totalBytes)? onProgress,
+  }) async {
     final cleanKey = remoteKey.startsWith('/') ? remoteKey.substring(1) : remoteKey;
     final rawPath = '/${bucketName.trim()}/$cleanKey';
     final canonicalPath = _encodePath(rawPath);
@@ -364,15 +410,30 @@ class R2SyncService {
         final client = http.Client();
         try {
           final uri = Uri.parse('$_baseUrl$canonicalPath');
-          final response = await client.get(uri, headers: headers).timeout(
-            const Duration(seconds: 45),
+          final request = http.Request('GET', uri);
+          headers.forEach((k, v) => request.headers[k] = v);
+
+          final response = await client.send(request).timeout(
+            const Duration(seconds: 120),
           );
 
           if (response.statusCode == 200) {
             if (!await localTargetFile.parent.exists()) {
               await localTargetFile.parent.create(recursive: true);
             }
-            await localTargetFile.writeAsBytes(response.bodyBytes);
+            final contentLength = response.contentLength ?? 0;
+            final sink = localTargetFile.openWrite();
+            int downloaded = 0;
+
+            await response.stream.forEach((chunk) {
+              downloaded += chunk.length;
+              sink.add(chunk);
+              if (onProgress != null) {
+                onProgress(downloaded, contentLength);
+              }
+            });
+
+            await sink.close();
             return true;
           }
         } finally {
