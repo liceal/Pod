@@ -55,6 +55,16 @@ class AppSettings {
   final int r2SyncIntervalMinutes;
   final int? r2LastSyncTime;
 
+  // Cloudflare D1 + R2 Sync Settings
+  final String cfWorkerUrl;
+  final int cfD1Mode; // 0 = Worker API, 1 = Direct Cloudflare REST API
+  final String? cfAccountId;
+  final String? cfApiToken;
+  final String? cfD1DatabaseId;
+  final String? cfR2BucketName;
+  final bool cfD1AutoSync;
+  final int cfD1SyncIntervalMinutes;
+
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
   Locale? get locale {
@@ -94,6 +104,14 @@ class AppSettings {
     this.r2AutoSync = true,
     this.r2SyncIntervalMinutes = 5,
     this.r2LastSyncTime,
+    this.cfWorkerUrl = 'https://your-subdomain.workers.dev',
+    this.cfD1Mode = 0,
+    this.cfAccountId,
+    this.cfApiToken,
+    this.cfD1DatabaseId,
+    this.cfR2BucketName,
+    this.cfD1AutoSync = true,
+    this.cfD1SyncIntervalMinutes = 5,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
@@ -192,6 +210,14 @@ class AppSettings {
     bool? r2AutoSync,
     int? r2SyncIntervalMinutes,
     int? r2LastSyncTime,
+    String? cfWorkerUrl,
+    int? cfD1Mode,
+    String? cfAccountId,
+    String? cfApiToken,
+    String? cfD1DatabaseId,
+    String? cfR2BucketName,
+    bool? cfD1AutoSync,
+    int? cfD1SyncIntervalMinutes,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -223,6 +249,14 @@ class AppSettings {
       r2AutoSync: r2AutoSync ?? this.r2AutoSync,
       r2SyncIntervalMinutes: r2SyncIntervalMinutes ?? this.r2SyncIntervalMinutes,
       r2LastSyncTime: r2LastSyncTime ?? this.r2LastSyncTime,
+      cfWorkerUrl: cfWorkerUrl ?? this.cfWorkerUrl,
+      cfD1Mode: cfD1Mode ?? this.cfD1Mode,
+      cfAccountId: cfAccountId ?? this.cfAccountId,
+      cfApiToken: cfApiToken ?? this.cfApiToken,
+      cfD1DatabaseId: cfD1DatabaseId ?? this.cfD1DatabaseId,
+      cfR2BucketName: cfR2BucketName ?? this.cfR2BucketName,
+      cfD1AutoSync: cfD1AutoSync ?? this.cfD1AutoSync,
+      cfD1SyncIntervalMinutes: cfD1SyncIntervalMinutes ?? this.cfD1SyncIntervalMinutes,
     );
   }
 
@@ -256,6 +290,14 @@ class AppSettings {
       'r2AutoSync': r2AutoSync,
       'r2SyncIntervalMinutes': r2SyncIntervalMinutes,
       'r2LastSyncTime': r2LastSyncTime,
+      'cfWorkerUrl': cfWorkerUrl,
+      'cfD1Mode': cfD1Mode,
+      'cfAccountId': cfAccountId,
+      'cfApiToken': cfApiToken,
+      'cfD1DatabaseId': cfD1DatabaseId,
+      'cfR2BucketName': cfR2BucketName,
+      'cfD1AutoSync': cfD1AutoSync,
+      'cfD1SyncIntervalMinutes': cfD1SyncIntervalMinutes,
     };
   }
 
@@ -341,6 +383,14 @@ class AppSettings {
       r2AutoSync: json['r2AutoSync'] as bool? ?? true,
       r2SyncIntervalMinutes: (json['r2SyncIntervalMinutes'] as num?)?.toInt() ?? 5,
       r2LastSyncTime: (json['r2LastSyncTime'] as num?)?.toInt(),
+      cfWorkerUrl: json['cfWorkerUrl'] as String? ?? 'https://your-subdomain.workers.dev',
+      cfD1Mode: json['cfD1Mode'] as int? ?? 0,
+      cfAccountId: json['cfAccountId'] as String?,
+      cfApiToken: json['cfApiToken'] as String?,
+      cfD1DatabaseId: json['cfD1DatabaseId'] as String?,
+      cfR2BucketName: json['cfR2BucketName'] as String?,
+      cfD1AutoSync: json['cfD1AutoSync'] as bool? ?? true,
+      cfD1SyncIntervalMinutes: (json['cfD1SyncIntervalMinutes'] as num?)?.toInt() ?? 5,
     );
   }
 }

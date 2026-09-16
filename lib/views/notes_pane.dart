@@ -6,6 +6,7 @@ import '../services/app_state.dart';
 import '../utils/localization.dart';
 
 import 'components/animated_press.dart';
+import 'global_sync_log_dialog.dart';
 
 class NotesPane extends StatefulWidget {
   final AppState state;
@@ -767,31 +768,155 @@ class _NotesPaneState extends State<NotesPane> {
                     ),
                   ),
                   const SizedBox(width: 2),
-                  Tooltip(
-                    message: context.text('设置', 'Settings'),
-                    child: MouseRegion(
-                      cursor: SystemMouseCursors.click,
-                      child: AnimatedPress(
-                        onTap: widget.onShowSettings,
-                        child: Container(
-                          width: 26,
-                          height: 26,
-                          decoration: BoxDecoration(
-                            color: widget.isDark
-                                ? Colors.white.withOpacity(0.06)
-                                : Colors.black.withOpacity(0.04),
-                            borderRadius: BorderRadius.zero,
-                          ),
-                          child: Icon(
-                            Icons.settings_outlined,
-                            size: 15,
-                            color: widget.isDark
-                                ? Colors.white.withOpacity(0.6)
-                                : Colors.black.withOpacity(0.6),
+                  // 全局云端同步状态与日志 (感叹号按钮)
+                  ListenableBuilder(
+                    listenable: widget.state,
+                    builder: (context, _) {
+                      final isSyncing = widget.state.isD1Syncing || widget.state.isR2Syncing;
+                      final hasError = widget.state.lastD1SyncSuccess == false;
+                      final primaryColor = Theme.of(context).colorScheme.primary;
+                      const errorColor = Color(0xFFEF5350);
+
+                      final IconData iconData;
+                      final Color iconColor;
+                      final String tooltipText;
+
+                      if (isSyncing) {
+                        iconData = Icons.sync_rounded;
+                        iconColor = primaryColor;
+                        tooltipText = context.text('云端同步中... (点击查看实时日志)', 'Cloud sync in progress... (Click to view logs)');
+                      } else if (hasError) {
+                        iconData = Icons.error_outline_rounded;
+                        iconColor = errorColor;
+                        tooltipText = context.text('云端同步异常 (点击查看排查日志)', 'Cloud sync error (Click to inspect logs)');
+                      } else {
+                        iconData = Icons.priority_high_rounded; // 感叹号图标
+                        iconColor = widget.state.lastD1SyncSuccess == true
+                            ? primaryColor.withValues(alpha: 0.85)
+                            : (widget.isDark
+                                ? Colors.white.withValues(alpha: 0.6)
+                                : Colors.black.withValues(alpha: 0.6));
+                        tooltipText = context.text('云端同步日志与状态 (点击查看)', 'Cloud sync logs & status (Click to view)');
+                      }
+
+                      return Tooltip(
+                        message: tooltipText,
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: AnimatedPress(
+                            onTap: () {
+                              GlobalSyncLogDialog.show(
+                                context,
+                                state: widget.state,
+                                onOpenSettings: widget.onShowSettings,
+                              );
+                            },
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: hasError
+                                    ? errorColor.withValues(alpha: 0.12)
+                                    : (widget.isDark
+                                        ? Colors.white.withValues(alpha: 0.06)
+                                        : Colors.black.withValues(alpha: 0.04)),
+                                borderRadius: BorderRadius.zero,
+                              ),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  if (isSyncing)
+                                    SizedBox(
+                                      width: 13,
+                                      height: 13,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 1.5,
+                                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                                      ),
+                                    )
+                                  else
+                                    Icon(
+                                      iconData,
+                                      size: 15,
+                                      color: iconColor,
+                                    ),
+                                  if (hasError)
+                                    Positioned(
+                                      top: 3,
+                                      right: 3,
+                                      child: Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: const BoxDecoration(
+                                          color: errorColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
+                  ),
+                  const SizedBox(width: 2),
+                  ListenableBuilder(
+                    listenable: widget.state,
+                    builder: (context, _) {
+                      final isSyncing = widget.state.isD1Syncing || widget.state.isR2Syncing;
+                      final primaryColor = Theme.of(context).colorScheme.primary;
+
+                      return Tooltip(
+                        message: isSyncing
+                            ? context.text('设置 (后台云端同步中...)', 'Settings (Syncing in background...)')
+                            : context.text('设置', 'Settings'),
+                        child: MouseRegion(
+                          cursor: SystemMouseCursors.click,
+                          child: AnimatedPress(
+                            onTap: widget.onShowSettings,
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: widget.isDark
+                                    ? Colors.white.withOpacity(0.06)
+                                    : Colors.black.withOpacity(0.04),
+                                borderRadius: BorderRadius.zero,
+                              ),
+                              child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                  Icon(
+                                    Icons.settings_outlined,
+                                    size: 15,
+                                    color: isSyncing
+                                        ? primaryColor
+                                        : (widget.isDark
+                                            ? Colors.white.withOpacity(0.6)
+                                            : Colors.black.withOpacity(0.6)),
+                                  ),
+                                  if (isSyncing)
+                                    Positioned(
+                                      top: 4,
+                                      right: 4,
+                                      child: Container(
+                                        width: 5,
+                                        height: 5,
+                                        decoration: BoxDecoration(
+                                          color: primaryColor,
+                                          shape: BoxShape.circle,
+                                        ),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ),

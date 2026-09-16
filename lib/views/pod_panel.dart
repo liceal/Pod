@@ -29,8 +29,8 @@ class _PodPanelState extends State<PodPanel>
   late AnimationController _animationController;
   late Animation<Offset> _slideAnimation;
   Timer? _hoverTimer;
-  bool _isMouseInside = false;
   bool _isDragDropReady = false;
+  bool _isShowingSettings = false;
   Map<PanelPane, double>? _dragWeights;
 
   @override
@@ -116,7 +116,6 @@ class _PodPanelState extends State<PodPanel>
         }
       }
     } else {
-      _isMouseInside = false;
       widget.state.isMouseInside = false;
       if (duration == Duration.zero) {
         _animationController.value = 0.0;
@@ -157,13 +156,11 @@ class _PodPanelState extends State<PodPanel>
 
   // 鼠标移出展开的面板窗口时开始倒计时自动收起
   void _onMouseEnteredPanel() {
-    _isMouseInside = true;
     widget.state.isMouseInside = true; // Sync to AppState
     widget.state.cancelAutoCollapseTimer();
   }
 
   void _onMouseExitedPanel() {
-    _isMouseInside = false;
     widget.state.isMouseInside = false; // Sync to AppState
     widget.state.startAutoCollapseTimer();
   }
@@ -197,51 +194,12 @@ class _PodPanelState extends State<PodPanel>
     }
   }
 
-  // Show settings popup — temporarily expand the native window so the dialog is not clipped
-  void _showSettings() async {
-    const double expandedH = 350.0;
-    const double dialogH = 620.0;
-
-    final screenInfo = await widget.state.getActiveScreenInfo();
-    final double screenWidth = screenInfo['width']!;
-    final double screenX = screenInfo['x']!;
-    final double menuBarHeight = screenInfo['visibleY']!;
-
-    // 使用已缓存的面板宽度，避免重复计算
-    final double panelW = widget.state.lastCalculatedWidth;
-
-    // 展开窗口高度以容纳设置弹窗
-    final x = screenX + (screenWidth - panelW) / 2;
-    windowManager
-        .setBounds(Rect.fromLTWH(x, menuBarHeight, panelW, dialogH))
-        .catchError((e) => debugPrint('Failed to expand settings window: $e'));
-
-    if (!mounted) return;
-
-    // 打开期间禁止自动收起
-    widget.state.setDialogOpen(true);
-    widget.state.cancelAutoCollapseTimer();
-
-    await showDialog(
-      context: context,
-      barrierColor: Colors.transparent,
-      builder: (context) => SettingsDialog(state: widget.state),
-    );
-
-    widget.state.setDialogOpen(false);
-
-    // 弹窗关闭后：直接用 lastCalculatedWidth（updateSettings 已更新）
-    final double updatedPanelW = widget.state.lastCalculatedWidth;
-    final rx = screenX + (screenWidth - updatedPanelW) / 2;
-    windowManager
-        .setBounds(Rect.fromLTWH(rx, menuBarHeight, updatedPanelW, expandedH))
-        .catchError(
-          (e) => debugPrint('Failed to restore window size after settings: $e'),
-        );
-
-    // 设置关闭后若鼠标不在面板内，启动自动收起计时器
-    if (!_isMouseInside) {
-      _onMouseExitedPanel();
+  // Show settings view in-place within the main panel
+  void _showSettings() {
+    if (mounted) {
+      setState(() {
+        _isShowingSettings = true;
+      });
     }
   }
 
@@ -337,9 +295,20 @@ class _PodPanelState extends State<PodPanel>
                                   ),
                                   child: Column(
                                     children: [
-                                      // Main Columns Content
+                                      // Main Columns Content or Settings View
                                       Expanded(
-                                        child: LayoutBuilder(
+                                        child: _isShowingSettings
+                                            ? SettingsDialog(
+                                                state: widget.state,
+                                                onClose: () {
+                                                  if (mounted) {
+                                                    setState(() {
+                                                      _isShowingSettings = false;
+                                                    });
+                                                  }
+                                                },
+                                              )
+                                            : LayoutBuilder(
                                           builder: (context, constraints) {
                                             final double totalW =
                                                 constraints.maxWidth;
