@@ -1,0 +1,399 @@
+:root {
+  --font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --radius-xs: 6px;
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 20px;
+  --radius-xl: 26px;
+  --radius-full: 9999px;
+
+  /* Accent Colors */
+  --accent-color: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: rgba(59, 130, 246, 0.12);
+  --accent-gradient: linear-gradient(135deg, #3b82f6 0%, #6366f1 100%);
+  --accent-glow: 0 4px 18px rgba(59, 130, 246, 0.35);
+
+  --success-color: #10b981;
+  --success-light: rgba(16, 185, 129, 0.12);
+  --warning-color: #f59e0b;
+  --danger-color: #ef4444;
+  --danger-light: rgba(239, 68, 68, 0.12);
+
+  /* DARK THEME (Default) */
+  --bg-primary: #090d16;          /* Deep rich obsidian canvas */
+  --bg-secondary: #111827;        /* Solid dark card & sheet background */
+  --bg-tertiary: #1f293d;         /* Elevated button & input background */
+  --bg-elevated: #2d3a54;         /* Hover state */
+  --bg-glass: rgba(17, 24, 39, 0.88);
+  --nav-bg: rgba(17, 24, 39, 0.94);
+
+  --border-color: rgba(255, 255, 255, 0.1);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-hover: rgba(59, 130, 246, 0.4);
+
+  --text-primary: #f8fafc;        /* Pure crisp white */
+  --text-secondary: #cbd5e1;      /* Bright readable silver */
+  --text-muted: #94a3b8;          /* Clear secondary gray */
+
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --shadow-lg: 0 20px 48px -8px rgba(0, 0, 0, 0.7);
+}
+
+/* LIGHT THEME (Ultra Clean, Paper White & Slate) */
+[data-theme='light'] {
+  --bg-primary: #f1f5f9;          /* Soft clean slate canvas */
+  --bg-secondary: #ffffff;        /* Pure solid white cards & sheets - 100% OPAQUE */
+  --bg-tertiary: #f8fafc;         /* Light tactile controls */
+  --bg-elevated: #e2e8f0;
+  --bg-glass: rgba(255, 255, 255, 0.9);
+  --nav-bg: rgba(255, 255, 255, 0.95);
+
+  --border-color: rgba(0, 0, 0, 0.1);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-hover: rgba(59, 130, 246, 0.5);
+
+  --text-primary: #0f172a;        /* High-contrast crisp slate black */
+  --text-secondary: #334155;      /* Deep readable slate gray */
+  --text-muted: #64748b;          /* Crisp clear secondary text */
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 8px 24px -4px rgba(0, 0, 0, 0.08), 0 4px 8px -2px rgba(0, 0, 0, 0.04);
+  --shadow-lg: 0 20px 40px -12px rgba(0, 0, 0, 0.12);
+}
+
+/* WARM THEME (Warm Linen Paper & Amber Honey) */
+[data-theme='warm'] {
+  --accent-color: #d97706;
+  --accent-hover: #b45309;
+  --accent-light: rgba(217, 119, 6, 0.12);
+  --accent-gradient: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+  --accent-glow: 0 4px 18px rgba(217, 119, 6, 0.35);
+
+  --bg-primary: #fbf7ee;          /* Warm cream linen paper canvas */
+  --bg-secondary: #fffefb;        /* Warm pure paper cards & sheets - 100% OPAQUE */
+  --bg-tertiary: #f4eee2;         /* Warm tactile controls */
+  --bg-elevated: #eae1d1;         /* Hover state */
+  --bg-glass: rgba(255, 254, 251, 0.9);
+  --nav-bg: rgba(251, 247, 238, 0.95);
+
+  --border-color: rgba(130, 90, 40, 0.12);
+  --border-subtle: rgba(130, 90, 40, 0.06);
+  --border-hover: rgba(217, 119, 6, 0.5);
+
+  --text-primary: #26201a;        /* Deep espresso roast - ultra readable, no glare */
+  --text-secondary: #5c5346;      /* Warm stone secondary text */
+  --text-muted: #8a7e6f;          /* Warm amber-tinted muted text */
+
+  --shadow-sm: 0 1px 3px rgba(100, 60, 20, 0.06), 0 1px 2px rgba(100, 60, 20, 0.04);
+  --shadow-md: 0 8px 24px -4px rgba(100, 60, 20, 0.08), 0 4px 8px -2px rgba(100, 60, 20, 0.04);
+  --shadow-lg: 0 20px 40px -12px rgba(100, 60, 20, 0.12);
+}
+
+/* Universal Reset */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: 14px;
+  line-height: 1.5;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s cubic-bezier(0.16, 1, 0.3, 1), color 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+#app {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Clean Cards */
+.card {
+  background-color: var(--bg-secondary) !important;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  position: relative;
+  transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
+              border-color 0.2s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.card:hover {
+  border-color: var(--border-hover);
+}
+
+.card:active {
+  transform: scale(0.985);
+}
+
+/* Vue-Bits Button System */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 8px 16px;
+  border-radius: var(--radius-full);
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: all 0.16s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn:active {
+  transform: scale(0.95);
+}
+
+.btn-primary {
+  background: var(--accent-gradient);
+  color: #ffffff !important;
+  box-shadow: var(--accent-glow);
+  border: none;
+}
+
+.btn-primary:active {
+  opacity: 0.92;
+  box-shadow: 0 2px 10px rgba(59, 130, 246, 0.4);
+}
+
+.btn-secondary {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:active {
+  background-color: var(--bg-elevated);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+}
+
+.btn-ghost:active {
+  color: var(--text-primary);
+  background-color: var(--bg-tertiary);
+}
+
+.btn-sm {
+  padding: 5px 14px;
+  font-size: 12.5px;
+  border-radius: var(--radius-full);
+}
+
+/* Shimmer & Glow Effect from Vue-Bits */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-glow::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48%;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0.25), transparent);
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Badges */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border-radius: var(--radius-full);
+  font-size: 11.5px;
+  font-weight: 600;
+  background-color: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  letter-spacing: 0.2px;
+}
+
+.badge-accent {
+  background-color: var(--accent-light);
+  color: var(--accent-color);
+  border-color: rgba(59, 130, 246, 0.35);
+}
+
+.badge-success {
+  background-color: var(--success-light);
+  color: var(--success-color);
+  border-color: rgba(16, 185, 129, 0.35);
+}
+
+/* Segmented Pill Switcher (Vue-Bits Style) */
+.segmented-control {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-tertiary);
+  padding: 3px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+}
+
+.segmented-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.segmented-btn.active {
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  box-shadow: var(--shadow-sm);
+  font-weight: 600;
+}
+
+/* Empty State */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 60px 24px;
+  color: var(--text-muted);
+}
+
+.empty-icon-wrap {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  background-color: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-sm);
+}
+
+.empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 6px;
+}
+
+.empty-sub {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 260px;
+  line-height: 1.45;
+}
+
+/* Helper classes */
+.text-truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-danger {
+  color: var(--danger-color) !important;
+}
+
+/* Markdown Rendering */
+.markdown-body {
+  color: var(--text-primary);
+  font-size: 15px;
+  line-height: 1.75;
+  word-break: break-word;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3 {
+  margin: 18px 0 10px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.markdown-body p {
+  margin-bottom: 12px;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 22px;
+  margin-bottom: 12px;
+}
+
+.markdown-body code {
+  background-color: var(--bg-tertiary);
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+  color: var(--accent-color);
+}
+
+.markdown-body pre {
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  margin: 14px 0;
+}
+
+.markdown-body blockquote {
+  border-left: 3px solid var(--accent-color);
+  padding-left: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+  margin: 12px 0;
+}
+
+/* Custom Scrollbars */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-hover);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}

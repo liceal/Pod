@@ -1,0 +1,22 @@
+{
+  "name": "unclutter-mobile-web",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "deploy:worker": "vite build && cd ../cf-backend && npx wrangler deploy --env=\"\"",
+    "deploy:pages": "vite build && npx wrangler pages deploy dist --project-name pod-quick-mobile"
+  },
+  "dependencies": {
+    "vue": "^3.5.13",
+    "marked": "^15.0.4"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-vue": "^5.2.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

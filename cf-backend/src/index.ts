@@ -3,6 +3,7 @@ export interface Env {
   FILES_BUCKET?: R2Bucket;
   ENVIRONMENT: string;
   ENABLE_PERF_LOGS: string;
+  ASSETS?: Fetcher;
 }
 
 export default {
@@ -16,7 +17,7 @@ export default {
     const corsHeaders = {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Version',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Client-Version, X-Pin-Token, X-Requested-With-Web, X-File-Name, X-File-Key',
       'Access-Control-Expose-Headers': 'Server-Timing, X-Processing-Time-Ms',
     };
 
@@ -26,6 +27,19 @@ export default {
 
     try {
       let response: Response;
+
+      // API Auth Guard for Web App requests
+      const isWebApi = path.startsWith('/api/v1/sync') || path.startsWith('/api/v1/files');
+      const isWebClient = request.headers.get('x-requested-with-web') === 'true' || !!request.headers.get('x-pin-token');
+      if (isWebApi && isWebClient) {
+        const isAuthed = await validatePinToken(request, env);
+        if (!isAuthed) {
+          return new Response(
+            JSON.stringify({ error: 'PIN_EXPIRED', message: '密码已在其他设备被修改或已失效，请重新输入密码' }),
+            { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
+      }
 
       if (path === '/health') {
         response = await handleHealth(env);
@@ -40,6 +54,14 @@ export default {
       } else if (path.startsWith('/api/v1/files/') && method === 'GET') {
         const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
         response = await handleFileGet(fileKey, env);
+      } else if (path === '/api/v1/pin' && method === 'GET') {
+        response = await handlePinGet(env);
+      } else if (path === '/api/v1/pin/verify' && method === 'POST') {
+        response = await handlePinVerify(request, env);
+      } else if (path === '/api/v1/pin/set' && method === 'POST') {
+        response = await handlePinSet(request, env);
+      } else if (env.ASSETS) {
+        return await env.ASSETS.fetch(request);
       } else {
         response = new Response(JSON.stringify({ error: 'Endpoint Not Found', path }), {
           status: 404,
@@ -345,5 +367,181 @@ async function handleFilesMetadata(env: Env): Promise<Response> {
     return new Response(JSON.stringify({ success: true, files: [], error: e.message || String(e) }), {
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+}
+
+// 校验 Web 端请求的 PIN Token 是否有效
+async function validatePinToken(request: Request, env: Env): Promise<boolean> {
+  try {
+    const pinRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_code').first<{ value: string }>();
+    if (!pinRow || !pinRow.value) return true; // 云端未启用密码
+
+    const verRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_version').first<{ value: string }>();
+    const currentVersion = verRow?.value || '1';
+    const expectedToken = btoa(`${pinRow.value}:${currentVersion}`);
+
+    const clientToken = request.headers.get('x-pin-token');
+    return clientToken === expectedToken;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 获取云端 PIN 状态（含版本号）
+async function handlePinGet(env: Env): Promise<Response> {
+  try {
+    const pinRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_code').first<{ value: string }>();
+    const verRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_version').first<{ value: string }>();
+
+    if (pinRow && pinRow.value) {
+      const version = verRow?.value || '1';
+      return new Response(
+        JSON.stringify({
+          success: true,
+          hasPin: true,
+          length: pinRow.value.length,
+          version,
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+    return new Response(
+      JSON.stringify({ success: true, hasPin: false, length: 0, version: '0' }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ success: false, hasPin: false, error: e.message || String(e) }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+
+// 校验 PIN 码并颁发版本绑定 Token
+async function handlePinVerify(request: Request, env: Env): Promise<Response> {
+  try {
+    const body: any = await request.json();
+    const pin = String(body.pin || '').trim();
+
+    const pinRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_code').first<{ value: string }>();
+    const verRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_version').first<{ value: string }>();
+
+    if (!pinRow || !pinRow.value) {
+      // 尚未在云端设置任何 PIN 码，直接放行
+      return new Response(
+        JSON.stringify({ success: true, authorized: true, hasPin: false, version: '0' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (pin.length !== 6) {
+      return new Response(
+        JSON.stringify({ success: false, authorized: false, error: '请输入 6 位数字密码' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (pinRow.value === pin) {
+      const version = verRow?.value || '1';
+      const token = btoa(`${pin}:${version}`);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          authorized: true,
+          hasPin: true,
+          length: 6,
+          version,
+          token,
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    return new Response(
+      JSON.stringify({ success: false, authorized: false, error: '密码错误，请重新输入' }),
+      { status: 401, headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ success: false, error: e.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+}
+
+// 设置或更新云端 PIN 码（固定 6 位数字）
+async function handlePinSet(request: Request, env: Env): Promise<Response> {
+  try {
+    const body: any = await request.json();
+    const newPin = String(body.newPin || '').trim();
+    const oldPin = String(body.oldPin || '').trim();
+
+    if (newPin && !/^\d{6}$/.test(newPin)) {
+      return new Response(
+        JSON.stringify({ success: false, error: '新密码必须为固定 6 位纯数字' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const pinRow = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_code').first<{ value: string }>();
+
+    // 如果原先已有密码，修改或清空时必须提供并校验 6 位旧密码
+    if (pinRow && pinRow.value) {
+      if (!oldPin || !/^\d{6}$/.test(oldPin)) {
+        return new Response(
+          JSON.stringify({ success: false, error: '请输入当前 6 位原密码' }),
+          { status: 400, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (pinRow.value !== oldPin) {
+        return new Response(
+          JSON.stringify({ success: false, error: '原 6 位密码不正确，请重新输入' }),
+          { status: 401, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+    }
+
+    const now = new Date().toISOString();
+    const newVersion = String(Date.now());
+
+    if (newPin) {
+      await env.DB.batch([
+        env.DB.prepare(
+          `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+        ).bind('web_pin_code', newPin, now),
+        env.DB.prepare(
+          `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`
+        ).bind('web_pin_version', newVersion, now),
+      ]);
+
+      const token = btoa(`${newPin}:${newVersion}`);
+      return new Response(
+        JSON.stringify({
+          success: true,
+          hasPin: true,
+          length: newPin.length,
+          version: newVersion,
+          token,
+        }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    } else {
+      // 清空/关闭 PIN 码
+      await env.DB.batch([
+        env.DB.prepare('DELETE FROM app_settings WHERE key = ?').bind('web_pin_code'),
+        env.DB.prepare('DELETE FROM app_settings WHERE key = ?').bind('web_pin_version'),
+      ]);
+      return new Response(
+        JSON.stringify({ success: true, hasPin: false, length: 0, version: '0' }),
+        { headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+  } catch (e: any) {
+    return new Response(
+      JSON.stringify({ success: false, error: e.message || String(e) }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
 }
