@@ -7,6 +7,9 @@ echo             PodQuick Windows 一键打包工具
 echo ===================================================
 echo.
 
+echo 正在检查并释放运行中的 PodQuick 实例以防文件占用锁死...
+taskkill /F /IM PodQuick.exe >nul 2>&1
+
 echo [1/3] 开始 Flutter Windows 编译 [Release 模式]...
 if not exist "build\native_assets\windows" mkdir "build\native_assets\windows"
 set "PUB_HOSTED_URL=https://pub.flutter-io.cn"
@@ -64,12 +67,28 @@ if "%CSC_PATH%"=="" (
 )
 echo.
 
-echo [4/4] 开始制作「微软商店安装包」 [MSIX]...
-call dart run msix:create
-if %errorlevel% neq 0 (
-    echo [警告] 制作商店 MSIX 安装包失败。
+echo [4/4] 开始制作「Windows 标准安装包 (免证书认证)」 [PodQuick_Setup.exe]...
+set "ISCC_PATH="
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
+    set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+) else if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
+    set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+) else if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
+    set "ISCC_PATH=C:\Program Files\Inno Setup 6\ISCC.exe"
+) else if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
+    set "ISCC_PATH=C:\Program Files\Inno Setup 7\ISCC.exe"
+)
+
+if "%ISCC_PATH%"=="" (
+    echo [警告] 未检测到 Inno Setup 编译器 ISCC.exe，跳过制作标准安装包。
+    echo 提示: 您可以运行 winget install JRSoftware.InnoSetup 进行安装。
 ) else (
-    echo [成功] 商店安装包已生成。
+    "%ISCC_PATH%" /Q installer.iss
+    if %errorlevel% equ 0 (
+        echo [成功] 标准安装包已生成：build\PodQuick_Setup.exe
+    ) else (
+        echo [错误] 标准安装包制作失败。
+    )
 )
 echo.
 
@@ -78,7 +97,7 @@ echo 打包流程结束！打包产物保存在项目 build 目录下：
 echo.
 if exist "build\PodQuick_Portable.zip" echo   - 绿色便携版: build\PodQuick_Portable.zip
 if exist "build\PodQuick.exe" echo   - 单文件运行程序: build\PodQuick.exe
-echo   - 商店安装包 (.msix): build\windows\x64\runner\Release\ 下的 .msix 文件
+if exist "build\PodQuick_Setup.exe" echo   - 标准安装包 (免证书直接装): build\PodQuick_Setup.exe
 echo ===================================================
 echo.
 pause

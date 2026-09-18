@@ -339,7 +339,7 @@ export class ApiClient {
   public static async fetchFiles(): Promise<{ files: FileMetadata[]; error?: string }> {
     const base = this.getBaseUrl();
     try {
-      const res = await fetch(`${base}/api/v1/files/metadata`, {
+      const res = await fetch(`${base}/api/v1/files/metadata?scope=files`, {
         headers: {
           'x-requested-with-web': 'true',
           'x-pin-token': this.getPinToken(),

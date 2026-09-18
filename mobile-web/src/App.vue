@@ -7,7 +7,7 @@
           <Icons name="cloud" size="18" />
         </div>
         <div class="brand-text">
-          <span class="brand-title">unClutter</span>
+          <span class="brand-title">PodQuick</span>
           <span class="brand-tag">Cloud D1 · R2</span>
         </div>
       </div>

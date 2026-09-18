@@ -67,10 +67,16 @@ function Upload-R2File($filePath, $remoteKey) {
     }
 }
 
-# 1. 上传 PodQuick.exe
+# 1. 上传 PodQuick.exe (单文件运行版本/应用内升级替换)
 Upload-R2File "$PSScriptRoot\build\PodQuick.exe" "PodQuick.exe"
 
-# 2. 上传 release_info.json
+# 2. 上传 PodQuick_Setup.exe (标准 Windows 安装包)
+$setupFile = "$PSScriptRoot\build\PodQuick_Setup.exe"
+if (Test-Path $setupFile) {
+    Upload-R2File $setupFile "PodQuick_Setup.exe"
+}
+
+# 3. 上传 release_info.json
 $releaseInfoFile = "$PSScriptRoot\release_info.json"
 if (Test-Path $releaseInfoFile) {
     Upload-R2File $releaseInfoFile "release_info.json"

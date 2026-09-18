@@ -14,5 +14,6 @@
   "terminal.integrated.env.linux": {
     "PUB_HOSTED_URL": "https://pub.flutter-io.cn",
     "FLUTTER_STORAGE_BASE_URL": "https://storage.flutter-io.cn"
-  }
+  },
+  "typescript.tsdk": "cf-backend/node_modules/typescript/lib"
 }

@@ -9,7 +9,7 @@
           v-model="searchQuery"
           type="search"
           class="search-input"
-          placeholder="搜索全盘文件与相片..."
+          placeholder="搜索文件管理中的文件与相片..."
         />
         <button
           v-if="searchQuery"
@@ -118,7 +118,7 @@
     <div class="content-scroll">
       <div v-if="loading && files.length === 0" class="loading-wrap">
         <Icons name="refresh" size="32" class="rotating" />
-        <p>正在读取云端目录结构...</p>
+        <p>正在读取文件管理目录...</p>
       </div>
 
       <!-- SEARCH RESULTS VIEW -->
@@ -200,10 +200,24 @@
         <!-- 2. DIRECT FILES IN CURRENT FOLDER -->
         <div class="files-section">
           <div class="section-label">
-            <span>文件与相片 ({{ currentDirectFiles.length }})</span>
-            <span v-if="currentDirectFiles.length > 0" class="folder-meta-hint">
-              {{ currentPhotosCount }} 张相片 · {{ currentDocsCount }} 份文档
-            </span>
+            <span>文件与相片 ({{ allDirectFilesInFolder.length }})</span>
+            <div class="filter-pills">
+              <button
+                class="filter-pill-btn"
+                :class="{ active: fileFilterType === 'all' }"
+                @click="fileFilterType = 'all'"
+              >全部</button>
+              <button
+                class="filter-pill-btn"
+                :class="{ active: fileFilterType === 'images' }"
+                @click="fileFilterType = 'images'"
+              >相片 ({{ currentPhotosCount }})</button>
+              <button
+                class="filter-pill-btn"
+                :class="{ active: fileFilterType === 'docs' }"
+                @click="fileFilterType = 'docs'"
+              >文档 ({{ currentDocsCount }})</button>
+            </div>
           </div>
 
           <div
@@ -329,8 +343,9 @@ const emit = defineEmits<{
 const files = ref<FileMetadata[]>([]);
 const loading = ref(false);
 const searchQuery = ref('');
-const currentPath = ref<string>(''); // '' = Root
+const currentPath = ref<string>(''); // '' = Root of PC file manager
 const viewMode = ref<'grid' | 'list'>('grid');
+const fileFilterType = ref<'all' | 'images' | 'docs'>('all');
 
 // Upload state
 const cameraInput = ref<HTMLInputElement | null>(null);
@@ -351,8 +366,29 @@ interface FolderNode {
   totalCount: number;
 }
 
+// 核心过滤：仅提取 PC 端文件管理目录（files/）下的有效业务文件，彻底过滤 clipboard_images（剪贴板截图）以及以点号开头的隐藏/回收站文件（如 .trash）
+const pcManagedFiles = computed<FileMetadata[]>(() => {
+  return files.value.filter((f) => {
+    if (!f.file_key) return false;
+    // 仅保留属于 PC 端文件管理目录 files/ 下的文件
+    if (!f.file_key.startsWith('files/')) return false;
+
+    // 排除回收站与隐藏文件（任何以 '.' 开头的路径分段，如 files/.trash/... 或 .DS_Store）
+    const segments = f.file_key.split('/');
+    for (const seg of segments) {
+      if (seg.startsWith('.')) return false;
+    }
+    return true;
+  });
+});
+
+// 获取相对于 PC 文件管理根目录的纯净相对路径 (例如 files/mac/a.png -> mac/a.png, files/b.jpg -> b.jpg)
+const getRelativeKey = (fileKey: string): string => {
+  return fileKey.replace(/^files\//, '');
+};
+
 const breadcrumbs = computed(() => {
-  const crumbs = [{ name: '全部文件夹', path: '' }];
+  const crumbs = [{ name: '全部文件', path: '' }];
   if (!currentPath.value) return crumbs;
 
   const parts = currentPath.value.split('/');
@@ -365,7 +401,7 @@ const breadcrumbs = computed(() => {
 });
 
 const currentFolderShortName = computed(() => {
-  if (!currentPath.value) return '当前目录';
+  if (!currentPath.value) return '文件管理';
   const parts = currentPath.value.split('/');
   return `「${parts[parts.length - 1]}」`;
 });
@@ -375,11 +411,11 @@ const currentSubfolders = computed<FolderNode[]>(() => {
   const map = new Map<string, number>();
   const prefix = currentPath.value ? `${currentPath.value}/` : '';
 
-  for (const f of files.value) {
-    if (!f.file_key) continue;
-    if (prefix && !f.file_key.startsWith(prefix)) continue;
+  for (const f of pcManagedFiles.value) {
+    const relKey = getRelativeKey(f.file_key);
+    if (prefix && !relKey.startsWith(prefix)) continue;
 
-    const remainder = prefix ? f.file_key.slice(prefix.length) : f.file_key;
+    const remainder = prefix ? relKey.slice(prefix.length) : relKey;
     const slashIdx = remainder.indexOf('/');
     if (slashIdx !== -1) {
       const folderName = remainder.slice(0, slashIdx);
@@ -393,51 +429,57 @@ const currentSubfolders = computed<FolderNode[]>(() => {
     result.push({ name, path, totalCount });
   });
 
-  // Sort: standard folders first, hidden/trash folders last
-  return result.sort((a, b) => {
-    if (a.name.startsWith('.') && !b.name.startsWith('.')) return 1;
-    if (!a.name.startsWith('.') && b.name.startsWith('.')) return -1;
-    return a.name.localeCompare(b.name, 'zh-CN');
-  });
+  return result.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
 });
 
-// Calculate direct files inside currentPath
-const currentDirectFiles = computed<FileMetadata[]>(() => {
+// Calculate all direct files inside currentPath before category filtering
+const allDirectFilesInFolder = computed<FileMetadata[]>(() => {
   const prefix = currentPath.value ? `${currentPath.value}/` : '';
 
-  return files.value.filter((f) => {
-    if (!f.file_key) return false;
+  return pcManagedFiles.value.filter((f) => {
+    const relKey = getRelativeKey(f.file_key);
     if (prefix) {
-      if (!f.file_key.startsWith(prefix)) return false;
-      const remainder = f.file_key.slice(prefix.length);
+      if (!relKey.startsWith(prefix)) return false;
+      const remainder = relKey.slice(prefix.length);
       return !remainder.includes('/'); // direct children only
     } else {
-      return !f.file_key.includes('/'); // root files only
+      return !relKey.includes('/'); // root files only
     }
   });
 });
 
 const currentPhotosCount = computed(() => {
-  return currentDirectFiles.value.filter((f) => isImage(f)).length;
+  return allDirectFilesInFolder.value.filter((f) => isImage(f)).length;
 });
 
 const currentDocsCount = computed(() => {
-  return currentDirectFiles.value.filter((f) => !isImage(f)).length;
+  return allDirectFilesInFolder.value.filter((f) => !isImage(f)).length;
 });
 
-// Search across all files
+// Direct files filtered by category pill (all / images / docs)
+const currentDirectFiles = computed<FileMetadata[]>(() => {
+  if (fileFilterType.value === 'images') {
+    return allDirectFilesInFolder.value.filter((f) => isImage(f));
+  } else if (fileFilterType.value === 'docs') {
+    return allDirectFilesInFolder.value.filter((f) => !isImage(f));
+  }
+  return allDirectFilesInFolder.value;
+});
+
+// Search across PC file manager files
 const searchedFiles = computed(() => {
   const q = searchQuery.value.trim().toLowerCase();
   if (!q) return [];
-  return files.value.filter(
+  return pcManagedFiles.value.filter(
     (f) =>
       f.file_name.toLowerCase().includes(q) ||
-      f.file_key.toLowerCase().includes(q)
+      getRelativeKey(f.file_key).toLowerCase().includes(q)
   );
 });
 
 const getParentDir = (key: string): string => {
-  const parts = key.split('/');
+  const rel = getRelativeKey(key);
+  const parts = rel.split('/');
   if (parts.length <= 1) return '根目录';
   return parts.slice(0, -1).join('/');
 };
@@ -517,8 +559,11 @@ const handleFileSelected = async (e: Event) => {
   for (const file of selectedList) {
     uploadingFileName.value = file.name;
 
-    // Build hierarchical key based on current folder
-    const targetFolder = currentPath.value || (file.type.startsWith('image/') ? 'files/相册' : 'files');
+    // 依据当前相对路径构造存储键（在 PC 文件管理 files/ 下对应目录）
+    const folderPart = currentPath.value.trim();
+    const targetFolder = folderPart
+      ? `files/${folderPart}`
+      : (file.type.startsWith('image/') ? 'files/相册' : 'files');
     const safeName = file.name.replace(/[^a-zA-Z0-9._\-\u4e00-\u9fa5]/g, '_');
     const customKey = `${targetFolder}/${Date.now()}_${safeName}`;
 
@@ -840,6 +885,36 @@ const openLightbox = (file: FileMetadata) => {
   font-size: 11px;
   text-transform: none;
   color: var(--text-muted);
+}
+
+.filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.filter-pill-btn {
+  border: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  color: var(--text-muted);
+  border-radius: var(--radius-full);
+  padding: 3px 10px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  touch-action: manipulation;
+}
+
+.filter-pill-btn:active {
+  transform: scale(0.95);
+}
+
+.filter-pill-btn.active {
+  background: var(--accent-gradient);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: var(--accent-glow);
 }
 
 /* Folder Grid / Items */

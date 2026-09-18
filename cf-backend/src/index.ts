@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 export interface Env {
   DB: D1Database;
   FILES_BUCKET?: R2Bucket;
@@ -48,7 +50,7 @@ export default {
       } else if (path === '/api/v1/sync' && method === 'POST') {
         response = await handlePushSync(request, env);
       } else if ((path === '/api/v1/files/metadata' || path === '/api/v1/file-metadata') && method === 'GET') {
-        response = await handleFilesMetadata(env);
+        response = await handleFilesMetadata(env, url);
       } else if (path === '/api/v1/files/upload' && method === 'POST') {
         response = await handleFileUpload(request, env);
       } else if (path.startsWith('/api/v1/files/') && method === 'GET') {
@@ -344,7 +346,7 @@ async function handleFileGet(fileKey: string, env: Env): Promise<Response> {
 }
 
 // 获取文件元数据列表 (用于客户端快速差异比对，跳过无变动文件)
-async function handleFilesMetadata(env: Env): Promise<Response> {
+async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
   try {
     // 确保表存在
     await env.DB.prepare(
@@ -359,7 +361,13 @@ async function handleFilesMetadata(env: Env): Promise<Response> {
        );`
     ).run();
 
-    const metaRes = await env.DB.prepare('SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata').all();
+    const scope = url?.searchParams?.get('scope');
+    let query = 'SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata';
+    if (scope === 'files') {
+      // 仅获取 PC 端文件管理目录 files/ 下且非隐藏/回收站的文件
+      query += " WHERE file_key LIKE 'files/%' AND file_key NOT LIKE 'files/.%' AND file_key NOT LIKE '%/.%'";
+    }
+    const metaRes = await env.DB.prepare(query).all();
     return new Response(JSON.stringify({ success: true, files: metaRes.results || [] }), {
       headers: { 'Content-Type': 'application/json' },
     });
