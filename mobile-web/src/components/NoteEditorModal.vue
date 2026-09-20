@@ -61,13 +61,6 @@
         <!-- Completely Solid Non-Transparent Canvas -->
         <div class="editor-body">
           <div v-if="mode === 'edit'" class="edit-canvas">
-            <input
-              v-model="title"
-              type="text"
-              class="note-title-input"
-              placeholder="便签标题 (选填)"
-            />
-            <div class="divider-line"></div>
             <textarea
               v-model="content"
               class="note-content-textarea"
@@ -76,7 +69,6 @@
           </div>
 
           <div v-else class="preview-canvas">
-            <h1 class="preview-title">{{ title || '无标题便签' }}</h1>
             <div class="markdown-body" v-html="renderedMarkdown"></div>
           </div>
         </div>
@@ -234,7 +226,7 @@ watch(
     existingNote.value = val;
     if (val) {
       title.value = val.title || '';
-      content.value = val.content || '';
+      content.value = val.content || val.title || '';
     } else {
       title.value = '';
       content.value = '';
@@ -272,7 +264,7 @@ const formattedTime = computed(() => {
 });
 
 const save = async () => {
-  if (!title.value.trim() && !content.value.trim()) {
+  if (!content.value.trim() && !title.value.trim()) {
     emit('close');
     return;
   }
@@ -281,9 +273,13 @@ const save = async () => {
   const now = new Date().toISOString();
   const noteId = existingNote.value?.id || `note_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
+  // Automatically derive title from first non-empty line of content for PC/backend compatibility
+  const lines = content.value.trim().split('\n').map((l) => l.replace(/^[#*`_~>[\]()]+ /g, '').trim()).filter(Boolean);
+  const derivedTitle = lines[0] ? (lines[0].length > 30 ? lines[0].slice(0, 30) + '...' : lines[0]) : (title.value.trim() || '便签');
+
   const updatedNote: Note = {
     id: noteId,
-    title: title.value.trim() || '无标题便签',
+    title: derivedTitle,
     content: content.value,
     created_at: existingNote.value?.created_at || now,
     updated_at: now,

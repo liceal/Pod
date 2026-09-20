@@ -64,7 +64,7 @@ class CfD1SyncService {
     }
 
     try {
-      final response = await _client.get(uri).timeout(const Duration(seconds: 5));
+      final response = await _client.get(uri).timeout(const Duration(seconds: 10));
       stopwatch.stop();
 
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
@@ -684,6 +684,65 @@ WHERE excluded.updated_at >= app_settings.updated_at;
       debugPrint('REST API fetchRemoteFilesMetadataRestApi error: $e');
     }
     return {};
+  }
+
+  /// 通过 Cloudflare D1 REST API 拉取云端便签与剪贴板数据
+  static Future<Map<String, dynamic>> pullFromD1RestApi({
+    required String accountId,
+    required String apiToken,
+    required String d1DatabaseId,
+    DateTime? since,
+  }) async {
+    final cleanAccountId = accountId.trim();
+    final cleanToken = apiToken.trim();
+    final cleanDbId = d1DatabaseId.trim();
+
+    if (cleanAccountId.isEmpty || cleanToken.isEmpty || cleanDbId.isEmpty) {
+      return {'success': false, 'error': '请先完整填写 Account ID、API Token 和 D1 Database ID'};
+    }
+
+    final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
+    final sinceIso = (since ?? DateTime.fromMillisecondsSinceEpoch(0)).toUtc().toIso8601String();
+
+    try {
+      final body = {
+        'sql': '''
+SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500;
+SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500;
+''',
+        'params': [sinceIso, sinceIso],
+      };
+
+      final response = await http.post(
+        uri,
+        headers: {
+          'Authorization': 'Bearer $cleanToken',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(body),
+      ).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final resJson = jsonDecode(response.body);
+        final resultsList = resJson['result'] as List?;
+        if (resultsList != null && resultsList.isNotEmpty) {
+          final notesRaw = (resultsList[0]['results'] as List?) ?? [];
+          final clipboardsRaw = resultsList.length > 1 ? ((resultsList[1]['results'] as List?) ?? []) : [];
+
+          final notes = notesRaw.map((e) => Note.fromJson(e as Map<String, dynamic>)).toList();
+          final clipboardItems = clipboardsRaw.map((e) => ClipboardItem.fromJson(e as Map<String, dynamic>)).toList();
+
+          return {
+            'success': true,
+            'notes': notes,
+            'clipboardItems': clipboardItems,
+          };
+        }
+      }
+      return {'success': false, 'error': 'HTTP ${response.statusCode}: ${response.body}'};
+    } catch (e) {
+      return {'success': false, 'error': e.toString()};
+    }
   }
 
   /// 通过 D1 REST API 记录或更新上传成功的文件元数据

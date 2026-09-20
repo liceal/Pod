@@ -50,12 +50,8 @@
           @click="openEditModal(note)"
         >
           <div class="note-card-top">
-            <h3 class="note-title text-truncate">{{ note.title || '无标题便签' }}</h3>
+            <span class="note-content-main">{{ getSnippet(note.content || note.title) }}</span>
             <span class="note-time">{{ formatTime(note.updated_at) }}</span>
-          </div>
-
-          <div class="note-snippet">
-            {{ getSnippet(note.content) }}
           </div>
 
           <div class="note-card-footer">
@@ -117,9 +113,9 @@ const filteredNotes = computed(() => {
 });
 
 const getSnippet = (text?: string) => {
-  if (!text) return '暂无内容';
-  const plain = text.replace(/[#*`_~>[\]()]/g, ' ').trim();
-  return plain.slice(0, 100) || '暂无内容';
+  if (!text || !text.trim()) return '无内容便签';
+  const plain = text.replace(/^[#*`_~>[\]()]+ /gm, '').trim();
+  return plain || '无内容便签';
 };
 
 const formatTime = (iso?: string) => {
@@ -256,33 +252,30 @@ const handleNoteDeleted = (noteId: string) => {
 
 .note-card-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
 }
 
-.note-title {
-  font-size: 16px;
-  font-weight: 600;
+.note-content-main {
+  font-size: 15px;
+  line-height: 1.55;
   color: var(--text-primary);
+  font-weight: 500;
   flex: 1;
-  letter-spacing: -0.2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+  white-space: pre-wrap;
 }
 
 .note-time {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
-}
-
-.note-snippet {
-  font-size: 13.5px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  padding-top: 2px;
 }
 
 .note-card-footer {

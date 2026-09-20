@@ -68,6 +68,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   final List<FileUndoAction> _undoStack = [];
   final List<FileUndoAction> _redoStack = [];
   List<Note> notes = [];
+  List<Note> deletedNotes = [];
   Note? activeNote;
 
   bool isExpanded = false;
@@ -462,6 +463,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Load Local Data
     _loadSettings();
+    final lastSyncMs = _prefs.getInt('last_d1_sync_time');
+    if (lastSyncMs != null) {
+      _lastD1SyncTime = DateTime.fromMillisecondsSinceEpoch(lastSyncMs);
+    }
     await UpdateService.loadLocalVersion();
     await _syncLaunchAtStartupSetting();
     await _migrateLegacyDirectories();
@@ -643,21 +648,189 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   // --- Cloudflare D1 Sync Methods ---
 
-  Future<Map<String, dynamic>> _pushLocalDataToD1Internal({bool isManual = true}) async {
-    addD1Log(text('开始全量同步到 Cloudflare D1 数据库...', 'Starting full push to Cloudflare D1...'));
+  Future<void> _pullAndMergeCloudData({required Function(String msg) onLog}) async {
+    onLog(text('📥 开始从 Cloudflare D1 拉取增量变更 (Git 风格拉取)...', 'Pulling deltas from Cloudflare D1 (Git-style pull)...'));
 
-    final allNotes = List<Note>.from(notes);
+    Map<String, dynamic>? pullRes;
+    final sinceTime = _lastD1SyncTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+
+    if (settings.cfD1Mode == 0) {
+      final url = settings.cfWorkerUrl.trim();
+      if (url.isNotEmpty) {
+        final service = CfD1SyncService(workerUrl: url, isDevMode: true);
+        pullRes = await service.pullFromCloudflare(since: sinceTime);
+      }
+    } else {
+      final accountId = settings.cfAccountId?.trim() ?? '';
+      final apiToken = settings.cfApiToken?.trim() ?? '';
+      final dbId = settings.cfD1DatabaseId?.trim() ?? '';
+      if (accountId.isNotEmpty && apiToken.isNotEmpty && dbId.isNotEmpty) {
+        pullRes = await CfD1SyncService.pullFromD1RestApi(
+          accountId: accountId,
+          apiToken: apiToken,
+          d1DatabaseId: dbId,
+          since: sinceTime,
+        );
+      }
+    }
+
+    if (pullRes != null && pullRes['success'] == true) {
+      final List<Note> remoteNotes = (pullRes['notes'] as List?)?.cast<Note>() ?? [];
+      final List<ClipboardItem> remoteClipboards = (pullRes['clipboardItems'] as List?)?.cast<ClipboardItem>() ?? [];
+
+      // 1. 合并便签 (Git 风格：墓碑检测 + 冲突备份 + 增量对比)
+      int newNotesCount = 0;
+      int updatedNotesCount = 0;
+      int conflictsCount = 0;
+      final Map<String, Note> activeMap = {};
+      final Map<String, Note> tombstoneMap = {};
+
+      for (final n in notes) activeMap[n.id] = n;
+      for (final dn in deletedNotes) tombstoneMap[dn.id] = dn;
+
+      final List<Note> backupNotes = [];
+
+      for (final rNote in remoteNotes) {
+        if (rNote.isDeleted) {
+          // 云端为删除墓碑
+          if (activeMap.containsKey(rNote.id)) {
+            activeMap.remove(rNote.id);
+            updatedNotesCount++;
+          }
+          tombstoneMap[rNote.id] = rNote;
+          continue;
+        }
+
+        // 云端为有效便签
+        if (tombstoneMap.containsKey(rNote.id)) {
+          final tombstone = tombstoneMap[rNote.id]!;
+          if (rNote.updatedAt.isAfter(tombstone.updatedAt)) {
+            // 云端更新时间在本地删除之后（在其他端重新编辑过） -> 恢复/更新
+            tombstoneMap.remove(rNote.id);
+            activeMap[rNote.id] = rNote;
+            newNotesCount++;
+          } else {
+            // 本地删除时间更新 -> 维持本地删除状态
+            continue;
+          }
+        } else if (!activeMap.containsKey(rNote.id)) {
+          // 本地没有记录 -> 直接添加
+          activeMap[rNote.id] = rNote;
+          newNotesCount++;
+        } else {
+          // 双端均有更新 -> 三方合并与冲突处理
+          final localNote = activeMap[rNote.id]!;
+          if (rNote.updatedAt.isAfter(localNote.updatedAt)) {
+            if (localNote.updatedAt.isAfter(sinceTime) &&
+                localNote.content != rNote.content &&
+                localNote.content.isNotEmpty) {
+              // 双方在上次同步后均修改了内容且不相同 -> 产生冲突！
+              // 使用云端版本，同时将本地未上送的修改存为冲突备份
+              final backup = Note(
+                id: _uuid.v4(),
+                title: text('[冲突备份] ${localNote.title}', '[Conflict Backup] ${localNote.title}'),
+                content: localNote.content,
+                createdAt: DateTime.now(),
+                updatedAt: DateTime.now(),
+              );
+              backupNotes.add(backup);
+              conflictsCount++;
+            }
+            activeMap[rNote.id] = rNote;
+            updatedNotesCount++;
+          }
+        }
+      }
+
+      if (backupNotes.isNotEmpty) {
+        for (final b in backupNotes) {
+          activeMap[b.id] = b;
+        }
+      }
+
+      deletedNotes = tombstoneMap.values.toList();
+      await _saveDeletedNotes();
+
+      if (newNotesCount > 0 || updatedNotesCount > 0 || conflictsCount > 0) {
+        notes = activeMap.values.toList()
+          ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+        if (activeNote != null) {
+          final match = notes.where((n) => n.id == activeNote!.id).toList();
+          if (match.isNotEmpty) {
+            activeNote = match.first;
+          } else if (notes.isNotEmpty) {
+            activeNote = notes.first;
+          }
+        } else if (notes.isNotEmpty) {
+          activeNote = notes.first;
+        }
+
+        await _saveNotes();
+        var msg = text(
+          '🎉 云端便签同步拉取完成：新增 $newNotesCount 条，更新 $updatedNotesCount 条',
+          'Fetched notes: added $newNotesCount, updated $updatedNotesCount',
+        );
+        if (conflictsCount > 0) {
+          msg += text(' (检测到 $conflictsCount 处冲突，已生成本地备份)', ' ($conflictsCount conflicts backed up)');
+        }
+        onLog(msg);
+      } else {
+        onLog(text('ℹ️ 便签已与云端同步保持最新', 'Notes up to date.'));
+      }
+
+      // 2. 合并剪贴板历史
+      int newClipCount = 0;
+      final Set<String> existingClipIds = {};
+      for (final c in clipboardHistory) existingClipIds.add(c.id);
+      for (final c in clipboardFavorites) existingClipIds.add(c.id);
+
+      for (final rClip in remoteClipboards) {
+        if (!existingClipIds.contains(rClip.id)) {
+          if (rClip.isFavorite) {
+            clipboardFavorites.insert(0, rClip);
+          } else {
+            clipboardHistory.insert(0, rClip);
+          }
+          existingClipIds.add(rClip.id);
+          newClipCount++;
+        }
+      }
+
+      if (newClipCount > 0) {
+        clipboardHistory.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        clipboardFavorites.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        await _saveClipboardHistory();
+        await _saveClipboardFavorites();
+        onLog(text('🎉 剪贴板同步完成：合并新增 $newClipCount 条记录', 'Fetched clipboards: added $newClipCount'));
+      }
+
+      notifyListeners();
+    } else {
+      if (pullRes != null && pullRes['error'] != null) {
+        onLog(text('⚠️ 拉取云端数据失败: ${pullRes['error']}', 'Pull data failed: ${pullRes['error']}'));
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _pushLocalDataToD1Internal({bool isManual = true}) async {
+    addD1Log(text('开始 Cloudflare D1 数据库双向增量同步 (Git 模式)...', 'Starting Git-style D1 sync...'));
+
+    // 1. 先拉取云端增量数据并进行合并
+    await _pullAndMergeCloudData(onLog: (msg) => addD1Log(msg));
+
+    // 2. 包含已删除墓碑在内的全量便签列表
+    final allNotes = [...notes, ...deletedNotes];
 
     final Map<String, ClipboardItem> clipMap = {};
-    for (final item in clipboardHistory) {
-      clipMap[item.id] = item;
-    }
-    for (final item in clipboardFavorites) {
-      clipMap[item.id] = item;
-    }
+    for (final item in clipboardHistory) clipMap[item.id] = item;
+    for (final item in clipboardFavorites) clipMap[item.id] = item;
     final allClipboards = clipMap.values.toList();
 
-    addD1Log(text('读取本地待同步数据: 便签 ${allNotes.length} 条, 剪贴板 ${allClipboards.length} 条', 'Collected local data: ${allNotes.length} notes, ${allClipboards.length} clipboards'));
+    addD1Log(text(
+      '读取待推送到 D1 数据: 便签 ${allNotes.length} 条 (含删除标记 ${deletedNotes.length} 条), 剪贴板 ${allClipboards.length} 条',
+      'Collected local data: ${allNotes.length} notes (${deletedNotes.length} deleted), ${allClipboards.length} clipboards',
+    ));
 
     final settingsList = [
       {
@@ -747,7 +920,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final isSuccess = res['success'] == true;
       _lastD1SyncSuccess = isSuccess;
       _lastD1SyncMessage = res['message'] ?? res['error'];
-      _lastD1SyncTime = DateTime.now();
+      if (isSuccess) {
+        _lastD1SyncTime = DateTime.now();
+        await _prefs.setInt('last_d1_sync_time', _lastD1SyncTime!.millisecondsSinceEpoch);
+      }
       _d1SyncStatusMessage = _lastD1SyncMessage;
       return res;
     } catch (e) {
@@ -3898,7 +4074,58 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Timer? _d1LiveSyncDebounceTimer;
+
+  void _triggerD1LiveAutoSync() {
+    final isWorkerConfigured = settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty;
+    final isRestConfigured = settings.cfD1Mode == 1 &&
+        settings.cfAccountId?.trim().isNotEmpty == true &&
+        settings.cfApiToken?.trim().isNotEmpty == true &&
+        settings.cfD1DatabaseId?.trim().isNotEmpty == true;
+
+    if ((!isWorkerConfigured && !isRestConfigured) || !settings.cfD1AutoSync) return;
+
+    _d1LiveSyncDebounceTimer?.cancel();
+    _d1LiveSyncDebounceTimer = Timer(const Duration(seconds: 3), () {
+      if (!_isD1Syncing && !_isShuttingDown) {
+        addD1Log(text('⚡ 内容变动，触发即时云端同步...', 'Change detected, triggering live cloud sync...'));
+        syncLocalDataToD1(isManual: false);
+      }
+    });
+  }
+
+  Future<void> _loadDeletedNotes() async {
+    final dataDir = getDataDirectoryPathSync();
+    final file = File('$dataDir/deleted_notes.json');
+    if (await file.exists()) {
+      try {
+        final content = await file.readAsString();
+        final decoded = jsonDecode(content) as List;
+        deletedNotes = decoded
+            .map((item) => Note.fromJson(item as Map<String, dynamic>))
+            .toList();
+      } catch (e) {
+        deletedNotes = [];
+      }
+    }
+  }
+
+  Future<void> _saveDeletedNotes() async {
+    final dataDir = getDataDirectoryPathSync();
+    final file = File('$dataDir/deleted_notes.json');
+    try {
+      if (!await file.parent.exists()) {
+        await file.parent.create(recursive: true);
+      }
+      final encoded = jsonEncode(deletedNotes.map((item) => item.toJson()).toList());
+      await file.writeAsString(encoded);
+    } catch (e) {
+      debugPrint('Failed to save deleted notes: $e');
+    }
+  }
+
   Future<void> _loadNotes() async {
+    await _loadDeletedNotes();
     final dataDir = getDataDirectoryPathSync();
     final notesFile = File('$dataDir/notes.json');
     String? notesJson;
@@ -3990,11 +4217,20 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     activeNote = newNote;
     await _saveNotes();
     notifyListeners();
+    _triggerD1LiveAutoSync();
   }
 
   Future<void> deleteNote(Note note) async {
     _notesSaveTimer?.cancel();
     notes.removeWhere((n) => n.id == note.id);
+
+    final tombstone = note.copyWith(
+      isDeleted: true,
+      updatedAt: DateTime.now(),
+    );
+    deletedNotes.removeWhere((n) => n.id == note.id);
+    deletedNotes.add(tombstone);
+    await _saveDeletedNotes();
 
     if (notes.isEmpty) {
       activeNote = null;
@@ -4005,6 +4241,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     await _saveNotes();
     notifyListeners();
+    _triggerD1LiveAutoSync();
   }
 
   Future<void> deleteActiveNote() async {
@@ -4036,6 +4273,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _notesSaveTimer?.cancel();
       _notesSaveTimer = Timer(const Duration(milliseconds: 800), () async {
         await _saveNotes();
+        _triggerD1LiveAutoSync();
       });
     }
   }
@@ -4056,6 +4294,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       await _saveNotes();
       notifyListeners();
+      _triggerD1LiveAutoSync();
     }
   }
 

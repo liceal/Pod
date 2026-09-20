@@ -54,15 +54,27 @@ class ClipboardItem {
   }
 
   factory ClipboardItem.fromJson(Map<String, dynamic> json) {
+    final timeStr = json['timestamp'] as String? ?? json['updated_at'] as String?;
+    final ts = timeStr != null ? (DateTime.tryParse(timeStr) ?? DateTime.now()) : DateTime.now();
+
+    bool fav = false;
+    if (json['isFavorite'] is bool) {
+      fav = json['isFavorite'] as bool;
+    } else if (json['isPinned'] is bool) {
+      fav = json['isPinned'] as bool;
+    } else if (json['is_favorite'] != null) {
+      fav = (json['is_favorite'] == 1 || json['is_favorite'] == true || json['is_favorite'] == '1');
+    }
+
     return ClipboardItem(
       id: json['id'] as String,
-      content: json['content'] as String,
-      timestamp: DateTime.parse(json['timestamp'] as String),
-      isFavorite: json['isPinned'] as bool? ?? json['isFavorite'] as bool? ?? false,
-      appName: json['appName'] as String?,
-      appIconPath: json['appIconPath'] as String?,
-      imagePath: json['imagePath'] as String?,
-      imageSignature: json['imageSignature'] as String?,
+      content: json['content'] as String? ?? '',
+      timestamp: ts,
+      isFavorite: fav,
+      appName: json['appName'] as String? ?? json['app_name'] as String?,
+      appIconPath: json['appIconPath'] as String? ?? json['app_icon_path'] as String?,
+      imagePath: json['imagePath'] as String? ?? json['image_path'] as String?,
+      imageSignature: json['imageSignature'] as String? ?? json['image_signature'] as String?,
     );
   }
 }
