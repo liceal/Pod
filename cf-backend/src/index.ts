@@ -185,7 +185,15 @@ async function handlePushSync(request: Request, env: Env): Promise<Response> {
            version = excluded.version,
            is_deleted = excluded.is_deleted
          WHERE excluded.updated_at >= notes.updated_at`
-      ).bind(n.id, n.title, n.content, n.createdAt || n.created_at, n.updatedAt || n.updated_at, n.version || 1, n.isDeleted ? 1 : 0)
+      ).bind(
+        n.id,
+        n.title,
+        n.content,
+        n.createdAt || n.created_at,
+        n.updatedAt || n.updated_at,
+        n.version || 1,
+        (n.is_deleted === 1 || n.is_deleted === true || n.is_deleted === '1' || n.isDeleted === 1 || n.isDeleted === true) ? 1 : 0
+      )
     );
   }
 
@@ -211,14 +219,14 @@ async function handlePushSync(request: Request, env: Env): Promise<Response> {
         c.id,
         c.content,
         c.timestamp,
-        c.isFavorite || c.is_favorite ? 1 : 0,
+        (c.is_favorite === 1 || c.is_favorite === true || c.isFavorite === 1 || c.isFavorite === true || c.isPinned === 1 || c.isPinned === true) ? 1 : 0,
         c.appName || c.app_name || null,
         c.appIconPath || c.app_icon_path || null,
         c.imagePath || c.image_path || null,
         c.imageSignature || c.image_signature || null,
         c.updatedAt || c.updated_at || new Date().toISOString(),
         c.version || 1,
-        c.isDeleted ? 1 : 0
+        (c.is_deleted === 1 || c.is_deleted === true || c.is_deleted === '1' || c.isDeleted === 1 || c.isDeleted === true) ? 1 : 0
       )
     );
   }
