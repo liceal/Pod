@@ -85,6 +85,8 @@ class UpdateService {
         final json = jsonDecode(content) as Map<String, dynamic>;
         final latestVersion = json['version'] as String? ?? '1.0.0';
         final releaseNotes = json['releaseNotes'] as String? ?? '';
+        final winUrl = json['windowsUrl'] as String? ?? 'PodQuick_Setup.exe';
+        final macUrl = json['macUrl'] as String? ?? 'PodQuick.dmg';
 
         if (_isHigherVersion(latestVersion, currentVersion)) {
           return AppVersionInfo(
@@ -93,14 +95,14 @@ class UpdateService {
             releaseNotes: releaseNotes.isNotEmpty
                 ? releaseNotes
                 : '修复已知问题与性能优化。',
-            windowsUrl: 'PodQuick.exe',
-            macUrl: 'PodQuick.dmg',
+            windowsUrl: winUrl.isNotEmpty ? winUrl : 'PodQuick_Setup.exe',
+            macUrl: macUrl.isNotEmpty ? macUrl : 'PodQuick.dmg',
           );
         }
       }
 
-      // 如果未找到 release_info.json，通过 HEAD 请求进行时间戳比对
-      final remoteFile = Platform.isWindows ? 'PodQuick.exe' : 'PodQuick.dmg';
+      // 如果未找到 release_info.json，通过 HEAD 请求比对 PodQuick_Setup.exe 编译时间
+      final remoteFile = Platform.isWindows ? 'PodQuick_Setup.exe' : 'PodQuick.dmg';
       final remoteInfo = await _syncService.getObjectInfo(remoteFile);
 
       if (remoteInfo != null) {
@@ -114,10 +116,10 @@ class UpdateService {
           final dateStr = DateFormat('yyyy-MM-dd HH:mm').format(remoteInfo.lastModified.toLocal());
           final sizeMB = (remoteInfo.size / (1024 * 1024)).toStringAsFixed(1);
           return AppVersionInfo(
-            version: '云端最新构建 ($dateStr)',
+            version: '云端最新安装包 ($dateStr)',
             buildNumber: remoteInfo.lastModified.millisecondsSinceEpoch,
-            releaseNotes: '检测到线上发布了最新的单文件构建版本！\n• 发布时间: $dateStr\n• 文件大小: $sizeMB MB',
-            windowsUrl: 'PodQuick.exe',
+            releaseNotes: '检测到线上发布了最新版本的标准安装包！\n• 发布时间: $dateStr\n• 文件大小: $sizeMB MB',
+            windowsUrl: 'PodQuick_Setup.exe',
             macUrl: 'PodQuick.dmg',
           );
         }
@@ -142,7 +144,7 @@ class UpdateService {
     return false;
   }
 
-  /// 后台持续独立下载任务（即使窗口隐藏/收起/销毁，下载依然静默稳定进行）
+  /// 后台持续独立下载任务（市面上成熟安装包静默更新方案）
   static Future<void> startBackgroundDownload(AppVersionInfo info) async {
     if (isDownloading) return;
 
@@ -150,7 +152,7 @@ class UpdateService {
     downloadProgress = 0.0;
     hasError = false;
     pendingUpdateInfo = info;
-    downloadStatusText = '正在准备下载...';
+    downloadStatusText = '正在准备下载安装包...';
     _notify();
 
     try {
@@ -167,16 +169,19 @@ class UpdateService {
         return;
       }
 
-      // Windows 自动流式下载更新
+      // Windows 静默下载标准安装包 (PodQuick_Setup.exe) 并进行软件主流覆盖升级
       final tempDir = await getTemporaryDirectory();
-      final targetFile = File('${tempDir.path}\\PodQuick_New_Setup.exe');
-      if (await targetFile.exists()) await targetFile.delete();
+      final remoteFileName = (info.windowsUrl.isNotEmpty) ? info.windowsUrl : 'PodQuick_Setup.exe';
+      final targetFile = File('${tempDir.path}\\PodQuick_Setup.exe');
+      if (await targetFile.exists()) {
+        try { await targetFile.delete(); } catch (_) {}
+      }
 
-      downloadStatusText = '正在从云端下载 PodQuick.exe...';
+      downloadStatusText = '正在从云端下载安装包 ($remoteFileName)...';
       _notify();
 
       final ok = await _syncService.downloadFile(
-        'PodQuick.exe',
+        remoteFileName,
         targetFile,
         onProgress: (downloaded, total) {
           if (total > 0) {
@@ -184,7 +189,7 @@ class UpdateService {
             final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
             final totalMB = (total / (1024 * 1024)).toStringAsFixed(1);
             final percent = (downloadProgress * 100).toInt();
-            downloadStatusText = '正在下载: $currentMB MB / $totalMB MB ($percent%)';
+            downloadStatusText = '正在下载安装包: $currentMB MB / $totalMB MB ($percent%)';
           } else {
             final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
             downloadStatusText = '已下载: $currentMB MB';
@@ -194,59 +199,28 @@ class UpdateService {
       );
 
       if (!ok || !await targetFile.exists()) {
-        throw Exception('下载失败，请检查网络连接');
+        throw Exception('安装包下载失败，请检查网络连接');
       }
 
       downloadProgress = 1.0;
-      downloadStatusText = '更新下载完成，正在平滑重启应用...';
+      downloadStatusText = '安装包下载完成，正在启动升级程序...';
       _notify();
 
-      // 大厂级原位置无感平滑升级 (In-Place Outer Launcher & Payload Update)
+      // 市面上成熟安装包覆盖升级方案 (Inno Setup / Standard Windows Installer)
       if (Platform.isWindows) {
-        final outerLauncherPath = Platform.environment['PODQUICK_LAUNCHER_PATH'];
-        final currentExePath = (outerLauncherPath != null && File(outerLauncherPath).existsSync())
-            ? outerLauncherPath
-            : Platform.resolvedExecutable;
-
-        final currentExe = File(currentExePath);
-        final oldExePath = '$currentExePath.old';
-        final oldExe = File(oldExePath);
-
-        // 1. 若存在残留的 .old 文件先进行清除
-        if (await oldExe.exists()) {
-          try { await oldExe.delete(); } catch (_) {}
-        }
-
-        // 2. 将用户双击运行的真正外部桌面/目录 PodQuick.exe 重命名为 .old
-        await currentExe.rename(oldExePath);
-
-        // 3. 将新下载的最新 PodQuick.exe 放置到原本的用户物理文件位置
-        await targetFile.copy(currentExePath);
-        try { await targetFile.delete(); } catch (_) {}
-
-        // 4. 清理旧的版本标记，确保新启动器重新释放最新的 1.0.2 payload
-        try {
-          final tempAppDir = File(Platform.resolvedExecutable).parent;
-          final versionMarkerFile = File('${tempAppDir.path}\\launcher.version');
-          if (await versionMarkerFile.exists()) {
-            await versionMarkerFile.delete();
-          }
-        } catch (_) {}
-
-        // 5. 后台 2.5 秒后拉起原位置的新版 PodQuick.exe，并静默清理 .old 临时文件
-        final cleanCurrentPath = currentExePath.replaceAll('/', '\\');
-        final cleanOldPath = oldExePath.replaceAll('/', '\\');
-        final psCommand = "Start-Sleep -Seconds 2.5; Remove-Item '$cleanOldPath' -ErrorAction SilentlyContinue; Start-Process '$cleanCurrentPath'";
-
+        final cleanPath = targetFile.path.replaceAll('/', '\\');
+        // 拉起安装包 (使用 /SILENT /SP- 参数，静默提取安装并覆盖新版本，安装完成后自动重新拉起应用)
         await Process.start(
-          'powershell.exe',
-          ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', psCommand],
+          cleanPath,
+          ['/SILENT', '/SP-'],
           mode: ProcessStartMode.detached,
         );
+        // 退出当前运行的项目，释放文件独占锁
+        exit(0);
       } else {
         await Process.start(targetFile.path, [], mode: ProcessStartMode.detached);
+        exit(0);
       }
-      exit(0);
     } catch (e) {
       isDownloading = false;
       hasError = true;
