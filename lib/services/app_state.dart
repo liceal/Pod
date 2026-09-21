@@ -3809,9 +3809,43 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
+  Future<void> recordDeletedFile(String entityPath) async {
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final filesDir = '$dataDir/files';
+      final normFilesDir = filesDir.replaceAll('\\', '/');
+      final normEntity = entityPath.replaceAll('\\', '/');
+
+      String relKey = normEntity;
+      if (normEntity.startsWith(normFilesDir)) {
+        relKey = normEntity.substring(normFilesDir.length);
+      }
+      if (relKey.startsWith('/')) relKey = relKey.substring(1);
+      if (relKey.isEmpty || relKey.startsWith('.') || relKey.contains('/.')) return;
+
+      final fullKey = 'files/$relKey';
+
+      final deletedFile = File('$dataDir/deleted_files.json');
+      final Set<String> deletedKeys = {};
+      if (await deletedFile.exists()) {
+        try {
+          final content = await deletedFile.readAsString();
+          final list = jsonDecode(content) as List;
+          deletedKeys.addAll(list.cast<String>());
+        } catch (_) {}
+      }
+      deletedKeys.add(fullKey);
+      await deletedFile.writeAsString(jsonEncode(deletedKeys.toList()));
+    } catch (e) {
+      debugPrint('Failed to record deleted file: $e');
+    }
+  }
+
   Future<void> deleteFile(FileSystemEntity entity) async {
     try {
       if (entity.existsSync()) {
+        await recordDeletedFile(entity.path);
+
         final root = await _getFilesDirectoryPath();
         final name = entity.uri.pathSegments.lastWhere((s) => s.isNotEmpty, orElse: () => 'deleted');
 

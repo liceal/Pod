@@ -447,6 +447,48 @@ class R2SyncService {
     return false;
   }
 
+  /// Delete file from Cloudflare R2 (and Worker DB metadata)
+  Future<bool> deleteFile(String remoteKey) async {
+    final cleanKey = remoteKey.startsWith('/') ? remoteKey.substring(1) : remoteKey;
+
+    // 1. Try deleting via Cloudflare Worker DELETE endpoint
+    const defaultWorkerUrl = 'https://your-subdomain.workers.dev';
+    try {
+      final uri = Uri.parse('$defaultWorkerUrl/api/v1/files/${Uri.encodeComponent(cleanKey)}');
+      final response = await http.delete(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) return true;
+    } catch (e) {
+      debugPrint('⚠️ [R2Sync] Worker file delete failed, falling back to direct S3 API: $e');
+    }
+
+    // 2. Direct R2 S3 DELETE API fallback
+    final rawPath = '/${bucketName.trim()}/$cleanKey';
+    final canonicalPath = _encodePath(rawPath);
+
+    final headers = _buildHeaders(
+      method: 'DELETE',
+      path: canonicalPath,
+      payloadBytes: const [],
+      contentType: 'application/octet-stream',
+    );
+
+    try {
+      final client = http.Client();
+      try {
+        final uri = Uri.parse('$_baseUrl$canonicalPath');
+        final response = await client.delete(uri, headers: headers).timeout(
+          const Duration(seconds: 15),
+        );
+        return response.statusCode == 200 || response.statusCode == 204;
+      } finally {
+        client.close();
+      }
+    } catch (e) {
+      debugPrint('❌ [R2Sync] Delete R2 file error: $e');
+      return false;
+    }
+  }
+
   /// Perform incremental bidirectional sync of dataDirectory
   Future<R2SyncResult> syncAllData({
     required String dataDirectoryPath,
@@ -456,6 +498,17 @@ class R2SyncService {
       final dir = Directory(dataDirectoryPath);
       if (!await dir.exists()) {
         return R2SyncResult(success: false, message: '本地数据目录不存在: $dataDirectoryPath');
+      }
+
+      // 读取本地已删除文件墓碑表 (deleted_files.json)
+      final deletedFile = File('$dataDirectoryPath/deleted_files.json');
+      final Set<String> deletedKeys = {};
+      if (await deletedFile.exists()) {
+        try {
+          final content = await deletedFile.readAsString();
+          final list = jsonDecode(content) as List;
+          deletedKeys.addAll(list.cast<String>());
+        } catch (_) {}
       }
 
       onProgress?.call('正在连接 R2 获取云端文件列表...', 0, 0);
@@ -494,8 +547,16 @@ class R2SyncService {
       }
 
       final toDownload = <R2ObjectInfo>[];
+      final toDeleteRemote = <R2ObjectInfo>[];
+
       for (final remoteObj in remoteObjects) {
         final relKey = remoteObj.key;
+        if (deletedKeys.contains(relKey)) {
+          // 本地已被用户手动删除 -> 加入云端物理注销队列！
+          toDeleteRemote.add(remoteObj);
+          continue;
+        }
+
         final localFile = localMap[relKey];
         if (localFile == null) {
           toDownload.add(remoteObj);
@@ -508,7 +569,7 @@ class R2SyncService {
         }
       }
 
-      final totalTasks = toUpload.length + toDownload.length;
+      final totalTasks = toUpload.length + toDownload.length + toDeleteRemote.length;
       if (totalTasks == 0) {
         onProgress?.call('本地与云端已是最新状态', 0, 0);
         return R2SyncResult(
@@ -522,6 +583,31 @@ class R2SyncService {
       int syncCount = 0;
       int failCount = 0;
 
+      // 1. 处理云端删除注销
+      for (final remoteObj in toDeleteRemote) {
+        processed++;
+        onProgress?.call('正在同步销毁云端文件 ($processed/$totalTasks): ${remoteObj.key}', processed, totalTasks);
+        try {
+          final ok = await deleteFile(remoteObj.key);
+          if (ok) {
+            syncCount++;
+            deletedKeys.remove(remoteObj.key);
+          } else {
+            failCount++;
+          }
+        } catch (_) {
+          failCount++;
+        }
+      }
+
+      // 保存清洗后的 deleted_files.json 墓碑记录
+      try {
+        if (await deletedFile.exists()) {
+          await deletedFile.writeAsString(jsonEncode(deletedKeys.toList()));
+        }
+      } catch (_) {}
+
+      // 2. 上传本地变更
       for (final entry in toUpload.entries) {
         processed++;
         onProgress?.call('正在上传 ($processed/$totalTasks): ${entry.key}', processed, totalTasks);
@@ -537,6 +623,7 @@ class R2SyncService {
         }
       }
 
+      // 3. 下载云端最新
       for (final remoteObj in toDownload) {
         processed++;
         onProgress?.call('正在下载 ($processed/$totalTasks): ${remoteObj.key}', processed, totalTasks);

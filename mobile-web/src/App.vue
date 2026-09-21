@@ -1,40 +1,42 @@
 <template>
   <div class="app-layout">
-    <!-- Top Header Bar -->
+    <!-- Top Header Bar (with Safe Area support) -->
     <header class="app-header">
-      <div class="header-brand">
-        <div class="brand-badge">
-          <Icons name="cloud" size="18" />
+      <div class="header-inner">
+        <div class="header-brand">
+          <div class="brand-badge">
+            <Icons name="cloud" size="18" />
+          </div>
+          <div class="brand-text">
+            <span class="brand-title">PodQuick</span>
+            <span class="brand-tag">Cloud D1 · R2</span>
+          </div>
         </div>
-        <div class="brand-text">
-          <span class="brand-title">PodQuick</span>
-          <span class="brand-tag">Cloud D1 · R2</span>
+
+        <div class="header-actions">
+          <!-- Quick Theme Toggle Button (Sun / Moon / Warm) -->
+          <button
+            class="icon-action-btn"
+            :title="'当前外观: ' + (activeTheme === 'dark' ? '深色' : activeTheme === 'light' ? '亮色' : '暖色') + '，点击快速切换'"
+            @click="handleQuickThemeToggle"
+          >
+            <Icons v-if="activeTheme === 'dark'" name="moon" size="16" />
+            <Icons v-else-if="activeTheme === 'light'" name="sun" size="16" />
+            <Icons v-else name="warm" size="16" />
+          </button>
+
+          <!-- Sync Indicator / Trigger -->
+          <button
+            class="sync-btn"
+            :disabled="isSyncing"
+            @click="performSync(false)"
+            title="点击同步最新数据"
+          >
+            <Icons name="refresh" size="15" :class="{ rotating: isSyncing }" />
+            <span v-if="isSyncing" class="sync-status-text">同步中</span>
+            <span v-else class="sync-status-text">同步</span>
+          </button>
         </div>
-      </div>
-
-      <div class="header-actions">
-        <!-- Quick Theme Toggle Button (Sun / Moon / Warm) -->
-        <button
-          class="icon-action-btn"
-          :title="'当前外观: ' + (activeTheme === 'dark' ? '深色' : activeTheme === 'light' ? '亮色' : '暖色') + '，点击快速切换'"
-          @click="handleQuickThemeToggle"
-        >
-          <Icons v-if="activeTheme === 'dark'" name="moon" size="16" />
-          <Icons v-else-if="activeTheme === 'light'" name="sun" size="16" />
-          <Icons v-else name="warm" size="16" />
-        </button>
-
-        <!-- Sync Indicator / Trigger -->
-        <button
-          class="sync-btn"
-          :disabled="isSyncing"
-          @click="performSync(false)"
-          title="点击同步最新数据"
-        >
-          <Icons name="refresh" size="15" :class="{ rotating: isSyncing }" />
-          <span v-if="isSyncing" class="sync-status-text">同步中</span>
-          <span v-else class="sync-status-text">同步</span>
-        </button>
       </div>
     </header>
 
@@ -262,12 +264,7 @@ onMounted(async () => {
 
 /* Header */
 .app-header {
-  height: 56px;
-  padding: 0 16px;
-  padding-top: env(safe-area-inset-top);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  padding-top: env(safe-area-inset-top, 0px);
   border-bottom: 1px solid var(--border-color);
   background-color: var(--nav-bg);
   backdrop-filter: blur(20px);
@@ -276,6 +273,14 @@ onMounted(async () => {
   z-index: 50;
   flex-shrink: 0;
   transition: background-color 0.25s ease, border-color 0.25s ease;
+}
+
+.header-inner {
+  height: 52px;
+  padding: 0 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .header-brand {
@@ -369,6 +374,7 @@ onMounted(async () => {
 /* Main Area */
 .app-main {
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -376,22 +382,26 @@ onMounted(async () => {
   background-color: var(--bg-primary);
 }
 
-/* Bottom Navigation Bar */
+/* Bottom Navigation Bar (iOS / Android Safe Area adapted) */
 .bottom-nav {
-  height: calc(56px + env(safe-area-inset-bottom));
-  padding-bottom: env(safe-area-inset-bottom);
+  height: calc(56px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   display: grid;
   grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: 56px;
+  align-items: center;
   background-color: var(--nav-bg);
   backdrop-filter: blur(20px);
   -webkit-backdrop-filter: blur(20px);
   border-top: 1px solid var(--border-color);
   flex-shrink: 0;
+  box-sizing: border-box;
   z-index: 50;
   transition: background-color 0.25s ease, border-color 0.25s ease;
 }
 
 .nav-item {
+  height: 56px;
   display: flex;
   flex-direction: column;
   align-items: center;

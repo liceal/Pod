@@ -56,6 +56,9 @@ export default {
       } else if (path.startsWith('/api/v1/files/') && method === 'GET') {
         const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
         response = await handleFileGet(fileKey, env);
+      } else if (path.startsWith('/api/v1/files/') && method === 'DELETE') {
+        const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
+        response = await handleFileDelete(fileKey, env);
       } else if (path === '/api/v1/pin' && method === 'GET') {
         response = await handlePinGet(env);
       } else if (path === '/api/v1/pin/verify' && method === 'POST') {
@@ -353,10 +356,22 @@ async function handleFileGet(fileKey: string, env: Env): Promise<Response> {
   return new Response(object.body, { headers });
 }
 
-// 获取文件元数据列表 (用于客户端快速差异比对，跳过无变动文件)
-async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
+// 删除文件 (R2 + D1 物理销毁)
+async function handleFileDelete(fileKey: string, env: Env): Promise<Response> {
+  if (!env.FILES_BUCKET) {
+    return new Response(JSON.stringify({ error: 'R2 Bucket is not configured' }), { status: 500 });
+  }
+
+  const t0 = performance.now();
+  // 1. 从 R2 真正删除文件
   try {
-    // 确保表存在
+    await env.FILES_BUCKET.delete(fileKey);
+  } catch (err) {
+    console.error(`Failed to delete fileKey "${fileKey}" from R2:`, err);
+  }
+
+  // 2. 从 D1 数据库删除元数据记录
+  try {
     await env.DB.prepare(
       `CREATE TABLE IF NOT EXISTS file_metadata (
          file_key TEXT PRIMARY KEY,
@@ -369,10 +384,83 @@ async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
        );`
     ).run();
 
+    await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(fileKey).run();
+  } catch (dbErr) {
+    console.error(`Failed to delete fileKey "${fileKey}" from D1:`, dbErr);
+  }
+
+  const durationMs = (performance.now() - t0).toFixed(2);
+  return new Response(
+    JSON.stringify({
+      success: true,
+      fileKey,
+      message: 'File successfully deleted from R2 and D1',
+      metrics: { deleteMs: durationMs },
+    }),
+    { headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+function getMimeType(fileName: string): string {
+  const lower = fileName.toLowerCase();
+  if (lower.endsWith('.png')) return 'image/png';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'image/jpeg';
+  if (lower.endsWith('.gif')) return 'image/gif';
+  if (lower.endsWith('.webp')) return 'image/webp';
+  if (lower.endsWith('.pdf')) return 'application/pdf';
+  if (lower.endsWith('.txt') || lower.endsWith('.md')) return 'text/plain; charset=utf-8';
+  if (lower.endsWith('.json')) return 'application/json';
+  return 'application/octet-stream';
+}
+
+// 获取文件元数据列表 (以 R2 真实文件为准，确保已被销毁的文件不会残留给移动端)
+async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
+  try {
     const scope = url?.searchParams?.get('scope');
+
+    if (env.FILES_BUCKET) {
+      const prefix = scope === 'files' ? 'files/' : '';
+      const listRes = await env.FILES_BUCKET.list({ prefix });
+
+      const files = listRes.objects
+        .filter((obj) => {
+          const key = obj.key;
+          if (scope === 'files') {
+            if (key.includes('/.') || key.startsWith('files/.')) return false;
+          }
+          return true;
+        })
+        .map((obj) => {
+          const fileName = obj.key.split('/').pop() || obj.key;
+          return {
+            file_key: obj.key,
+            file_name: fileName,
+            file_size: obj.size,
+            mime_type: getMimeType(fileName),
+            updated_at: obj.uploaded ? obj.uploaded.toISOString() : new Date().toISOString(),
+          };
+        });
+
+      return new Response(JSON.stringify({ success: true, files }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    // 回退至 D1 查询
+    await env.DB.prepare(
+      `CREATE TABLE IF NOT EXISTS file_metadata (
+         file_key TEXT PRIMARY KEY,
+         file_name TEXT NOT NULL,
+         file_size INTEGER NOT NULL,
+         mime_type TEXT,
+         r2_key TEXT NOT NULL,
+         created_at TEXT NOT NULL,
+         updated_at TEXT NOT NULL
+       );`
+    ).run();
+
     let query = 'SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata';
     if (scope === 'files') {
-      // 仅获取 PC 端文件管理目录 files/ 下且非隐藏/回收站的文件
       query += " WHERE file_key LIKE 'files/%' AND file_key NOT LIKE 'files/.%' AND file_key NOT LIKE '%/.%'";
     }
     const metaRes = await env.DB.prepare(query).all();

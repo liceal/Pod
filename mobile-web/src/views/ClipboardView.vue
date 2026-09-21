@@ -365,7 +365,7 @@ const copyContent = async (item: ClipboardItem) => {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 14px 16px;
+  padding: 14px 16px 40px;
 }
 
 .items-list {

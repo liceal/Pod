@@ -35,6 +35,11 @@ function applyTheme(mode: ThemeMode) {
       };
       metaThemeColor.setAttribute('content', colorMap[resolved] || '#090d16');
     }
+
+    const metaStatusBarStyle = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+    if (metaStatusBarStyle) {
+      metaStatusBarStyle.setAttribute('content', resolved === 'dark' ? 'black' : 'default');
+    }
   }
 }
 

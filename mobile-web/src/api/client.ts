@@ -335,6 +335,38 @@ export class ApiClient {
     }
   }
 
+  // Delete File (R2 + D1)
+  public static async deleteFile(fileKey: string): Promise<{ success: boolean; error?: string }> {
+    const base = this.getBaseUrl();
+    const encodedKey = encodeURIComponent(fileKey);
+    try {
+      const res = await fetch(`${base}/api/v1/files/${encodedKey}`, {
+        method: 'DELETE',
+        headers: {
+          'x-requested-with-web': 'true',
+          'x-pin-token': this.getPinToken(),
+        },
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (res.status === 401) {
+        this.handleAuthFailure();
+        throw new Error('PIN_EXPIRED');
+      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      
+      // Update local cache
+      const files = this.getCachedFiles().filter((f) => f.file_key !== fileKey);
+      this.setCachedFiles(files);
+      
+      return { success: !!json.success };
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
+  }
+
   // Fetch Files Metadata
   public static async fetchFiles(): Promise<{ files: FileMetadata[]; error?: string }> {
     const base = this.getBaseUrl();

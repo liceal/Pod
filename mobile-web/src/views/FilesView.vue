@@ -866,7 +866,7 @@ const openLightbox = (file: FileMetadata) => {
   flex: 1;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 12px 16px;
+  padding: 12px 16px 40px;
 }
 
 .section-label {
