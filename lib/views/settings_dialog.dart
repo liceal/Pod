@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
-import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/app_settings.dart';
 import '../services/app_state.dart';
@@ -58,20 +57,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   late String _dataDirectory;
 
-  // Cloudflare R2 State
-  late bool _r2Enabled;
-  late TextEditingController _r2AccountIdController;
-  late TextEditingController _r2AccessKeyIdController;
-  late TextEditingController _r2SecretAccessKeyController;
-  late TextEditingController _r2BucketNameController;
-  late TextEditingController _r2CustomEndpointController;
-  late bool _r2AutoSync;
-  late int _r2SyncIntervalMinutes;
-  bool _obscureSecretKey = true;
-  bool _isTestingR2 = false;
-  String? _r2TestMessage;
-  bool? _r2TestSuccess;
-
   // Cloudflare D1 + Worker / REST API State
   late int _cfD1Mode;
   late TextEditingController _cfD1WorkerUrlController;
@@ -96,7 +81,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     super.initState();
     widget.state.addListener(_onAppStateChanged);
     _settingsTab = _savedSettingsTab;
-    _dataSubTab = _savedDataSubTab;
+    _dataSubTab = _savedDataSubTab.clamp(0, 1);
     _triggerMode = widget.state.settings.triggerMode;
     _hotkey = widget.state.settings.hotkey;
     _isDarkTheme = widget.state.settings.isDarkTheme;
@@ -115,21 +100,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _dataDirectory = widget.state.getDataDirectoryPathSync();
 
     final s = widget.state.settings;
-    _r2Enabled = s.r2Enabled;
-    _r2AccountIdController = TextEditingController(text: s.r2AccountId ?? '');
-    _r2AccessKeyIdController = TextEditingController(
-      text: s.r2AccessKeyId ?? '',
-    );
-    _r2SecretAccessKeyController = TextEditingController(
-      text: s.r2SecretAccessKey ?? '',
-    );
-    _r2BucketNameController = TextEditingController(text: s.r2BucketName ?? '');
-    _r2CustomEndpointController = TextEditingController(
-      text: s.r2CustomEndpoint ?? '',
-    );
-    _r2AutoSync = s.r2AutoSync;
-    _r2SyncIntervalMinutes = s.r2SyncIntervalMinutes;
-
     _cfD1Mode = s.cfD1Mode;
     _cfD1WorkerUrlController = TextEditingController(text: s.cfWorkerUrl);
     _cfAccountIdController = TextEditingController(text: s.cfAccountId ?? '');
@@ -185,11 +155,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void dispose() {
     widget.state.removeListener(_onAppStateChanged);
-    _r2AccountIdController.dispose();
-    _r2AccessKeyIdController.dispose();
-    _r2SecretAccessKeyController.dispose();
-    _r2BucketNameController.dispose();
-    _r2CustomEndpointController.dispose();
     _cfD1WorkerUrlController.dispose();
     _cfAccountIdController.dispose();
     _cfApiTokenController.dispose();
@@ -496,14 +461,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
       clipboardHistoryLimit: _clipboardHistoryLimit,
       panelOrder: _panelOrder,
       languageCode: _languageCode,
-      r2Enabled: _r2Enabled,
-      r2AccountId: _r2AccountIdController.text.trim(),
-      r2AccessKeyId: _r2AccessKeyIdController.text.trim(),
-      r2SecretAccessKey: _r2SecretAccessKeyController.text.trim(),
-      r2BucketName: _r2BucketNameController.text.trim(),
-      r2CustomEndpoint: _r2CustomEndpointController.text.trim(),
-      r2AutoSync: _r2AutoSync,
-      r2SyncIntervalMinutes: _r2SyncIntervalMinutes,
+      r2Enabled: false,
+      r2AccountId: widget.state.settings.r2AccountId,
+      r2AccessKeyId: widget.state.settings.r2AccessKeyId,
+      r2SecretAccessKey: widget.state.settings.r2SecretAccessKey,
+      r2BucketName: widget.state.settings.r2BucketName,
+      r2CustomEndpoint: widget.state.settings.r2CustomEndpoint,
+      r2AutoSync: false,
+      r2SyncIntervalMinutes: widget.state.settings.r2SyncIntervalMinutes,
       r2LastSyncTime: widget.state.settings.r2LastSyncTime,
       cfWorkerUrl: _cfD1WorkerUrlController.text.trim(),
       cfD1Mode: _cfD1Mode,
@@ -2104,7 +2069,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           ],
                         ),
                       ),
-                    ] else if (_dataSubTab == 1) ...[
+                    ] else ...[
                       // 2. Cloudflare D1 + R2 Sync
                       Container(
                         padding: const EdgeInsets.all(12),
@@ -2119,29 +2084,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           accentColor,
                           textColor,
                           subColor,
-                          useTwoColumns || isWide,
-                        ),
-                      ),
-                    ] else ...[
-                      // 3. R2 Direct Sync
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: _isDarkTheme
-                              ? Colors.white.withValues(alpha: 0.02)
-                              : Colors.black.withValues(alpha: 0.02),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: _isDarkTheme
-                                ? Colors.white.withValues(alpha: 0.08)
-                                : Colors.black.withValues(alpha: 0.08),
-                          ),
-                        ),
-                        child: _buildR2SyncSection(
-                          accentColor,
-                          textColor,
-                          subColor,
-                          dropdownBg,
                           useTwoColumns || isWide,
                         ),
                       ),
@@ -2251,52 +2193,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
     Color accentColor,
     Color textColor,
   ) {
-    final isNarrow = width < 480;
-    if (isNarrow) {
-      return Container(
-        margin: const EdgeInsets.only(bottom: 12),
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: _isDarkTheme
-              ? Colors.white.withValues(alpha: 0.05)
-              : Colors.black.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Column(
-          children: [
-            Row(
-              children: [
-                _buildSubTabButton(
-                  0,
-                  _text('1. 本地存储', '1. Local Storage'),
-                  accentColor,
-                  textColor,
-                ),
-                const SizedBox(width: 4),
-                _buildSubTabButton(
-                  1,
-                  _text('2. D1+R2 云同步', '2. D1+R2 Sync'),
-                  accentColor,
-                  textColor,
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                _buildSubTabButton(
-                  2,
-                  _text('3. R2 直连备份 (S3)', '3. R2 Direct Sync'),
-                  accentColor,
-                  textColor,
-                ),
-              ],
-            ),
-          ],
-        ),
-      );
-    }
-
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       height: 32,
@@ -2315,15 +2211,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
             accentColor,
             textColor,
           ),
+          const SizedBox(width: 4),
           _buildSubTabButton(
             1,
-            _text('2. D1+R2 云同步 (推荐)', '2. D1+R2 API Sync'),
-            accentColor,
-            textColor,
-          ),
-          _buildSubTabButton(
-            2,
-            _text('3. R2 直连备份 (S3)', '3. R2 Direct Sync'),
+            _text('2. D1+R2 云同步', '2. D1+R2 Cloud Sync'),
             accentColor,
             textColor,
           ),
@@ -2408,7 +2299,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final field4 = _buildParamFieldWithLink(
       label: _text('4. R2 存储桶名称 (R2 Bucket Name - 可选)', '4. R2 Bucket Name (Optional)'),
       controller: _cfR2BucketNameController,
-      hint: _text('如: pod-quick-files (留空则不同步大文件/图片)', 'e.g. pod-quick-files'),
+      hint: _text('如: pod-quick-files-apac (留空则不同步大文件/图片)', 'e.g. pod-quick-files-apac'),
       linkText: _text('🔗 前往复制 R2 存储桶', '🔗 Open R2 Dashboard'),
       linkUrl: 'https://dash.cloudflare.com/?to=/:account/r2',
       tooltip: _text('Cloudflare R2 存储桶名称，用于跨设备同步图片和大文件', 'R2 bucket name used to sync files and images'),
@@ -2432,16 +2323,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final deployR2Field = _buildParamFieldWithLink(
       label: _text('R2 存储桶名称 (可选)', 'R2 Bucket Name (Optional)'),
       controller: _cfR2BucketNameController,
-      hint: _text('默认: pod-quick-files (若已有可填桶名)', 'Default: pod-quick-files'),
+      hint: _text('默认: pod-quick-files-apac (若已有可填桶名)', 'Default: pod-quick-files-apac'),
       linkText: _text('🔗 打开 R2 控制台', '🔗 Open R2 Dashboard'),
       linkUrl: 'https://dash.cloudflare.com/?to=/:account/r2',
-      tooltip: _text('可填写您已有 R2 存储桶的名字；留空则自动创建 pod-quick-files', 'Fill existing R2 bucket name, or leave blank to auto-create'),
+      tooltip: _text('可填写您已有 R2 存储桶的名字；留空则自动创建 pod-quick-files-apac', 'Fill existing R2 bucket name, or leave blank to auto-create'),
       textColor: textColor,
       subColor: subColor,
       accentColor: accentColor,
     );
 
-    final deployWorkerNameField = _buildR2TextField(
+    final deployWorkerNameField = _buildCustomTextField(
       label: _text('Worker 脚本服务名称 (可选)', 'Worker Script Name (Optional)'),
       controller: _cfWorkerNameController,
       hint: 'pod-quick-backend',
@@ -2822,7 +2713,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
                   if (_workerSubTab == 0) ...[
                     // 方案 1: 手动填入已有 URL
-                    _buildR2TextField(
+                    _buildCustomTextField(
                       label: _text('Cloudflare Worker 边缘节点 URL', 'Cloudflare Worker URL'),
                       controller: _cfD1WorkerUrlController,
                       hint: 'https://pod-quick-backend.your-subdomain.workers.dev',
@@ -2995,7 +2886,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                           const SizedBox(height: 4),
                           Text(
                             _text(
-                              '💡 资源复用提示：若您在 Cloudflare 上已经创建了 D1 数据库或 R2 存储桶，可直接在下方填入它们的名字或 ID，系统会自动检测并直接绑定，不会重复创建！若留空，系统将自动以默认名 (pod-quick-d1 / pod-quick-files) 全新创建。',
+                              '💡 资源复用提示：若您在 Cloudflare 上已经创建了 D1 数据库或 R2 存储桶，可直接在下方填入它们的名字或 ID，系统会自动检测并直接绑定，不会重复创建！若留空，系统将自动以默认名 (pod-quick-d1 / pod-quick-files-apac) 全新创建。',
                               'Tip: If you already have a D1 database or R2 bucket in Cloudflare, enter their names below to bind them directly without re-creating. Leave blank to auto-create defaults.',
                             ),
                             style: TextStyle(fontSize: 9.5, color: subColor, height: 1.35),
@@ -3056,7 +2947,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                         : 'pod-quick-d1';
                                     final bucketName = _cfR2BucketNameController.text.trim().isNotEmpty
                                         ? _cfR2BucketNameController.text.trim()
-                                        : 'pod-quick-files';
+                                        : 'pod-quick-files-apac';
                                     final workerName = _cfWorkerNameController.text.trim().isNotEmpty
                                         ? _cfWorkerNameController.text.trim()
                                         : 'pod-quick-backend';
@@ -3579,472 +3470,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     );
   }
 
-  Widget _buildR2SyncSection(
-    Color accentColor,
-    Color textColor,
-    Color subColor,
-    Color dropdownBg,
-    bool isWide,
-  ) {
-    final lastSyncTime = widget.state.settings.r2LastSyncTime;
-    String lastSyncStr = _text('从未同步', 'Never');
-    if (lastSyncTime != null && lastSyncTime > 0) {
-      final dt = DateTime.fromMillisecondsSinceEpoch(lastSyncTime);
-      lastSyncStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
-    }
-
-    final fieldAccountId = _buildR2TextField(
-      label: _text('账户 ID (Account ID)', 'Account ID'),
-      controller: _r2AccountIdController,
-      hint: '如: 8a5b2c3d...',
-      textColor: textColor,
-      subColor: subColor,
-      accentColor: accentColor,
-    );
-
-    final fieldAccessKey = _buildR2TextField(
-      label: _text('Access Key ID', 'Access Key ID'),
-      controller: _r2AccessKeyIdController,
-      hint: 'Access Key ID',
-      textColor: textColor,
-      subColor: subColor,
-      accentColor: accentColor,
-    );
-
-    final fieldSecretKey = _buildR2TextField(
-      label: _text('Secret Access Key', 'Secret Access Key'),
-      controller: _r2SecretAccessKeyController,
-      hint: 'Secret Key',
-      obscureText: _obscureSecretKey,
-      textColor: textColor,
-      subColor: subColor,
-      accentColor: accentColor,
-      suffixIcon: IconButton(
-        icon: Icon(
-          _obscureSecretKey ? Icons.visibility_off : Icons.visibility,
-          size: 14,
-          color: subColor,
-        ),
-        onPressed: () =>
-            setState(() => _obscureSecretKey = !_obscureSecretKey),
-      ),
-    );
-
-    final fieldBucket = _buildR2TextField(
-      label: _text('存储桶名称 (Bucket Name)', 'Bucket Name'),
-      controller: _r2BucketNameController,
-      hint: '如: podquick-data',
-      textColor: textColor,
-      subColor: subColor,
-      accentColor: accentColor,
-    );
-
-    final fieldEndpoint = _buildR2TextField(
-      label: _text('自定义 Endpoint (可选)', 'Custom Endpoint (Optional)'),
-      controller: _r2CustomEndpointController,
-      hint: '留空使用默认 *.r2.cloudflarestorage.com',
-      textColor: textColor,
-      subColor: subColor,
-      accentColor: accentColor,
-    );
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Expanded(
-              child: Row(
-                children: [
-                  Icon(Icons.key_rounded, size: 16, color: accentColor),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: _sectionTitle(
-                      _text(
-                        'Cloudflare R2 直连存储桶同步',
-                        'Cloudflare R2 Direct Sync',
-                      ),
-                      subColor,
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 6),
-            InkWell(
-              onTap: () async {
-                final accountId = _r2AccountIdController.text.trim().isNotEmpty
-                    ? _r2AccountIdController.text.trim()
-                    : _cfAccountIdController.text.trim();
-                final bucket = _r2BucketNameController.text.trim();
-                String url = 'https://dash.cloudflare.com/';
-                if (accountId.isNotEmpty && bucket.isNotEmpty) {
-                  url = 'https://dash.cloudflare.com/$accountId/r2/default/buckets/$bucket';
-                } else if (accountId.isNotEmpty) {
-                  url = 'https://dash.cloudflare.com/$accountId/r2/overview';
-                }
-                final uri = Uri.parse(url);
-                if (await canLaunchUrl(uri)) {
-                  await launchUrl(uri, mode: LaunchMode.externalApplication);
-                }
-              },
-              borderRadius: BorderRadius.circular(4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: accentColor.withValues(alpha: 0.35)),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.open_in_new_rounded, size: 12, color: accentColor),
-                    const SizedBox(width: 4),
-                    Text(
-                      _text('线上 R2 控制台 ↗', 'Online R2 Console ↗'),
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                        color: accentColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Switch(
-              value: _r2Enabled,
-              activeColor: accentColor,
-              onChanged: (val) => setState(() => _r2Enabled = val),
-            ),
-          ],
-        ),
-        if (_r2Enabled) ...[
-          const SizedBox(height: 8),
-          if (isWide) ...[
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: fieldAccountId),
-                const SizedBox(width: 12),
-                Expanded(child: fieldAccessKey),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(child: fieldSecretKey),
-                const SizedBox(width: 12),
-                Expanded(child: fieldBucket),
-              ],
-            ),
-            const SizedBox(height: 8),
-            fieldEndpoint,
-          ] else ...[
-            fieldAccountId,
-            const SizedBox(height: 8),
-            fieldAccessKey,
-            const SizedBox(height: 8),
-            fieldSecretKey,
-            const SizedBox(height: 8),
-            fieldBucket,
-            const SizedBox(height: 8),
-            fieldEndpoint,
-          ],
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                _text('后台定时自动同步', 'Background Auto Sync'),
-                style: TextStyle(fontSize: 11, color: textColor),
-              ),
-              Switch(
-                value: _r2AutoSync,
-                activeColor: accentColor,
-                onChanged: (val) => setState(() => _r2AutoSync = val),
-              ),
-            ],
-          ),
-          if (_r2AutoSync) ...[
-            const SizedBox(height: 6),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text(
-                  _text('自动同步时间间隔', 'Auto Sync Interval'),
-                  style: TextStyle(fontSize: 11, color: subColor),
-                ),
-                DropdownButton<int>(
-                  value: _r2SyncIntervalMinutes,
-                  dropdownColor: dropdownBg,
-                  style: TextStyle(fontSize: 11, color: textColor),
-                  underline: const SizedBox(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      setState(() => _r2SyncIntervalMinutes = val);
-                    }
-                  },
-                  items: [1, 5, 15, 30, 60].map((mins) {
-                    return DropdownMenuItem<int>(
-                      value: mins,
-                      child: Text(_text('$mins 分钟', '$mins mins')),
-                    );
-                  }).toList(),
-                ),
-              ],
-            ),
-          ],
-          const SizedBox(height: 10),
-          ListenableBuilder(
-            listenable: widget.state,
-            builder: (context, _) {
-              final isSyncing = widget.state.isR2Syncing;
-              final statusMsg = widget.state.r2SyncStatusMessage;
-              final progress = widget.state.r2SyncProgress;
-              final logs = widget.state.r2SyncLogs;
-
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  if (isSyncing) ...[
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(3),
-                      child: LinearProgressIndicator(
-                        value: progress > 0 ? progress : null,
-                        backgroundColor: subColor.withValues(alpha: 0.15),
-                        color: accentColor,
-                        minHeight: 4,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      statusMsg ?? _text('正在同步中...', 'Syncing...'),
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: accentColor,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                  if (_r2TestMessage != null && !isSyncing) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: (_r2TestSuccess == true)
-                            ? Colors.green.withValues(alpha: 0.12)
-                            : Colors.red.withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(
-                          color: (_r2TestSuccess == true)
-                              ? Colors.green.withValues(alpha: 0.4)
-                              : Colors.red.withValues(alpha: 0.4),
-                        ),
-                      ),
-                      child: Row(
-                        children: [
-                          Icon(
-                            (_r2TestSuccess == true)
-                                ? Icons.check_circle_outline
-                                : Icons.error_outline,
-                            size: 14,
-                            color: (_r2TestSuccess == true)
-                                ? Colors.green
-                                : Colors.red,
-                          ),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              _r2TestMessage!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: (_r2TestSuccess == true)
-                                    ? Colors.green
-                                    : Colors.red,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                  if (logs.isNotEmpty) ...[
-                    const SizedBox(height: 8),
-                    Container(
-                      constraints: const BoxConstraints(maxHeight: 110),
-                      padding: const EdgeInsets.all(8),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.25),
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: subColor.withValues(alpha: 0.2)),
-                      ),
-                      child: SingleChildScrollView(
-                        reverse: true,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: logs.map((log) {
-                            return Text(
-                              log,
-                              style: const TextStyle(
-                                fontSize: 9.5,
-                                fontFamily: 'monospace',
-                                color: Colors.white70,
-                                height: 1.35,
-                              ),
-                            );
-                          }).toList(),
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              );
-            },
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _isTestingR2
-                      ? null
-                      : () async {
-                          setState(() {
-                            _isTestingR2 = true;
-                            _r2TestMessage = null;
-                            _r2TestSuccess = null;
-                          });
-                          final tempSettings = AppSettings(
-                            r2Enabled: true,
-                            r2AccountId: _r2AccountIdController.text.trim(),
-                            r2AccessKeyId: _r2AccessKeyIdController.text.trim(),
-                            r2SecretAccessKey: _r2SecretAccessKeyController.text
-                                .trim(),
-                            r2BucketName: _r2BucketNameController.text.trim(),
-                            r2CustomEndpoint: _r2CustomEndpointController.text
-                                .trim(),
-                          );
-                          final res = await widget.state.testR2Connection(
-                            tempSettings,
-                          );
-                          if (mounted) {
-                            setState(() {
-                              _isTestingR2 = false;
-                              _r2TestSuccess = res.success;
-                              _r2TestMessage = res.message;
-                            });
-                          }
-                        },
-                  icon: _isTestingR2
-                      ? const SizedBox(
-                          width: 12,
-                          height: 12,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.wifi_tethering_rounded, size: 14),
-                  label: Text(
-                    _text('测试连接', 'Test Connection'),
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: accentColor,
-                    padding: const EdgeInsets.symmetric(vertical: 6),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: widget.state,
-                  builder: (context, _) {
-                    final isSyncing = widget.state.isR2Syncing;
-                    return ElevatedButton.icon(
-                      onPressed: isSyncing
-                          ? null
-                          : () async {
-                              setState(() {
-                                _r2TestMessage = _text(
-                                  '正在与 Cloudflare R2 进行同步...',
-                                  'Syncing with Cloudflare R2...',
-                                );
-                                _r2TestSuccess = true;
-                              });
-                              final tempSettings = widget.state.settings
-                                  .copyWith(
-                                    r2Enabled: true,
-                                    r2AccountId: _r2AccountIdController.text
-                                        .trim(),
-                                    r2AccessKeyId: _r2AccessKeyIdController.text
-                                        .trim(),
-                                    r2SecretAccessKey:
-                                        _r2SecretAccessKeyController.text
-                                            .trim(),
-                                    r2BucketName: _r2BucketNameController.text
-                                        .trim(),
-                                    r2CustomEndpoint:
-                                        _r2CustomEndpointController.text.trim(),
-                                    r2AutoSync: _r2AutoSync,
-                                    r2SyncIntervalMinutes:
-                                        _r2SyncIntervalMinutes,
-                                  );
-                              await widget.state.updateSettings(tempSettings);
-                              final res = await widget.state.syncWithR2(
-                                isManual: true,
-                              );
-                              if (mounted) {
-                                setState(() {
-                                  _r2TestSuccess = res.success;
-                                  _r2TestMessage = res.message;
-                                });
-                              }
-                            },
-                      icon: isSyncing
-                          ? const SizedBox(
-                              width: 12,
-                              height: 12,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : const Icon(Icons.sync, size: 14),
-                      label: Text(
-                        _text('立即同步', 'Sync Now'),
-                        style: const TextStyle(fontSize: 11),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: accentColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            _text('上次同步时间: $lastSyncStr', 'Last Synced: $lastSyncStr'),
-            style: TextStyle(fontSize: 10, color: subColor),
-          ),
-        ],
-      ],
-    );
-  }
-
-  Widget _buildR2TextField({
+  Widget _buildCustomTextField({
     required String label,
     required TextEditingController controller,
     required String hint,

@@ -1,50 +1,52 @@
 <template>
-  <div v-if="visible" class="pin-overlay">
-    <div class="pin-card" :class="{ shake: isShaking }">
-      <div class="pin-icon-wrap">
-        <Icons name="lock" size="32" />
-      </div>
-      <h2 class="pin-title">{{ title || '输入安全 PIN 码' }}</h2>
-      <p class="pin-sub">{{ subtitle || '请输入 6 位安全密码以解锁访问' }}</p>
+  <Teleport to="body">
+    <div v-if="visible" class="pin-overlay">
+      <div class="pin-card" :class="{ shake: isShaking }">
+        <div class="pin-icon-wrap">
+          <Icons name="lock" size="32" />
+        </div>
+        <h2 class="pin-title">{{ title || '输入安全 PIN 码' }}</h2>
+        <p class="pin-sub">{{ subtitle || '请输入 6 位安全密码以解锁访问' }}</p>
 
-      <!-- Pin Dots (Fixed 6 digits) -->
-      <div class="pin-dots">
-        <div
-          v-for="i in 6"
-          :key="i"
-          class="pin-dot"
-          :class="{ active: enteredPin.length >= i }"
-        />
-      </div>
+        <!-- Pin Dots (Fixed 6 digits) -->
+        <div class="pin-dots">
+          <div
+            v-for="i in 6"
+            :key="i"
+            class="pin-dot"
+            :class="{ active: enteredPin.length >= i }"
+          />
+        </div>
 
-      <!-- Error / Loading hint -->
-      <p class="pin-status-text" :class="{ 'is-error': !!errorMessage, 'is-loading': verifying }">
-        {{ verifying ? '正在校验密码...' : (errorMessage || ' ') }}
-      </p>
+        <!-- Error / Loading hint -->
+        <p class="pin-status-text" :class="{ 'is-error': !!errorMessage, 'is-loading': verifying }">
+          {{ verifying ? '正在校验密码...' : (errorMessage || ' ') }}
+        </p>
 
-      <!-- Numeric Keypad (Standard 3x4 Layout) -->
-      <div class="keypad">
-        <button
-          v-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]"
-          :key="num"
-          class="key-btn"
-          :disabled="verifying"
-          @click="pressNum(num.toString())"
-        >
-          {{ num }}
-        </button>
-        <div class="key-btn empty-btn"></div>
-        <button class="key-btn" :disabled="verifying" @click="pressNum('0')">0</button>
-        <button class="key-btn action-btn" :disabled="verifying" @click="deleteNum" title="删除">
-          <Icons name="close" size="22" />
-        </button>
-      </div>
+        <!-- Numeric Keypad (Standard 3x4 Layout) -->
+        <div class="keypad">
+          <button
+            v-for="num in [1, 2, 3, 4, 5, 6, 7, 8, 9]"
+            :key="num"
+            class="key-btn"
+            :disabled="verifying"
+            @click="pressNum(num.toString())"
+          >
+            {{ num }}
+          </button>
+          <div class="key-btn empty-btn"></div>
+          <button class="key-btn" :disabled="verifying" @click="pressNum('0')">0</button>
+          <button class="key-btn action-btn" :disabled="verifying" @click="deleteNum" title="删除">
+            <Icons name="close" size="22" />
+          </button>
+        </div>
 
-      <div v-if="allowClose" class="pin-footer">
-        <button class="btn btn-ghost" @click="emit('close')">取消</button>
+        <div v-if="allowClose" class="pin-footer">
+          <button class="btn btn-ghost" @click="emit('close')">取消</button>
+        </div>
       </div>
     </div>
-  </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">

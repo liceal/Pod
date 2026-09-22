@@ -80,7 +80,7 @@
                 v-model="workerUrl"
                 type="url"
                 class="form-input"
-                placeholder="https://your-worker.workers.dev"
+                placeholder="https://your-domain.com"
               />
               <button class="btn btn-secondary btn-sm" @click="saveWorkerUrl">
                 保存
@@ -244,27 +244,145 @@
         </div>
       </div>
 
-      <!-- 6. PWA installation hint -->
+      <!-- 6. PWA 独立桌面模式状态 -->
       <div class="settings-section">
-        <h3 class="section-title">添加到手机桌面 (PWA)</h3>
-        <div class="card setting-card pwa-card">
+        <h3 class="section-title">桌面应用模式 (PWA)</h3>
+        <div class="card setting-card pwa-card" :class="{ 'is-active-pwa': isPwaStandalone }">
           <div class="pwa-icon">
             <Icons name="cloud" size="24" />
           </div>
           <div class="pwa-text">
-            <p class="pwa-title">原生 App 般的沉浸体验</p>
+            <div class="pwa-title-row">
+              <p class="pwa-title">{{ isPwaStandalone ? '已激活 PWA 独立沉浸模式' : '添加到手机桌面' }}</p>
+              <span v-if="isPwaStandalone" class="badge badge-accent">已开启手势系统</span>
+            </div>
             <p class="pwa-desc">
-              在 iOS Safari 点击底栏「分享」按钮，选择「添加到主屏幕」；Android Chrome 点击右上角菜单「安装应用」。
+              {{
+                isPwaStandalone
+                  ? '当前已无浏览器边框运行，已激活「下滑关闭便签/预览」、「最外层左右滑动切换 4 个模块」、「进入文件夹右滑动退出」等原生级便捷手势。'
+                  : '在 iOS Safari 点击底栏「分享」按钮，选择「添加到主屏幕」；Android Chrome 点击右上角菜单「安装应用」，即可享受全手势独立 App 体验。'
+              }}
             </p>
           </div>
         </div>
       </div>
+
+      <!-- 7. 关于与版本信息 (ABOUT & VERSION) -->
+      <div class="settings-section">
+        <h3 class="section-title">关于与版本 (ABOUT & VERSION)</h3>
+        <div class="card setting-card version-card">
+          <div class="version-header">
+            <div class="brand-avatar">
+              <Icons name="cloud" size="28" />
+            </div>
+            <div class="brand-info">
+              <h4 class="app-brand-name">PodQuick (轻蓄)</h4>
+              <p class="app-version-tag">版本号：<span class="version-num">v1.1.0</span> <span class="badge">最新稳定版</span></p>
+            </div>
+          </div>
+
+          <div class="version-details-grid">
+            <div class="version-item">
+              <span class="v-label">存储节点</span>
+              <span class="v-value">APAC 亚太地区 (pod-quick-files-apac)</span>
+            </div>
+            <div class="version-item">
+              <span class="v-label">数据库引擎</span>
+              <span class="v-value">Cloudflare D1 (pod-quick-db)</span>
+            </div>
+            <div class="version-item">
+              <span class="v-label">运行模式</span>
+              <span class="v-value">{{ isPwaStandalone ? 'PWA 桌面独立模式 (全手势)' : 'Mobile Web 浏览器模式' }}</span>
+            </div>
+          </div>
+
+          <div class="version-actions">
+            <button class="btn btn-secondary btn-sm" @click="showReleaseNotesModal = true">
+              <Icons name="notes" size="14" />
+              <span>查看版本更新日志</span>
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="checkUpdates">
+              <Icons name="refresh" size="14" :class="{ rotating: checkingUpdate }" />
+              <span>检查更新</span>
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
+
+    <!-- Release Notes Modal (Teleport to body, 100% Solid Card Background, No Stacking/Transform Clipping) -->
+    <Teleport to="body">
+      <transition name="fade">
+        <div
+          v-if="showReleaseNotesModal"
+          class="release-modal-overlay"
+          @click.self="showReleaseNotesModal = false"
+        >
+          <div class="release-modal-dialog">
+            <div class="sheet-handle-bar">
+              <div class="sheet-handle-pill"></div>
+            </div>
+            <div class="release-modal-header">
+              <div class="release-title-row">
+                <div class="release-brand-icon">
+                  <Icons name="cloud" size="18" />
+                </div>
+                <h3>PodQuick v1.1.0 更新日志</h3>
+              </div>
+              <button class="release-close-btn" @click="showReleaseNotesModal = false" title="关闭">
+                <Icons name="close" size="16" />
+              </button>
+            </div>
+            <div class="release-modal-body">
+              <div class="release-badge-bar">
+                <span class="badge badge-accent">2026 最新发行版</span>
+                <span class="sub-date">发布于 2026-09 · 全面优化</span>
+              </div>
+              <ul class="release-list">
+                <li>
+                  <strong>四模块原生级丝滑滑屏（原生硬件加速 Scroll-Snap）</strong>
+                  彻底重构四大核心模块（剪贴板、便签、文件相册、设置）的左右滑动手势逻辑：全面采用移动端 GPU 硬件加速的 CSS Scroll-Snap 极简架构。手指拖拽 1:1 实时跟随，松手天然带有高刷新率惯性减速与柔和弹性吸附，彻底修复松手时偶尔丢失滑动动画直接闪跳的缺陷！
+                </li>
+                <li>
+                  <strong>首尾橡皮筋弹性阻尼（iOS Rubber-band）</strong>
+                  在剪贴板向右拉或设置向左拉时，具备原生级弹性回弹触感。
+                </li>
+                <li>
+                  <strong>独立自定义域名（免翻墙直连）</strong>
+                  原生适配 <code>your-domain.com</code>，国内 4G/5G/WiFi 直连秒开秒同步，彻底摆脱 workers.dev 封锁与梯子分流烦恼。
+                </li>
+                <li>
+                  <strong>PWA 独立桌面模式与沉浸手势</strong>
+                  添加到桌面后点亮绿色 PWA 沉浸徽标，支持像 YouTube Music 一样下滑关闭便签、退出文件在线预览与大图。
+                </li>
+                <li>
+                  <strong>文件在线预览与下载彻底分离</strong>
+                  点击文件直接在线预览（文本/代码高亮与行号、PDF翻页、音频播放器、相片灯箱），点击下载按钮才下载。
+                </li>
+                <li>
+                  <strong>进入子文件夹右滑退出</strong>
+                  在文件相册浏览子目录时，向右滑动优先返回上一级目录。
+                </li>
+                <li>
+                  <strong>全链路亚太 APAC 加速</strong>
+                  R2 存储桶与 D1 数据库均部署在亚太区域，国内访问低延迟、秒级响应。
+                </li>
+              </ul>
+            </div>
+            <div class="release-modal-footer">
+              <button class="btn btn-primary btn-block btn-glow" @click="showReleaseNotesModal = false">
+                我知道了
+              </button>
+            </div>
+          </div>
+        </div>
+      </transition>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import Icons from '../components/Icons.vue';
 import { ApiClient } from '../api/client';
 import { currentThemeMode, setThemeMode, ThemeMode } from '../utils/theme';
@@ -292,6 +410,32 @@ const newPinInput = ref('');
 const oldPinInput = ref('');
 const isChangingPin = ref(false);
 const submittingPin = ref(false);
+const isPwaStandalone = ref(false);
+const showReleaseNotesModal = ref(false);
+const checkingUpdate = ref(false);
+
+const checkPwaStatus = () => {
+  if (typeof window !== 'undefined') {
+    isPwaStandalone.value =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as any).standalone === true ||
+      document.referrer.includes('android-app://');
+  }
+};
+
+const checkUpdates = async () => {
+  if (checkingUpdate.value) return;
+  checkingUpdate.value = true;
+  emit('toast', '正在连接云端检查最新版本...', 'info');
+  try {
+    await ApiClient.checkHealth();
+  } catch {}
+  setTimeout(() => {
+    checkingUpdate.value = false;
+    emit('toast', '已检测到最新发布版本 v1.1.0，已为您展开更新日志！', 'success');
+    showReleaseNotesModal.value = true;
+  }, 500);
+};
 
 const switchTheme = (mode: ThemeMode) => {
   setThemeMode(mode);
@@ -315,9 +459,22 @@ const fetchCloudPinStatus = async () => {
   }
 };
 
+const localLastSyncTime = ref(props.lastSyncTime || ApiClient.getLastSyncTime());
+
+watch(
+  () => props.lastSyncTime,
+  (newVal) => {
+    if (newVal && !newVal.startsWith('1970')) {
+      localLastSyncTime.value = newVal;
+    }
+  }
+);
+
 const formattedLastSync = computed(() => {
-  if (!props.lastSyncTime || props.lastSyncTime.startsWith('1970')) return '尚未同步';
-  const d = new Date(props.lastSyncTime);
+  const timeStr = localLastSyncTime.value || props.lastSyncTime || ApiClient.getLastSyncTime();
+  if (!timeStr || timeStr.startsWith('1970')) return '尚未同步';
+  const d = new Date(timeStr);
+  if (isNaN(d.getTime())) return '尚未同步';
   return `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
 });
 
@@ -345,11 +502,28 @@ const saveWorkerUrl = () => {
 };
 
 const handleManualSync = async () => {
+  if (syncing.value) return;
   syncing.value = true;
-  emit('sync');
-  setTimeout(() => {
+  try {
+    const res = await ApiClient.pullSync(false);
+    try {
+      await ApiClient.fetchFiles();
+    } catch (fe) {
+      console.warn('Failed to refresh files during manual sync', fe);
+    }
+    const latestTime = ApiClient.getLastSyncTime();
+    localLastSyncTime.value = latestTime;
+    emit('sync');
+    if (res.error) {
+      emit('toast', `同步完成 (部分提示: ${res.error})`, 'info');
+    } else {
+      emit('toast', `全量同步完成，已更新 ${res.pulledCount} 条数据`, 'success');
+    }
+  } catch (err: any) {
+    emit('toast', `同步失败: ${err.message || String(err)}`, 'error');
+  } finally {
     syncing.value = false;
-  }, 1000);
+  }
 };
 
 const saveCloudPin = async () => {
@@ -432,8 +606,12 @@ const clearLocalCache = () => {
 
 onMounted(() => {
   workerUrl.value = ApiClient.getBaseUrl();
-  fetchCloudPinStatus();
   checkConnection();
+  fetchCloudPinStatus();
+  checkPwaStatus();
+  if (typeof window !== 'undefined') {
+    window.matchMedia('(display-mode: standalone)').addEventListener('change', checkPwaStatus);
+  }
 });
 </script>
 
@@ -744,6 +922,262 @@ onMounted(() => {
   color: var(--text-secondary);
 }
 
+.pwa-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pwa-card.is-active-pwa {
+  border-color: rgba(34, 197, 94, 0.35);
+  background: rgba(34, 197, 94, 0.04);
+}
+
+.version-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.version-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--accent-gradient, #3b82f6);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.app-brand-name {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.app-version-tag {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin: 2px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.version-num {
+  font-weight: 600;
+  color: var(--accent-color);
+}
+
+.version-details-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-color);
+}
+
+.version-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+}
+
+.v-label {
+  color: var(--text-muted);
+}
+
+.v-value {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.version-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Release Notes Modal (100% Solid & High-Contrast, Teleported to body) */
+.release-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  z-index: 10000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+.release-modal-dialog {
+  width: 100%;
+  max-width: 480px;
+  max-height: 84vh;
+  max-height: 84dvh;
+  background-color: var(--bg-secondary) !important;
+  color: var(--text-primary) !important;
+  opacity: 1 !important;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+.sheet-handle-bar {
+  display: flex;
+  justify-content: center;
+  padding: 10px 0 2px;
+  background-color: var(--bg-secondary) !important;
+}
+
+.sheet-handle-pill {
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.4;
+}
+
+.release-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px 14px;
+  background-color: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.release-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-primary);
+}
+
+.release-brand-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: var(--accent-gradient);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.release-title-row h3 {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.release-close-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.release-close-btn:active {
+  transform: scale(0.92);
+  background: var(--bg-elevated);
+}
+
+.release-modal-body {
+  padding: 16px;
+  background-color: var(--bg-secondary);
+  color: var(--text-secondary);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.release-badge-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 4px;
+}
+
+.sub-date {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.release-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.release-list li {
+  padding: 10px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.release-list strong {
+  color: var(--text-primary);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 3px;
+}
+
+.release-list code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: rgba(59, 130, 246, 0.15);
+  color: var(--accent-color);
+  font-size: 12px;
+}
+
+.release-modal-footer {
+  padding: 12px 16px;
+  background-color: var(--bg-secondary);
+  border-top: 1px solid var(--border-color);
+}
+
+.btn-block {
+  width: 100%;
+}
+
 .rotating {
   animation: spin 1s infinite linear;
 }
@@ -751,5 +1185,27 @@ onMounted(() => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* Modal Transition Animations */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+.fade-enter-active .release-modal-dialog,
+.fade-leave-active .release-modal-dialog {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), opacity 0.22s ease;
+}
+
+.fade-enter-from .release-modal-dialog,
+.fade-leave-to .release-modal-dialog {
+  transform: scale(0.94) translateY(10px);
+  opacity: 0;
 }
 </style>

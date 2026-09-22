@@ -501,8 +501,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     await windowManager.setMinimumSize(const Size(1, 1));
     await applyWindowTriggerConfiguration(isStartup: true);
 
-    // Schedule R2 Auto Sync if configured
-    _scheduleR2AutoSync();
+    // Schedule D1+R2 Auto Sync if configured
     _scheduleCfD1AutoSync();
   }
 
@@ -824,7 +823,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     final Map<String, ClipboardItem> clipMap = {};
     for (final item in clipboardHistory) clipMap[item.id] = item;
-    for (final item in clipboardFavorites) clipMap[item.id] = item;
+    for (final item in clipboardFavorites) clipMap[item.id] = item.copyWith(isFavorite: true);
     final allClipboards = clipMap.values.toList();
 
     addD1Log(text(
@@ -965,19 +964,23 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       int skippedIdenticalCount = 0;
       int newlyUploadedCount = 0;
+      int newlyDownloadedCount = 0;
+      int deletedRemoteCount = 0;
 
       if (bucketName != null && bucketName.isNotEmpty) {
-        addD1Log(text('📁 正在准备同步本地文件/图片至 Cloudflare R2 存储桶 ($bucketName)...', 'Syncing files to R2 bucket ($bucketName)...'));
+        addD1Log(text('📁 正在准备双向同步文件与图片 (Cloudflare R2 存储桶: $bucketName)...', 'Syncing files & images (R2 bucket: $bucketName)...'));
 
         try {
           final dataDir = Directory(getDataDirectoryPathSync());
+          final customFilesPath = settings.customFilesPath?.trim();
+
           // 扫描应用实际存放图片和文件的目录
           final scanDirs = <Directory>[
             Directory('${dataDir.path}${Platform.pathSeparator}clipboard_images'),
             Directory('${dataDir.path}${Platform.pathSeparator}files'),
             Directory('${dataDir.path}${Platform.pathSeparator}images'),
-            if (settings.customFilesPath != null && settings.customFilesPath!.trim().isNotEmpty)
-              Directory(settings.customFilesPath!.trim()),
+            if (customFilesPath != null && customFilesPath.isNotEmpty)
+              Directory(customFilesPath),
           ];
 
           final allLocalFiles = <File>[];
@@ -992,185 +995,329 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             }
           }
 
-          if (allLocalFiles.isEmpty) {
-            addD1Log(text('ℹ️ 本地暂无需要同步的图片或文件附件 (clipboard_images/files 均为空)', 'No local files to sync.'));
-          } else {
-            addD1Log(text('🔍 扫描到 ${allLocalFiles.length} 个本地文件，正在查询 D1 云端数据库比对差异...', 'Scanning ${allLocalFiles.length} local files, querying D1 metadata for diff...'));
+          // 读取本地已删除文件墓碑表 (deleted_files.json)
+          final deletedFile = File('${dataDir.path}${Platform.pathSeparator}deleted_files.json');
+          final Set<String> deletedKeys = {};
+          if (deletedFile.existsSync()) {
+            try {
+              final content = deletedFile.readAsStringSync();
+              final list = jsonDecode(content) as List;
+              deletedKeys.addAll(list.cast<String>());
+            } catch (_) {}
+          }
 
-            // 1. 获取 D1 云端文件元数据记录 (file_metadata 表)
-            Map<String, Map<String, dynamic>> cloudMetadata = {};
-            if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
-              final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
-              cloudMetadata = await service.fetchRemoteFilesMetadata();
-              // 如果 Worker 返回空，且用户配置了 REST API 凭据，尝试从 REST API 直连拉取以双重保障
-              if (cloudMetadata.isEmpty &&
-                  settings.cfAccountId?.trim().isNotEmpty == true &&
-                  settings.cfApiToken?.trim().isNotEmpty == true &&
-                  settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
-                cloudMetadata = await CfD1SyncService.fetchRemoteFilesMetadataRestApi(
-                  accountId: settings.cfAccountId!,
-                  apiToken: settings.cfApiToken!,
-                  d1DatabaseId: settings.cfD1DatabaseId!,
-                );
-              }
-            } else if (settings.cfAccountId?.trim().isNotEmpty == true &&
-                       settings.cfApiToken?.trim().isNotEmpty == true &&
-                       settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
+          addD1Log(text('🔍 扫描到 ${allLocalFiles.length} 个本地文件，正在查询云端文件元数据比对差异...', 'Scanning ${allLocalFiles.length} local files, querying cloud metadata...'));
+
+          // 1. 获取云端文件元数据记录 (file_metadata 表 / R2 List)
+          Map<String, Map<String, dynamic>> cloudMetadata = {};
+          CfD1SyncService? workerService;
+          if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
+            workerService = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
+            cloudMetadata = await workerService.fetchRemoteFilesMetadata();
+            if (cloudMetadata.isEmpty &&
+                settings.cfAccountId?.trim().isNotEmpty == true &&
+                settings.cfApiToken?.trim().isNotEmpty == true &&
+                settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
               cloudMetadata = await CfD1SyncService.fetchRemoteFilesMetadataRestApi(
                 accountId: settings.cfAccountId!,
                 apiToken: settings.cfApiToken!,
                 d1DatabaseId: settings.cfD1DatabaseId!,
               );
             }
+          } else if (settings.cfAccountId?.trim().isNotEmpty == true &&
+                     settings.cfApiToken?.trim().isNotEmpty == true &&
+                     settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
+            cloudMetadata = await CfD1SyncService.fetchRemoteFilesMetadataRestApi(
+              accountId: settings.cfAccountId!,
+              apiToken: settings.cfApiToken!,
+              d1DatabaseId: settings.cfD1DatabaseId!,
+            );
+          }
 
-            if (cloudMetadata.isNotEmpty) {
-              addD1Log(text(
-                'ℹ️ 成功拉取到 ${cloudMetadata.length} 条云端文件元数据记录进行比对',
-                'Retrieved ${cloudMetadata.length} cloud file records for diff check',
-              ));
-            } else {
-              addD1Log(text(
-                'ℹ️ 云端暂无文件元数据记录，本次将执行全量上传并初始化建立文件索引',
-                'No cloud file records found, uploading all files and initializing index',
-              ));
+          final r2Service = _createR2SyncService();
+
+          // 辅助函数：根据 relativeKey 计算本地目标完整路径
+          File resolveLocalTarget(String relKey) {
+            if (relKey.startsWith('files/')) {
+              final sub = relKey.substring('files/'.length);
+              if (customFilesPath != null && customFilesPath.isNotEmpty) {
+                return File('$customFilesPath/$sub');
+              }
+              return File('${dataDir.path}/files/$sub');
+            }
+            return File('${dataDir.path}/$relKey');
+          }
+
+          // 辅助函数：根据本地 File 计算云端 relativeKey
+          String computeRelativeKey(File file) {
+            final normPath = file.path.replaceAll('\\', '/');
+            final normDataDir = dataDir.path.replaceAll('\\', '/');
+            final normCustom = customFilesPath?.replaceAll('\\', '/');
+            if (normCustom != null && normCustom.isNotEmpty && normPath.startsWith(normCustom)) {
+              var sub = normPath.substring(normCustom.length);
+              if (sub.startsWith('/')) sub = sub.substring(1);
+              return 'files/$sub';
+            }
+            if (normPath.startsWith(normDataDir)) {
+              var sub = normPath.substring(normDataDir.length);
+              if (sub.startsWith('/')) sub = sub.substring(1);
+              return sub;
+            }
+            return file.path.split(Platform.pathSeparator).last;
+          }
+
+          // 建立本地文件映射 Map<relativeKey, File>
+          final Map<String, File> localMap = {};
+          for (final f in allLocalFiles) {
+            final k = computeRelativeKey(f);
+            localMap[k] = f;
+          }
+
+          // 2. 差异比对：
+          // A. 找出云端需要物理删除的文件 (toDeleteRemote)
+          final toDeleteRemote = <String>[];
+          for (final delKey in deletedKeys) {
+            if (cloudMetadata.containsKey(delKey)) {
+              toDeleteRemote.add(delKey);
+            }
+          }
+
+          // B. 找出需要从云端下载的文件 (toDownload)
+          final toDownload = <Map<String, dynamic>>[];
+          for (final entry in cloudMetadata.entries) {
+            final remoteKey = entry.key;
+            final remoteInfo = entry.value;
+
+            // 如果本地已手动删除此文件，跳过下载
+            if (deletedKeys.contains(remoteKey)) continue;
+            // 忽略隐藏文件与临时文件
+            if (remoteKey.contains('/.') || remoteKey.startsWith('.')) continue;
+
+            // 严格白名单：只同步用户文件管理(files/)或剪贴板图片(clipboard_images/)
+            if (!remoteKey.startsWith('files/') && !remoteKey.startsWith('clipboard_images/')) {
+              continue;
             }
 
-            // 2. 差异性对比：只挑选新增文件或已修改的文件（文件大小变化或修改时间更新）
-            final filesToUpload = <File>[];
+            // 坚决排除安装包、执行文件与更新发布信息，防止误下载到用户数据目录
+            final lowerKey = remoteKey.toLowerCase();
+            if (lowerKey.endsWith('.exe') ||
+                lowerKey.endsWith('.dmg') ||
+                lowerKey.endsWith('.pkg') ||
+                lowerKey.endsWith('.setup') ||
+                lowerKey.endsWith('.iss') ||
+                lowerKey.endsWith('.msi') ||
+                remoteKey == 'release_info.json') {
+              continue;
+            }
 
-            for (final file in allLocalFiles) {
-              final relativePath = file.path
-                  .replaceFirst('${dataDir.path}${Platform.pathSeparator}', '')
-                  .replaceAll('\\', '/');
+            final localFile = localMap[remoteKey];
+            if (localFile == null || !localFile.existsSync()) {
+              toDownload.add(remoteInfo);
+            } else {
+              final stat = localFile.statSync();
+              final localMTime = stat.modified;
+              final localSize = stat.size;
+              final remoteSize = (remoteInfo['file_size'] as num?)?.toInt() ?? -1;
+              final remoteUpdatedStr = remoteInfo['updated_at'] as String?;
+              DateTime? remoteUpdated;
+              if (remoteUpdatedStr != null) {
+                remoteUpdated = DateTime.tryParse(remoteUpdatedStr);
+              }
 
+              // 云端时间晚于本地修改时间 > 2s 且大小不一致 -> 云端有较新版本，下载更新
+              if (remoteUpdated != null &&
+                  remoteUpdated.isAfter(localMTime.add(const Duration(seconds: 2))) &&
+                  remoteSize != localSize) {
+                toDownload.add(remoteInfo);
+              }
+            }
+          }
+
+          // C. 找出需要上传到云端的文件 (toUpload)
+          final toUpload = <File>[];
+          for (final file in allLocalFiles) {
+            final relKey = computeRelativeKey(file);
+
+            // 严格白名单：只同步属于文件管理(files/)或剪贴板图片(clipboard_images/)的内容
+            if (!relKey.startsWith('files/') && !relKey.startsWith('clipboard_images/')) {
+              continue;
+            }
+
+            // 坚决排除安装包与程序发布信息
+            final lowerRel = relKey.toLowerCase();
+            if (lowerRel.endsWith('.exe') ||
+                lowerRel.endsWith('.dmg') ||
+                lowerRel.endsWith('.pkg') ||
+                lowerRel.endsWith('.setup') ||
+                lowerRel.endsWith('.iss') ||
+                lowerRel.endsWith('.msi') ||
+                relKey == 'release_info.json') {
+              continue;
+            }
+
+            final remote = cloudMetadata[relKey];
+            if (remote == null) {
+              toUpload.add(file);
+            } else {
               final stat = file.statSync();
               final localSize = stat.size;
               final localModified = stat.modified;
-
-              final remote = cloudMetadata[relativePath];
-              if (remote != null) {
-                final remoteSize = (remote['file_size'] as num?)?.toInt() ?? -1;
-                final remoteUpdatedStr = remote['updated_at'] as String?;
-                DateTime? remoteUpdated;
-                if (remoteUpdatedStr != null) {
-                  remoteUpdated = DateTime.tryParse(remoteUpdatedStr);
-                }
-
-                // 如果文件大小完全一致，且云端更新时间不早于本地修改时间(留2秒容差)，则判定为无变动跳过
-                if (remoteSize == localSize) {
-                  if (remoteUpdated == null || !localModified.isAfter(remoteUpdated.add(const Duration(seconds: 2)))) {
-                    skippedIdenticalCount++;
-                    continue; // 差异对比通过：已是最新，跳过上传！
-                  }
-                }
+              final remoteSize = (remote['file_size'] as num?)?.toInt() ?? -1;
+              final remoteUpdatedStr = remote['updated_at'] as String?;
+              DateTime? remoteUpdated;
+              if (remoteUpdatedStr != null) {
+                remoteUpdated = DateTime.tryParse(remoteUpdatedStr);
               }
 
-              filesToUpload.add(file);
-            }
-
-            if (filesToUpload.isEmpty) {
-              addD1Log(text(
-                '⚡ 差异比对完成：全部 $skippedIdenticalCount 个本地文件已与云端保持最新，智能跳过上传！',
-                'Diff check: all $skippedIdenticalCount files identical, skipping upload!',
-              ));
-            } else {
-              if (skippedIdenticalCount > 0) {
-                addD1Log(text(
-                  '⚡ 差异比对完成：$skippedIdenticalCount 个文件已是最新(已跳过)，仅增量上传 ${filesToUpload.length} 个新增/修改文件...',
-                  'Diff check: $skippedIdenticalCount unchanged (skipped), uploading ${filesToUpload.length} new/modified...',
-                ));
-              } else {
-                addD1Log(text(
-                  '⚡ 开始上传 ${filesToUpload.length} 个文件至 R2 存储桶 ($bucketName)...',
-                  'Uploading ${filesToUpload.length} files to R2...',
-                ));
-              }
-
-              final r2Service = _createR2SyncService();
-
-              for (int i = 0; i < filesToUpload.length; i++) {
-                final file = filesToUpload[i];
-                final relativePath = file.path
-                    .replaceFirst('${dataDir.path}${Platform.pathSeparator}', '')
-                    .replaceAll('\\', '/');
-                final fileName = file.path.split(Platform.pathSeparator).last;
-                final progressIndex = i + 1;
-
-                if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
-                  final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
-                  final res = await service.uploadFileToR2(file: file, fileKey: relativePath);
-                  if (res['success'] == true) {
-                    newlyUploadedCount++;
-                    addD1Log('  [$progressIndex/${filesToUpload.length}] ✅ 已增量同步: $relativePath');
-
-                    // 双重保障：若填写了 REST API 凭据，同步把元数据也写一份到 D1，确保 100% 写入 D1 元数据
-                    if (settings.cfAccountId?.trim().isNotEmpty == true &&
-                        settings.cfApiToken?.trim().isNotEmpty == true &&
-                        settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
-                      final lowerKey = relativePath.toLowerCase();
-                      final mime = lowerKey.endsWith('.png')
-                          ? 'image/png'
-                          : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
-                              ? 'image/jpeg'
-                              : 'application/octet-stream';
-                      unawaited(CfD1SyncService.recordFileMetadataRestApi(
-                        accountId: settings.cfAccountId!,
-                        apiToken: settings.cfApiToken!,
-                        d1DatabaseId: settings.cfD1DatabaseId!,
-                        fileKey: relativePath,
-                        fileName: fileName,
-                        fileSize: file.lengthSync(),
-                        mimeType: mime,
-                      ));
-                    }
-                  } else {
-                    addD1Log('  [$progressIndex/${filesToUpload.length}] ❌ 上传失败: $relativePath (${res['error'] ?? res['status']})');
-                  }
-                } else if (r2Service != null) {
-                  final ok = await r2Service.uploadFile(file, relativePath);
-                  if (ok) {
-                    newlyUploadedCount++;
-                    addD1Log('  [$progressIndex/${filesToUpload.length}] ✅ (S3) 已增量同步: $relativePath');
-
-                    // 如果是 REST API 模式，同步记录文件元数据到 D1 数据库
-                    if (settings.cfAccountId?.trim().isNotEmpty == true &&
-                        settings.cfApiToken?.trim().isNotEmpty == true &&
-                        settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
-                      final lowerKey = relativePath.toLowerCase();
-                      final mime = lowerKey.endsWith('.png')
-                          ? 'image/png'
-                          : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
-                              ? 'image/jpeg'
-                              : 'application/octet-stream';
-
-                      await CfD1SyncService.recordFileMetadataRestApi(
-                        accountId: settings.cfAccountId!,
-                        apiToken: settings.cfApiToken!,
-                        d1DatabaseId: settings.cfD1DatabaseId!,
-                        fileKey: relativePath,
-                        fileName: fileName,
-                        fileSize: file.lengthSync(),
-                        mimeType: mime,
-                      );
-                    }
-                  } else {
-                    addD1Log('  [$progressIndex/${filesToUpload.length}] ❌ (S3) 上传失败: $relativePath');
-                  }
-                } else {
-                  addD1Log(text(
-                    '⚠️ 提示: Cloudflare 官方安全规定，R2 存储桶写入仅支持【Worker 托管节点模式】或【R2 S3 协议模式】。当前未配置 Worker 节点或 S3 凭据，请在设置中配置。',
-                    'Note: R2 upload requires Worker Node mode or S3 credentials.',
-                  ));
-                  break;
+              // 如果文件大小完全一致，且云端更新时间不早于本地修改时间(留2秒容差)，判定为无变动跳过
+              if (remoteSize == localSize) {
+                if (remoteUpdated == null || !localModified.isAfter(remoteUpdated.add(const Duration(seconds: 2)))) {
+                  skippedIdenticalCount++;
+                  continue;
                 }
               }
-
-              addD1Log(text(
-                '✅ R2 文件存储同步完成 (成功上传 $newlyUploadedCount/${filesToUpload.length} 个文件${skippedIdenticalCount > 0 ? "，跳过 $skippedIdenticalCount 个无变动文件" : ""})',
-                '✅ R2 Sync completed ($newlyUploadedCount uploaded, $skippedIdenticalCount skipped)',
-              ));
+              // 如果 remote 更新，已加入 toDownload，这里不重复加入 toUpload
+              if (remoteUpdated != null && remoteUpdated.isAfter(localModified.add(const Duration(seconds: 2)))) {
+                continue;
+              }
+              toUpload.add(file);
             }
           }
+
+          addD1Log(text(
+            '📊 差异比对完成：需上传 ${toUpload.length} 个，需下载 ${toDownload.length} 个，需云端销毁 ${toDeleteRemote.length} 个，无变动跳过 $skippedIdenticalCount 个',
+            'Diff check: ${toUpload.length} to upload, ${toDownload.length} to download, ${toDeleteRemote.length} to delete, $skippedIdenticalCount skipped',
+          ));
+
+          // 3. 执行云端销毁 (Delete)
+          for (final delKey in toDeleteRemote) {
+            bool ok = false;
+            if (workerService != null) {
+              ok = await workerService.deleteFileFromR2(delKey);
+            } else if (r2Service != null) {
+              ok = await r2Service.deleteFile(delKey);
+            }
+            if (ok) {
+              deletedRemoteCount++;
+              deletedKeys.remove(delKey);
+              cloudMetadata.remove(delKey);
+              addD1Log('  🗑️ 已从云端物理删除: $delKey');
+            }
+          }
+          // 更新保存墓碑表
+          try {
+            if (deletedKeys.isEmpty && deletedFile.existsSync()) {
+              deletedFile.deleteSync();
+            } else if (deletedKeys.isNotEmpty) {
+              deletedFile.writeAsStringSync(jsonEncode(deletedKeys.toList()));
+            }
+          } catch (_) {}
+
+          // 4. 执行云端下载 (Download)
+          for (int i = 0; i < toDownload.length; i++) {
+            final remoteInfo = toDownload[i];
+            final relKey = remoteInfo['file_key'] as String;
+            final target = resolveLocalTarget(relKey);
+            final progressIndex = i + 1;
+
+            bool ok = false;
+            if (workerService != null) {
+              ok = await workerService.downloadFileFromR2(fileKey: relKey, targetFile: target);
+            } else if (r2Service != null) {
+              ok = await r2Service.downloadFile(relKey, target);
+            }
+
+            if (ok) {
+              newlyDownloadedCount++;
+              addD1Log('  [$progressIndex/${toDownload.length}] 📥 已下载并保存: $relKey');
+            } else {
+              addD1Log('  [$progressIndex/${toDownload.length}] ❌ 下载失败: $relKey');
+            }
+          }
+
+          // 5. 执行本地上传 (Upload)
+          for (int i = 0; i < toUpload.length; i++) {
+            final file = toUpload[i];
+            final relativePath = computeRelativeKey(file);
+            final fileName = file.path.split(Platform.pathSeparator).last;
+            final progressIndex = i + 1;
+
+            if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
+              final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
+              final res = await service.uploadFileToR2(file: file, fileKey: relativePath);
+              if (res['success'] == true) {
+                newlyUploadedCount++;
+                addD1Log('  [$progressIndex/${toUpload.length}] ✅ 已增量上传: $relativePath');
+
+                // 双重保障：若填写了 REST API 凭据，同步把元数据也写一份到 D1，确保 100% 写入 D1 元数据
+                if (settings.cfAccountId?.trim().isNotEmpty == true &&
+                    settings.cfApiToken?.trim().isNotEmpty == true &&
+                    settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
+                  final lowerKey = relativePath.toLowerCase();
+                  final mime = lowerKey.endsWith('.png')
+                      ? 'image/png'
+                      : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
+                          ? 'image/jpeg'
+                          : 'application/octet-stream';
+                  unawaited(CfD1SyncService.recordFileMetadataRestApi(
+                    accountId: settings.cfAccountId!,
+                    apiToken: settings.cfApiToken!,
+                    d1DatabaseId: settings.cfD1DatabaseId!,
+                    fileKey: relativePath,
+                    fileName: fileName,
+                    fileSize: file.lengthSync(),
+                    mimeType: mime,
+                  ));
+                }
+              } else {
+                addD1Log('  [$progressIndex/${toUpload.length}] ❌ 上传失败: $relativePath (${res['error'] ?? res['status']})');
+              }
+            } else if (r2Service != null) {
+              final ok = await r2Service.uploadFile(file, relativePath);
+              if (ok) {
+                newlyUploadedCount++;
+                addD1Log('  [$progressIndex/${toUpload.length}] ✅ (S3) 已增量上传: $relativePath');
+
+                // 如果是 REST API 模式，同步记录文件元数据到 D1 数据库
+                if (settings.cfAccountId?.trim().isNotEmpty == true &&
+                    settings.cfApiToken?.trim().isNotEmpty == true &&
+                    settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
+                  final lowerKey = relativePath.toLowerCase();
+                  final mime = lowerKey.endsWith('.png')
+                      ? 'image/png'
+                      : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
+                          ? 'image/jpeg'
+                          : 'application/octet-stream';
+
+                  await CfD1SyncService.recordFileMetadataRestApi(
+                    accountId: settings.cfAccountId!,
+                    apiToken: settings.cfApiToken!,
+                    d1DatabaseId: settings.cfD1DatabaseId!,
+                    fileKey: relativePath,
+                    fileName: fileName,
+                    fileSize: file.lengthSync(),
+                    mimeType: mime,
+                  );
+                }
+              } else {
+                addD1Log('  [$progressIndex/${toUpload.length}] ❌ (S3) 上传失败: $relativePath');
+              }
+            } else {
+              addD1Log(text(
+                '⚠️ 提示: Cloudflare 官方安全规定，R2 存储桶写入仅支持【Worker 托管节点模式】或【R2 S3 协议模式】。当前未配置 Worker 节点或 S3 凭据，请在设置中配置。',
+                'Note: R2 upload requires Worker Node mode or S3 credentials.',
+              ));
+              break;
+            }
+          }
+
+          // 6. 同步完成后，立刻刷新 PC 文件管理
+          await _scanStoredFiles();
+
+          addD1Log(text(
+            '✅ R2 文件存储双向同步完成 (上传: $newlyUploadedCount, 下载: $newlyDownloadedCount, 销毁: $deletedRemoteCount, 跳过: $skippedIdenticalCount)',
+            '✅ R2 File Sync completed (Uploaded: $newlyUploadedCount, Downloaded: $newlyDownloadedCount, Deleted: $deletedRemoteCount, Skipped: $skippedIdenticalCount)',
+          ));
         } catch (e) {
           addD1Log(text('⚠️ R2 文件同步异常: $e', '⚠️ R2 Sync error: $e'));
         }
@@ -1182,10 +1329,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
 
       final isSuccess = d1Result['success'] == true;
-      final fileSummary = skippedIdenticalCount > 0 && newlyUploadedCount == 0
-          ? '，全部本地文件均与云端保持最新(智能跳过 $skippedIdenticalCount 个)'
-          : (newlyUploadedCount > 0
-              ? '，新增/修改 $newlyUploadedCount 个文件已写入 R2${skippedIdenticalCount > 0 ? " (跳过 $skippedIdenticalCount 个未变动文件)" : ""}'
+      final fileSummary = (newlyUploadedCount > 0 || newlyDownloadedCount > 0 || deletedRemoteCount > 0)
+          ? '，文件存储已双向同步(上传: $newlyUploadedCount, 下载: $newlyDownloadedCount, 销毁: $deletedRemoteCount)'
+          : (skippedIdenticalCount > 0
+              ? '，全部本地文件均与云端保持最新(智能跳过 $skippedIdenticalCount 个)'
               : '');
 
       final message = isSuccess
@@ -1250,23 +1397,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     Timer(const Duration(seconds: 10), () {
       if (!_isD1Syncing && !_isShuttingDown && settings.cfD1AutoSync) {
         syncAllLocalDataAndFiles(isManual: false);
-      }
-    });
-  }
-
-  void _scheduleR2AutoSync() {
-    _r2SyncTimer?.cancel();
-    if (!settings.r2Enabled || !settings.r2AutoSync) return;
-
-    final intervalMinutes =
-        settings.r2SyncIntervalMinutes > 0 ? settings.r2SyncIntervalMinutes : 5;
-    _r2SyncTimer = Timer.periodic(Duration(minutes: intervalMinutes), (_) {
-      syncWithR2(isManual: false);
-    });
-
-    Timer(const Duration(seconds: 5), () {
-      if (settings.r2Enabled && settings.r2AutoSync && !_isR2Syncing) {
-        syncWithR2(isManual: false);
       }
     });
   }
@@ -1818,7 +1948,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (oldPath != newSettings.customFilesPath) {
       await _scanStoredFiles();
     }
-    _scheduleR2AutoSync();
     _scheduleCfD1AutoSync();
     notifyListeners();
   }

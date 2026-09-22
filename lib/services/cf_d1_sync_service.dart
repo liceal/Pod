@@ -269,6 +269,67 @@ class CfD1SyncService {
     }
   }
 
+  /// 4.1 从 Cloudflare Worker 下载文件并写入本地目标路径
+  Future<bool> downloadFileFromR2({
+    required String fileKey,
+    required File targetFile,
+  }) async {
+    final uri = Uri.parse('$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}');
+    final stopwatch = Stopwatch()..start();
+
+    if (isDevMode) {
+      debugPrint('📥 [CF R2 Download] 开始下载文件: $fileKey -> ${targetFile.path}');
+    }
+
+    try {
+      final response = await _client.get(uri).timeout(const Duration(seconds: 45));
+      stopwatch.stop();
+      final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
+
+      if (response.statusCode == 200) {
+        if (!targetFile.parent.existsSync()) {
+          await targetFile.parent.create(recursive: true);
+        }
+        await targetFile.writeAsBytes(response.bodyBytes);
+        if (isDevMode) {
+          debugPrint('🎉 [CF R2 Download Success] 下载完成: $fileKey (${(response.bodyBytes.length / 1024).toStringAsFixed(1)} KB, 耗时 ${rttMs.toStringAsFixed(1)}ms)');
+        }
+        return true;
+      } else {
+        debugPrint('⚠️ [CF R2 Download Fail] HTTP ${response.statusCode}: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      stopwatch.stop();
+      debugPrint('❌ [CF R2 Download Error] $fileKey: $e');
+      return false;
+    }
+  }
+
+  /// 4.2 从 Cloudflare Worker/R2 彻底删除文件及元数据
+  Future<bool> deleteFileFromR2(String fileKey) async {
+    final uri = Uri.parse('$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}');
+    final stopwatch = Stopwatch()..start();
+
+    if (isDevMode) {
+      debugPrint('🗑️ [CF R2 Delete] 正在请求云端物理删除: $fileKey');
+    }
+
+    try {
+      final response = await _client.delete(uri).timeout(const Duration(seconds: 15));
+      stopwatch.stop();
+      if (response.statusCode == 200) {
+        final resJson = jsonDecode(response.body);
+        return resJson['success'] == true;
+      }
+      return false;
+    } catch (e) {
+      stopwatch.stop();
+      debugPrint('❌ [CF R2 Delete Error] $fileKey: $e');
+      return false;
+    }
+  }
+
   Future<Map<String, Map<String, dynamic>>> fetchRemoteFilesMetadata() async {
     final endpoints = [
       '$_cleanBaseUrl/api/v1/file-metadata',
@@ -799,13 +860,13 @@ ON CONFLICT(file_key) DO UPDATE SET
     required String apiToken,
     String workerName = 'pod-quick-backend',
     String d1Name = 'pod-quick-d1',
-    String r2BucketName = 'pod-quick-files',
+    String r2BucketName = 'pod-quick-files-apac',
     Function(String msg)? onLog,
   }) async {
     final cleanAccountId = accountId.trim();
     final cleanToken = apiToken.trim();
     final cleanD1Name = d1Name.trim().isEmpty ? 'pod-quick-d1' : d1Name.trim();
-    final cleanBucket = r2BucketName.trim().isEmpty ? 'pod-quick-files' : r2BucketName.trim();
+    final cleanBucket = r2BucketName.trim().isEmpty ? 'pod-quick-files-apac' : r2BucketName.trim();
     final cleanWorker = workerName.trim().isEmpty ? 'pod-quick-backend' : workerName.trim();
 
     if (cleanAccountId.isEmpty || cleanToken.isEmpty) {
@@ -885,7 +946,7 @@ ON CONFLICT(file_key) DO UPDATE SET
           final bucketRes = await http.post(
             createBucketUri,
             headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-            body: jsonEncode({'name': cleanBucket}),
+            body: jsonEncode({'name': cleanBucket, 'locationHint': 'apac'}),
           ).timeout(const Duration(seconds: 10));
 
           if (bucketRes.statusCode == 200 || bucketRes.statusCode == 201) {

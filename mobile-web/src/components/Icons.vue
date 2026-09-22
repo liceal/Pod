@@ -214,6 +214,12 @@
       <line x1="10" y1="1" x2="10" y2="4" />
       <line x1="14" y1="1" x2="14" y2="4" />
     </g>
+
+    <!-- Eye (Preview) -->
+    <g v-else-if="name === 'eye'">
+      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+      <circle cx="12" cy="12" r="3" />
+    </g>
   </svg>
 </template>
 

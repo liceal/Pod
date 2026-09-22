@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "build:web": "cd ../mobile-web && pnpm build",
-    "deploy": "pnpm run build:web && wrangler deploy --env=\"\"",
+    "deploy": "pnpm run build:web && wrangler deploy",
     "d1:init:local": "wrangler d1 execute pod-quick --local --file=./schema.sql",
     "d1:init:remote": "wrangler d1 execute pod-quick --remote --file=./schema.sql"
   },

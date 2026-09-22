@@ -99,5 +99,4 @@ if exist "build\PodQuick_Portable.zip" echo   - 绿色便携版: build\PodQuick_
 if exist "build\PodQuick.exe" echo   - 单文件运行程序: build\PodQuick.exe
 if exist "build\PodQuick_Setup.exe" echo   - 标准安装包 (免证书直接装): build\PodQuick_Setup.exe
 echo ===================================================
-echo.
-pause
+if "%1" neq "--no-pause" pause

@@ -139,7 +139,7 @@
             v-for="file in searchedFiles"
             :key="file.file_key"
             class="card file-item-card"
-            @click="isImage(file) ? openLightbox(file) : null"
+            @click="handleFileClick(file)"
           >
             <div class="file-icon-box" :class="{ 'is-img': isImage(file) }">
               <img
@@ -160,21 +160,37 @@
               </div>
             </div>
 
-            <a
-              :href="getFileUrl(file.file_key)"
-              :download="file.file_name"
-              target="_blank"
-              class="file-download-btn"
-              @click.stop
-            >
-              <Icons name="download" size="18" />
-            </a>
+            <div class="file-item-actions">
+              <button
+                class="file-action-icon-btn preview"
+                title="在线预览"
+                @click.stop="handleFileClick(file)"
+              >
+                <Icons name="eye" size="16" />
+              </button>
+              <a
+                :href="getFileUrl(file.file_key)"
+                :download="file.file_name"
+                target="_blank"
+                class="file-action-icon-btn download"
+                title="下载文件"
+                @click.stop
+              >
+                <Icons name="download" size="16" />
+              </a>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- HIERARCHICAL FOLDER VIEW -->
-      <div v-else class="hierarchy-wrap">
+      <!-- HIERARCHICAL FOLDER VIEW (With Swipe-Right Back Gesture) -->
+      <div
+        v-else
+        class="hierarchy-wrap"
+        @touchstart.passive="handleFolderTouchStart"
+        @touchmove.passive="handleFolderTouchMove"
+        @touchend="handleFolderTouchEnd"
+      >
         <!-- 1. SUBFOLDERS SECTION (if any) -->
         <div v-if="currentSubfolders.length > 0" class="folders-section">
           <div class="section-label">文件夹 ({{ currentSubfolders.length }})</div>
@@ -238,7 +254,7 @@
               :key="file.file_key"
               class="photo-card"
               :class="{ 'is-doc': !isImage(file) }"
-              @click="isImage(file) ? openLightbox(file) : null"
+              @click="handleFileClick(file)"
             >
               <template v-if="isImage(file)">
                 <img
@@ -247,6 +263,13 @@
                   class="photo-thumb"
                   loading="lazy"
                 />
+                <button
+                  class="card-eye-badge"
+                  title="预览图片"
+                  @click.stop="handleFileClick(file)"
+                >
+                  <Icons name="eye" size="13" />
+                </button>
                 <div class="photo-info-bar">
                   <span class="photo-name text-truncate">{{ file.file_name }}</span>
                   <span class="photo-size">{{ formatSize(file.file_size) }}</span>
@@ -256,21 +279,39 @@
               <!-- Document card in grid -->
               <template v-else>
                 <div class="doc-card-inner">
+                  <button
+                    class="card-eye-badge"
+                    title="在线预览"
+                    @click.stop="handleFileClick(file)"
+                  >
+                    <Icons name="eye" size="13" />
+                  </button>
                   <div class="doc-icon">
                     <Icons name="files" size="30" />
                   </div>
                   <span class="doc-name text-truncate">{{ file.file_name }}</span>
                   <span class="doc-size">{{ formatSize(file.file_size) }}</span>
-                  <a
-                    :href="getFileUrl(file.file_key)"
-                    :download="file.file_name"
-                    target="_blank"
-                    class="doc-download-link"
-                    @click.stop
-                  >
-                    <Icons name="download" size="14" />
-                    <span>下载</span>
-                  </a>
+                  <div class="doc-actions-row">
+                    <button
+                      class="doc-pill-btn preview-pill"
+                      title="点击预览"
+                      @click.stop="handleFileClick(file)"
+                    >
+                      <Icons name="eye" size="12" />
+                      <span>预览</span>
+                    </button>
+                    <a
+                      :href="getFileUrl(file.file_key)"
+                      :download="file.file_name"
+                      target="_blank"
+                      class="doc-pill-btn download-pill"
+                      title="点击下载"
+                      @click.stop
+                    >
+                      <Icons name="download" size="12" />
+                      <span>下载</span>
+                    </a>
+                  </div>
                 </div>
               </template>
             </div>
@@ -282,7 +323,7 @@
               v-for="file in currentDirectFiles"
               :key="file.file_key"
               class="card file-item-card"
-              @click="isImage(file) ? openLightbox(file) : null"
+              @click="handleFileClick(file)"
             >
               <div class="file-icon-box" :class="{ 'is-img': isImage(file) }">
                 <img
@@ -303,15 +344,25 @@
                 </div>
               </div>
 
-              <a
-                :href="getFileUrl(file.file_key)"
-                :download="file.file_name"
-                target="_blank"
-                class="file-download-btn"
-                @click.stop
-              >
-                <Icons name="download" size="18" />
-              </a>
+              <div class="file-item-actions">
+                <button
+                  class="file-action-icon-btn preview"
+                  title="在线预览"
+                  @click.stop="handleFileClick(file)"
+                >
+                  <Icons name="eye" size="16" />
+                </button>
+                <a
+                  :href="getFileUrl(file.file_key)"
+                  :download="file.file_name"
+                  target="_blank"
+                  class="file-action-icon-btn download"
+                  title="下载文件"
+                  @click.stop
+                >
+                  <Icons name="download" size="16" />
+                </a>
+              </div>
             </div>
           </div>
         </div>
@@ -326,18 +377,29 @@
       :subtitle="activeImageSubtitle"
       @close="isLightboxOpen = false"
     />
+
+    <!-- File Preview Modal (txt, md, json, code, pdf, audio, video, etc.) -->
+    <FilePreviewModal
+      :visible="previewModalVisible"
+      :file="previewFile"
+      :file-url="previewFileUrl"
+      @close="previewModalVisible = false"
+      @toast="(msg, type) => emit('toast', msg, type)"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, watch } from 'vue';
 import Icons from '../components/Icons.vue';
 import ImageModal from '../components/ImageModal.vue';
+import FilePreviewModal from '../components/FilePreviewModal.vue';
 import { FileMetadata } from '../types';
 import { ApiClient } from '../api/client';
 
 const emit = defineEmits<{
   (e: 'toast', msg: string, type?: 'success' | 'error' | 'info'): void;
+  (e: 'folder-change', isInsideFolder: boolean): void;
 }>();
 
 const files = ref<FileMetadata[]>([]);
@@ -358,6 +420,61 @@ const isLightboxOpen = ref(false);
 const activeImageUrl = ref('');
 const activeImageTitle = ref('');
 const activeImageSubtitle = ref('');
+
+// File Preview state (txt, md, json, code, pdf, audio, video)
+const previewModalVisible = ref(false);
+const previewFile = ref<FileMetadata | null>(null);
+const previewFileUrl = ref('');
+
+const handleFileClick = (file: FileMetadata) => {
+  if (isImage(file)) {
+    openLightbox(file);
+  } else {
+    previewFile.value = file;
+    previewFileUrl.value = getFileUrl(file.file_key);
+    previewModalVisible.value = true;
+  }
+};
+
+// Notify parent about folder state for tab gesture coordination
+watch(
+  currentPath,
+  (val) => {
+    emit('folder-change', !!val);
+  },
+  { immediate: true }
+);
+
+// Folder Swipe-Right to Exit Gesture
+let folderTouchStartX = 0;
+let folderTouchStartY = 0;
+let folderTouchMoveX = 0;
+let folderTouchMoveY = 0;
+
+const handleFolderTouchStart = (e: TouchEvent) => {
+  if (!currentPath.value || e.touches.length !== 1) return;
+  folderTouchStartX = e.touches[0].clientX;
+  folderTouchStartY = e.touches[0].clientY;
+  folderTouchMoveX = folderTouchStartX;
+  folderTouchMoveY = folderTouchStartY;
+};
+
+const handleFolderTouchMove = (e: TouchEvent) => {
+  if (!currentPath.value || e.touches.length !== 1) return;
+  folderTouchMoveX = e.touches[0].clientX;
+  folderTouchMoveY = e.touches[0].clientY;
+};
+
+const handleFolderTouchEnd = () => {
+  if (!currentPath.value) return;
+  const deltaX = folderTouchMoveX - folderTouchStartX;
+  const deltaY = folderTouchMoveY - folderTouchStartY;
+  // If swiped right > 60px with predominantly horizontal movement
+  if (deltaX > 60 && Math.abs(deltaX) > Math.abs(deltaY) * 1.3) {
+    goUpOneLevel();
+    emit('toast', '已返回上一级目录', 'info');
+  }
+};
 
 // Folder Navigation Logic
 interface FolderNode {
@@ -526,6 +643,8 @@ const refreshFiles = async () => {
   files.value = res.files;
   if (res.error) {
     emit('toast', `刷新失败: ${res.error}`, 'error');
+  } else {
+    ApiClient.setLastSyncTime(new Date().toISOString());
   }
 };
 
@@ -611,6 +730,11 @@ const openLightbox = (file: FileMetadata) => {
   activeImageSubtitle.value = `${getParentDir(file.file_key)} • ${formatSize(file.file_size)}`;
   isLightboxOpen.value = true;
 };
+
+defineExpose({
+  goUpOneLevel,
+  currentPath,
+});
 </script>
 
 <style scoped>
@@ -867,6 +991,13 @@ const openLightbox = (file: FileMetadata) => {
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   padding: 12px 16px 40px;
+}
+
+.hierarchy-wrap {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .section-label {
@@ -1128,6 +1259,100 @@ const openLightbox = (file: FileMetadata) => {
   max-width: 120px;
   color: var(--accent-color);
   font-size: 11px;
+}
+
+/* Card top-right eye badge */
+.card-eye-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.card-eye-badge:active {
+  transform: scale(0.9);
+  background: var(--accent-color);
+}
+
+/* Document actions row (preview vs download) */
+.doc-actions-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  z-index: 2;
+}
+
+.doc-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: var(--radius-full);
+  font-size: 11px;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  transition: all 0.2s ease;
+}
+
+.doc-pill-btn.preview-pill {
+  color: var(--accent-color);
+  background: var(--bg-secondary);
+}
+
+.doc-pill-btn:active {
+  transform: scale(0.94);
+  background: var(--accent-color);
+  color: #ffffff;
+}
+
+/* File item actions in list mode */
+.file-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.file-action-icon-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.file-action-icon-btn.preview {
+  color: var(--accent-color);
+}
+
+.file-action-icon-btn:active {
+  background: var(--accent-color);
+  color: #fff;
+  transform: scale(0.92);
 }
 
 .file-download-btn {

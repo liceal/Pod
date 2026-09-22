@@ -1,87 +1,95 @@
 <template>
-  <transition name="fade">
-    <div
-      v-if="visible"
-      class="image-modal-overlay"
-      @click.self="handleOverlayClick"
-      @keydown.esc="emit('close')"
-    >
-      <!-- Top header bar -->
-      <div class="modal-header">
-        <div class="image-meta">
-          <span class="file-name text-truncate">{{ title || '图片预览' }}</span>
-          <span v-if="subtitle" class="file-sub">{{ subtitle }}</span>
-        </div>
-        <div class="header-actions">
-          <!-- Reset zoom button when zoomed in -->
-          <button
-            v-if="scale > 1.05"
-            class="action-icon-btn reset-btn"
-            title="还原缩放 (100%)"
-            @click="resetZoom"
-          >
-            <Icons name="refresh" size="18" />
-          </button>
-          <a
-            v-if="imageUrl"
-            :href="imageUrl"
-            download
-            target="_blank"
-            class="action-icon-btn"
-            title="下载图片"
-          >
-            <Icons name="download" size="20" />
-          </a>
-          <button class="action-icon-btn" title="关闭" @click="emit('close')">
-            <Icons name="close" size="22" />
-          </button>
-        </div>
-      </div>
-
-      <!-- Main Image Interactive Viewport (Hijacks browser zoom) -->
+  <Teleport to="body">
+    <transition :name="gestureDismissed ? '' : 'fade'">
       <div
-        ref="viewportRef"
-        class="image-content-wrap"
+        v-if="visible"
+        ref="overlayRef"
+        class="image-modal-overlay"
         @click.self="handleOverlayClick"
-        @wheel.prevent="handleWheel"
-        @mousedown="handleMouseDown"
-        @dblclick="handleDblClick"
+        @keydown.esc="emit('close')"
       >
+        <!-- Sheet Pull Handle Indicator (Like YouTube Music / iOS) -->
+        <div class="sheet-pull-handle">
+          <div class="pull-pill"></div>
+        </div>
+
+        <!-- Top header bar -->
+        <div class="modal-header">
+          <div class="image-meta">
+            <span class="file-name text-truncate">{{ title || '图片预览' }}</span>
+            <span v-if="subtitle" class="file-sub">{{ subtitle }}</span>
+          </div>
+          <div class="header-actions">
+            <!-- Reset zoom button when zoomed in -->
+            <button
+              v-if="scale > 1.05"
+              class="action-icon-btn reset-btn"
+              title="还原缩放 (100%)"
+              @click="resetZoom"
+            >
+              <Icons name="refresh" size="18" />
+            </button>
+            <a
+              v-if="imageUrl"
+              :href="imageUrl"
+              download
+              target="_blank"
+              class="action-icon-btn"
+              title="下载图片"
+            >
+              <Icons name="download" size="20" />
+            </a>
+            <button class="action-icon-btn" title="关闭" @click="emit('close')">
+              <Icons name="close" size="22" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Main Image Interactive Viewport (Hijacks browser zoom) -->
         <div
-          v-if="imageUrl"
-          class="img-transform-layer"
-          :style="transformStyle"
+          ref="viewportRef"
+          class="image-content-wrap"
+          @click.self="handleOverlayClick"
+          @wheel.prevent="handleWheel"
+          @mousedown="handleMouseDown"
+          @dblclick="handleDblClick"
         >
-          <img
-            ref="imgRef"
-            :src="imageUrl"
-            :alt="title || 'Preview'"
-            class="preview-img"
-            draggable="false"
-            loading="eager"
-          />
-        </div>
-        <div v-else class="preview-empty">
-          <Icons name="image" size="48" />
-          <p>暂无图片资源</p>
-        </div>
-
-        <!-- Floating Zoom Level Pill -->
-        <transition name="fade">
-          <div v-if="scale > 1.05" class="zoom-badge" @click="resetZoom">
-            {{ Math.round(scale * 100) }}% · 点击还原
+          <div
+            v-if="imageUrl"
+            class="img-transform-layer"
+            :style="transformStyle"
+          >
+            <img
+              ref="imgRef"
+              :src="imageUrl"
+              :alt="title || 'Preview'"
+              class="preview-img"
+              draggable="false"
+              loading="eager"
+            />
           </div>
-        </transition>
-
-        <!-- Hint badge on initial load -->
-        <transition name="fade">
-          <div v-if="showHint" class="gesture-hint-pill">
-            双击或双指捏合缩放图片
+          <div v-else class="preview-empty">
+            <Icons name="image" size="48" />
+            <p>暂无图片资源</p>
           </div>
-        </transition>
+
+          <!-- Floating Zoom Level Pill -->
+          <transition name="fade">
+            <div v-if="scale > 1.05" class="zoom-badge" @click="resetZoom">
+              {{ Math.round(scale * 100) }}% · 点击还原
+            </div>
+          </transition>
+
+          <!-- Hint badge on initial load -->
+          <transition name="fade">
+            <div v-if="showHint" class="gesture-hint-pill">
+              双击或双指捏合缩放图片
+            </div>
+          </transition>
+        </div>
       </div>
-    </div>
-  </transition>
+    </transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
@@ -101,6 +109,8 @@ const emit = defineEmits<{
 
 const viewportRef = ref<HTMLElement | null>(null);
 const imgRef = ref<HTMLImageElement | null>(null);
+const overlayRef = ref<HTMLElement | null>(null);
+const gestureDismissed = ref(false);
 
 // Zoom & Pan state
 const scale = ref(1);
@@ -113,6 +123,7 @@ const showHint = ref(false);
 let lastTapTime = 0;
 let lastTapX = 0;
 let lastTapY = 0;
+let gestureStartTime = 0;
 
 // Pinch gesture state
 let isPinching = false;
@@ -139,6 +150,9 @@ const resetZoom = () => {
   scale.value = 1;
   translateX.value = 0;
   translateY.value = 0;
+  if (overlayRef.value) {
+    overlayRef.value.style.backgroundColor = '';
+  }
   setTimeout(() => {
     isTransitioning.value = false;
   }, 250);
@@ -259,8 +273,14 @@ const onTouchStart = (e: TouchEvent) => {
   }
 
   if (e.touches.length === 1) {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('a')) {
+      return;
+    }
+
     const touch = e.touches[0];
     const now = Date.now();
+    gestureStartTime = now;
     const timeDiff = now - lastTapTime;
     const distDiff = Math.hypot(touch.clientX - lastTapX, touch.clientY - lastTapY);
 
@@ -276,14 +296,15 @@ const onTouchStart = (e: TouchEvent) => {
     lastTapX = touch.clientX;
     lastTapY = touch.clientY;
 
+    panStartX = touch.clientX;
+    panStartY = touch.clientY;
+    panStartTranslateX = translateX.value;
+    panStartTranslateY = translateY.value;
+
     if (scale.value > 1.05) {
       // Start 1-finger pan
       isPanning = true;
       isTransitioning.value = false;
-      panStartX = touch.clientX;
-      panStartY = touch.clientY;
-      panStartTranslateX = translateX.value;
-      panStartTranslateY = translateY.value;
     }
   }
 };
@@ -317,6 +338,113 @@ const onTouchMove = (e: TouchEvent) => {
     const dy = touch.clientY - panStartY;
     translateX.value = panStartTranslateX + dx;
     translateY.value = panStartTranslateY + dy;
+  } else if (e.touches.length === 1 && scale.value <= 1.05) {
+    // Pull down to dismiss gesture (like YouTube Music / iOS)
+    const touch = e.touches[0];
+    const dy = touch.clientY - panStartY;
+    if (dy > 0) {
+      e.preventDefault();
+      isTransitioning.value = false;
+      translateY.value = dy * 0.85;
+      if (overlayRef.value) {
+        const progress = Math.min(translateY.value / 400, 1);
+        const opacity = Math.max(0, 0.94 * (1 - progress));
+        overlayRef.value.style.backgroundColor = `rgba(0, 0, 0, ${opacity})`;
+      }
+    }
+  }
+};
+
+const dismissImageModal = (velocity = 0) => {
+  gestureDismissed.value = true;
+  const startY = translateY.value;
+  const targetY = window.innerHeight;
+  const remainingDistance = Math.max(0, targetY - startY);
+  const baseDuration = (remainingDistance / (targetY || 1)) * 260;
+  const velocityFactor = Math.max(1, Math.min(3, velocity));
+  const durationMs = Math.round(Math.max(120, Math.min(240, baseDuration / velocityFactor)));
+
+  const layer = viewportRef.value?.querySelector('.img-transform-layer') as HTMLElement | null;
+  if (layer) {
+    layer.animate(
+      [
+        { transform: `translate3d(${translateX.value}px, ${startY}px, 0) scale(${scale.value})` },
+        { transform: `translate3d(${translateX.value}px, ${targetY}px, 0) scale(${scale.value})` }
+      ],
+      {
+        duration: durationMs,
+        easing: 'cubic-bezier(0.2, 0.9, 0.3, 1)',
+        fill: 'forwards'
+      }
+    );
+  }
+
+  if (overlayRef.value) {
+    const progress = Math.min(startY / 400, 1);
+    const startOpacity = Math.max(0, 0.94 * (1 - progress));
+    const anim = overlayRef.value.animate(
+      [
+        { backgroundColor: `rgba(0, 0, 0, ${startOpacity})` },
+        { backgroundColor: 'rgba(0, 0, 0, 0)' }
+      ],
+      {
+        duration: durationMs,
+        easing: 'ease-out',
+        fill: 'forwards'
+      }
+    );
+    anim.onfinish = () => {
+      emit('close');
+      resetZoom();
+      gestureDismissed.value = false;
+    };
+  } else {
+    emit('close');
+    resetZoom();
+    gestureDismissed.value = false;
+  }
+};
+
+const springBackImage = () => {
+  const startY = translateY.value;
+  const durationMs = Math.round(Math.max(160, Math.min(240, (startY / 200) * 220)));
+
+  const layer = viewportRef.value?.querySelector('.img-transform-layer') as HTMLElement | null;
+  if (layer) {
+    const anim = layer.animate(
+      [
+        { transform: `translate3d(${translateX.value}px, ${startY}px, 0) scale(${scale.value})` },
+        { transform: `translate3d(${translateX.value}px, 0, 0) scale(${scale.value})` }
+      ],
+      {
+        duration: durationMs,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        fill: 'forwards'
+      }
+    );
+    anim.onfinish = () => {
+      translateY.value = 0;
+      if (overlayRef.value) overlayRef.value.style.backgroundColor = '';
+    };
+  } else {
+    translateY.value = 0;
+    if (overlayRef.value) overlayRef.value.style.backgroundColor = '';
+  }
+
+  if (overlayRef.value) {
+    const progress = Math.min(startY / 400, 1);
+    const startOpacity = Math.max(0, 0.94 * (1 - progress));
+    overlayRef.value.animate(
+      [
+        { backgroundColor: `rgba(0, 0, 0, ${startOpacity})` },
+        { backgroundColor: 'rgba(0, 0, 0, 0.94)' }
+      ],
+      {
+        duration: durationMs,
+        easing: 'ease-out',
+        fill: 'forwards'
+      }
+    );
   }
 };
 
@@ -337,6 +465,17 @@ const onTouchEnd = (e: TouchEvent) => {
     isPanning = false;
     clampTranslation();
   }
+
+  // Handle pull-down dismiss release
+  if (scale.value <= 1.05 && translateY.value > 0) {
+    const timeElapsed = Date.now() - gestureStartTime;
+    const velocity = translateY.value / (timeElapsed || 1);
+    if (translateY.value > 70 || (translateY.value > 25 && velocity > 0.32)) {
+      dismissImageModal(velocity);
+    } else {
+      springBackImage();
+    }
+  }
 };
 
 // Safari proprietary gesture event prevention
@@ -345,7 +484,7 @@ const onSafariGesture = (e: Event) => {
 };
 
 const attachEventListeners = () => {
-  const el = viewportRef.value;
+  const el = overlayRef.value || viewportRef.value;
   if (!el) return;
 
   el.addEventListener('touchstart', onTouchStart, { passive: false });
@@ -360,7 +499,7 @@ const attachEventListeners = () => {
 };
 
 const detachEventListeners = () => {
-  const el = viewportRef.value;
+  const el = overlayRef.value || viewportRef.value;
   if (!el) return;
 
   el.removeEventListener('touchstart', onTouchStart);
@@ -425,6 +564,24 @@ onBeforeUnmount(() => {
   touch-action: none;
   user-select: none;
   -webkit-user-select: none;
+}
+
+.sheet-pull-handle {
+  position: absolute;
+  top: max(6px, env(safe-area-inset-top));
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.pull-pill {
+  width: 40px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.4);
 }
 
 .modal-header {

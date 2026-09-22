@@ -8,8 +8,11 @@
             <Icons name="cloud" size="18" />
           </div>
           <div class="brand-text">
-            <span class="brand-title">PodQuick</span>
-            <span class="brand-tag">Cloud D1 · R2</span>
+            <div class="brand-title-row">
+              <span class="brand-title">PodQuick</span>
+              <span v-if="isStandalone" class="pwa-indicator-pill">PWA 沉浸</span>
+            </div>
+            <span class="brand-tag">{{ isStandalone ? '桌面独立模式 · 全手势支持' : 'Cloud D1 · R2' }}</span>
           </div>
         </div>
 
@@ -40,35 +43,47 @@
       </div>
     </header>
 
-    <!-- Main Views with Smooth Transition -->
-    <main class="app-main">
-      <ClipboardView
-        v-if="currentTab === 'clipboard'"
-        :items="clipboardItems"
-        @toast="triggerToast"
-      />
+    <!-- Main Views with Native Fluid Scroll-Snap ViewPager (Zero-Jump 120Hz Native Physics) -->
+    <main
+      ref="tabsContainerRef"
+      class="app-main tabs-container"
+      :class="{ 'lock-scroll': isInsideFilesSubfolder }"
+      @scroll.passive="handleTrackScroll"
+      @touchstart.passive="handleTouchStart"
+    >
+      <div class="tab-page">
+        <ClipboardView
+          :items="clipboardItems"
+          @toast="triggerToast"
+        />
+      </div>
 
-      <NotesView
-        v-else-if="currentTab === 'notes'"
-        :notes="notes"
-        @update:notes="handleNotesUpdate"
-        @toast="triggerToast"
-      />
+      <div class="tab-page">
+        <NotesView
+          :notes="notes"
+          @update:notes="handleNotesUpdate"
+          @toast="triggerToast"
+        />
+      </div>
 
-      <FilesView
-        v-else-if="currentTab === 'files'"
-        @toast="triggerToast"
-      />
+      <div class="tab-page">
+        <FilesView
+          ref="filesViewRef"
+          @folder-change="handleFolderChange"
+          @toast="triggerToast"
+        />
+      </div>
 
-      <SettingsView
-        v-else-if="currentTab === 'settings'"
-        :notes-count="notes.length"
-        :clip-count="clipboardItems.length"
-        :last-sync-time="lastSyncTime"
-        @sync="performSync(false)"
-        @lock="showPinModal = true"
-        @toast="triggerToast"
-      />
+      <div class="tab-page">
+        <SettingsView
+          :notes-count="notes.length"
+          :clip-count="clipboardItems.length"
+          :last-sync-time="lastSyncTime"
+          @sync="performSync(false)"
+          @lock="showPinModal = true"
+          @toast="triggerToast"
+        />
+      </div>
     </main>
 
     <!-- Bottom Navigation Bar (iOS / Android Safe Area adapted) -->
@@ -76,7 +91,7 @@
       <button
         class="nav-item"
         :class="{ active: currentTab === 'clipboard' }"
-        @click="currentTab = 'clipboard'"
+        @click="switchTab('clipboard')"
       >
         <div class="nav-icon-wrap">
           <Icons name="clipboard" size="21" />
@@ -90,7 +105,7 @@
       <button
         class="nav-item"
         :class="{ active: currentTab === 'notes' }"
-        @click="currentTab = 'notes'"
+        @click="switchTab('notes')"
       >
         <div class="nav-icon-wrap">
           <Icons name="notes" size="21" />
@@ -104,7 +119,7 @@
       <button
         class="nav-item"
         :class="{ active: currentTab === 'files' }"
-        @click="currentTab = 'files'"
+        @click="switchTab('files')"
       >
         <div class="nav-icon-wrap">
           <Icons name="files" size="21" />
@@ -115,7 +130,7 @@
       <button
         class="nav-item"
         :class="{ active: currentTab === 'settings' }"
-        @click="currentTab = 'settings'"
+        @click="switchTab('settings')"
       >
         <div class="nav-icon-wrap">
           <Icons name="settings" size="21" />
@@ -136,7 +151,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import Icons from './components/Icons.vue';
 import Toast from './components/Toast.vue';
 import PinLockModal from './components/PinLockModal.vue';
@@ -150,11 +165,78 @@ import { ApiClient } from './api/client';
 import { initTheme, activeTheme, toggleQuickTheme } from './utils/theme';
 
 type Tab = 'clipboard' | 'notes' | 'files' | 'settings';
+const tabs: Tab[] = ['clipboard', 'notes', 'files', 'settings'];
 
 const currentTab = ref<Tab>('clipboard');
+const isStandalone = ref(false);
+const filesViewRef = ref<any>(null);
+const isInsideFilesSubfolder = ref(false);
+const tabsContainerRef = ref<HTMLElement | null>(null);
+
+let isProgrammaticScrolling = false;
+let scrollEndTimer: any = null;
+
+const currentIndex = computed(() => {
+  const idx = tabs.indexOf(currentTab.value);
+  return idx !== -1 ? idx : 0;
+});
+
+const switchTab = (tab: Tab) => {
+  currentTab.value = tab;
+  const idx = tabs.indexOf(tab);
+  if (tabsContainerRef.value && idx !== -1) {
+    isProgrammaticScrolling = true;
+    clearTimeout(scrollEndTimer);
+    const container = tabsContainerRef.value;
+    container.style.scrollSnapType = 'none';
+    const targetLeft = idx * container.clientWidth;
+    container.scrollTo({
+      left: targetLeft,
+      behavior: 'smooth',
+    });
+    scrollEndTimer = setTimeout(() => {
+      if (container) {
+        container.style.scrollSnapType = 'x mandatory';
+      }
+      isProgrammaticScrolling = false;
+    }, 400);
+  }
+};
+
+const handleTrackScroll = () => {
+  if (isProgrammaticScrolling || !tabsContainerRef.value) return;
+  const { scrollLeft, clientWidth } = tabsContainerRef.value;
+  if (!clientWidth) return;
+  const idx = Math.round(scrollLeft / clientWidth);
+  if (idx >= 0 && idx < tabs.length && tabs[idx] !== currentTab.value) {
+    currentTab.value = tabs[idx];
+  }
+};
+
+const handleTouchStart = () => {
+  // Finger touch immediately yields control back to user
+  isProgrammaticScrolling = false;
+  clearTimeout(scrollEndTimer);
+};
+
+const handleResize = () => {
+  if (!tabsContainerRef.value) return;
+  const idx = tabs.indexOf(currentTab.value);
+  if (idx !== -1) {
+    tabsContainerRef.value.scrollTo({
+      left: idx * tabsContainerRef.value.clientWidth,
+      behavior: 'auto',
+    });
+  }
+};
+
+const handleFolderChange = (inFolder: boolean) => {
+  isInsideFilesSubfolder.value = inFolder;
+};
+
 const notes = ref<Note[]>([]);
 const clipboardItems = ref<ClipboardItem[]>([]);
-const lastSyncTime = ref('');
+const lastSyncTime = ref(ApiClient.getLastSyncTime());
 const isSyncing = ref(false);
 const showPinModal = ref(false);
 
@@ -164,6 +246,13 @@ const triggerToast = (msg: string, type: 'success' | 'error' | 'info' = 'success
   if (toastRef.value) {
     toastRef.value.show(msg, type);
   }
+};
+
+const checkStandaloneMode = () => {
+  const isMedia = window.matchMedia('(display-mode: standalone)').matches;
+  const isNav = (window.navigator as any).standalone === true;
+  const isAndroid = document.referrer.includes('android-app://');
+  isStandalone.value = isMedia || isNav || isAndroid;
 };
 
 const handleQuickThemeToggle = () => {
@@ -190,12 +279,18 @@ const performSync = async (incremental = false) => {
   isSyncing.value = true;
   try {
     const res = await ApiClient.pullSync(incremental);
+    // Also refresh R2 files metadata for comprehensive D1 + R2 sync
+    try {
+      await ApiClient.fetchFiles();
+    } catch (fe) {
+      console.warn('Failed to refresh files metadata during sync', fe);
+    }
     notes.value = res.notes;
     clipboardItems.value = res.clipboard;
     lastSyncTime.value = ApiClient.getLastSyncTime();
 
     if (res.error) {
-      triggerToast(`同步完成 (部分异常: ${res.error})`, 'info');
+      triggerToast(`同步完成 (部分提示: ${res.error})`, 'info');
     } else {
       triggerToast(`数据同步成功 (已加载 ${res.pulledCount} 条更新)`, 'success');
     }
@@ -235,6 +330,15 @@ onMounted(async () => {
     triggerToast('云端密码已在其他设备更新，请重新输入新密码', 'error');
   });
 
+  // Check PWA Standalone Mode
+  checkStandaloneMode();
+  try {
+    const mq = window.matchMedia('(display-mode: standalone)');
+    if (mq.addEventListener) {
+      mq.addEventListener('change', checkStandaloneMode);
+    }
+  } catch {}
+
   // Check Cloudflare D1 PIN lock status across all devices
   const isAuthorized = await checkAndApplyPinProtection();
 
@@ -244,10 +348,77 @@ onMounted(async () => {
     lastSyncTime.value = ApiClient.getLastSyncTime();
     performSync(true);
   }
+
+  // Align tabs scroll position on window resize / orientation change
+  window.addEventListener('resize', handleResize);
+});
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', handleResize);
+  clearTimeout(scrollEndTimer);
 });
 </script>
 
 <style scoped>
+/* Main Area ViewPager (CSS Scroll-Snap Native 120Hz Paging) */
+.app-main {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  display: flex;
+  flex-direction: row;
+  width: 100%;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  background-color: var(--bg-primary);
+}
+
+.app-main::-webkit-scrollbar {
+  display: none;
+}
+
+.app-main.lock-scroll {
+  overflow-x: hidden !important;
+  touch-action: pan-y !important;
+}
+
+.tab-page {
+  flex: 0 0 100%;
+  width: 100%;
+  height: 100%;
+  scroll-snap-align: start;
+  scroll-snap-stop: always;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.brand-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pwa-indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: var(--radius-full);
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  border: 1px solid rgba(34, 197, 94, 0.35);
+}
+
 .app-layout {
   display: flex;
   flex-direction: column;
@@ -371,16 +542,7 @@ onMounted(async () => {
   color: var(--text-primary);
 }
 
-/* Main Area */
-.app-main {
-  flex: 1;
-  min-height: 0;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  background-color: var(--bg-primary);
-}
+
 
 /* Bottom Navigation Bar (iOS / Android Safe Area adapted) */
 .bottom-nav {

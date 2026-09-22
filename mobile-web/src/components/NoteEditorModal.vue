@@ -1,98 +1,100 @@
 <template>
-  <transition name="sheet-slide" @after-leave="resetState">
-    <div
-      v-if="visible"
-      class="editor-overlay"
-      :style="overlayStyle"
-      @click.self="handleOverlayClick"
-    >
+  <Teleport to="body">
+    <transition :name="gestureDismissed ? '' : 'sheet-slide'" @after-leave="resetState">
       <div
-        class="editor-sheet"
-        :class="{ dragging: isDragging }"
-        :style="sheetStyle"
+        v-if="visible"
+        ref="overlayRef"
+        class="editor-overlay"
+        @click.self="handleOverlayClick"
       >
-        <!-- Top Drag Zone (Non-text Area with YouTube/iOS Pull-Down Gesture) -->
         <div
-          class="top-drag-zone"
-          @pointerdown="handlePointerDown"
-          @pointermove="handlePointerMove"
-          @pointerup="handlePointerUp"
-          @pointercancel="handlePointerCancel"
+          ref="sheetRef"
+          class="editor-sheet"
+          :class="{ dragging: isDragging }"
         >
-          <!-- Top Drag Indicator Bar -->
-          <div class="sheet-handle-bar">
-            <div class="sheet-handle" :class="{ active: isDragging }"></div>
-          </div>
-
-          <!-- Top Navigation / Action Header -->
-          <div class="editor-header">
-            <button class="btn btn-ghost btn-sm cancel-btn" @click="emit('close')">
-              取消
-            </button>
-
-            <!-- Edit / Preview Segmented Switcher (Vue-Bits style) -->
-            <div class="segmented-control mode-switch">
-              <button
-                class="segmented-btn"
-                :class="{ active: mode === 'edit' }"
-                @click="mode = 'edit'"
-              >
-                <Icons name="edit" size="14" />
-                <span>编辑</span>
-              </button>
-              <button
-                class="segmented-btn"
-                :class="{ active: mode === 'preview' }"
-                @click="mode = 'preview'"
-              >
-                <Icons name="eye" size="14" />
-                <span>预览</span>
-              </button>
+          <!-- Top Drag Zone (Non-text Area with YouTube/iOS Pull-Down Gesture) -->
+          <div
+            class="top-drag-zone"
+            @pointerdown="handlePointerDown"
+            @pointermove="handlePointerMove"
+            @pointerup="handlePointerUp"
+            @pointercancel="handlePointerCancel"
+          >
+            <!-- Top Drag Indicator Bar -->
+            <div class="sheet-handle-bar">
+              <div class="sheet-handle" :class="{ active: isDragging }"></div>
             </div>
 
-            <!-- Save Button -->
-            <button class="btn btn-primary btn-sm btn-glow save-btn" :disabled="saving" @click="save">
-              <Icons name="check" size="15" />
-              <span>{{ saving ? '保存中' : '保存' }}</span>
+            <!-- Top Navigation / Action Header -->
+            <div class="editor-header">
+              <button class="btn btn-ghost btn-sm cancel-btn" @click="emit('close')">
+                取消
+              </button>
+
+              <!-- Edit / Preview Segmented Switcher (Vue-Bits style) -->
+              <div class="segmented-control mode-switch">
+                <button
+                  class="segmented-btn"
+                  :class="{ active: mode === 'edit' }"
+                  @click="mode = 'edit'"
+                >
+                  <Icons name="edit" size="14" />
+                  <span>编辑</span>
+                </button>
+                <button
+                  class="segmented-btn"
+                  :class="{ active: mode === 'preview' }"
+                  @click="mode = 'preview'"
+                >
+                  <Icons name="eye" size="14" />
+                  <span>预览</span>
+                </button>
+              </div>
+
+              <!-- Save Button -->
+              <button class="btn btn-primary btn-sm btn-glow save-btn" :disabled="saving" @click="save">
+                <Icons name="check" size="15" />
+                <span>{{ saving ? '保存中' : '保存' }}</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Completely Solid Non-Transparent Canvas -->
+          <div class="editor-body">
+            <div v-if="mode === 'edit'" class="edit-canvas">
+              <textarea
+                v-model="content"
+                class="note-content-textarea"
+                placeholder="记录随想、待办或备忘... (支持 Markdown 语法)"
+              ></textarea>
+            </div>
+
+            <div v-else class="preview-canvas">
+              <div class="markdown-body" v-html="renderedMarkdown"></div>
+            </div>
+          </div>
+
+          <!-- Bottom Status & Actions Bar -->
+          <div class="editor-footer">
+            <button v-if="existingNote" class="btn-delete" @click="confirmDelete">
+              <Icons name="trash" size="15" />
+              <span>删除</span>
             </button>
-          </div>
-        </div>
+            <span v-else class="new-tag">全新便签</span>
 
-        <!-- Completely Solid Non-Transparent Canvas -->
-        <div class="editor-body">
-          <div v-if="mode === 'edit'" class="edit-canvas">
-            <textarea
-              v-model="content"
-              class="note-content-textarea"
-              placeholder="记录随想、待办或备忘... (支持 Markdown 语法)"
-            ></textarea>
-          </div>
-
-          <div v-else class="preview-canvas">
-            <div class="markdown-body" v-html="renderedMarkdown"></div>
-          </div>
-        </div>
-
-        <!-- Bottom Status & Actions Bar -->
-        <div class="editor-footer">
-          <button v-if="existingNote" class="btn-delete" @click="confirmDelete">
-            <Icons name="trash" size="15" />
-            <span>删除</span>
-          </button>
-          <span v-else class="new-tag">全新便签</span>
-
-          <div class="footer-meta">
-            <span class="char-count">{{ content.length }} 字</span>
-            <span v-if="existingNote" class="time-meta">• {{ formattedTime }}</span>
+            <div class="footer-meta">
+              <span class="char-count">{{ content.length }} 字</span>
+              <span v-if="existingNote" class="time-meta">• {{ formattedTime }}</span>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-  </transition>
+    </transition>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
-import { ref, watch, computed } from 'vue';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
 import { marked } from 'marked';
 import Icons from './Icons.vue';
 import { Note } from '../types';
@@ -115,53 +117,355 @@ const mode = ref<'edit' | 'preview'>('edit');
 const saving = ref(false);
 const existingNote = ref<Note | null>(null);
 
-// Pull-down gesture state (YouTube / iOS style)
-const translateY = ref(0);
+const overlayRef = ref<HTMLElement | null>(null);
+const sheetRef = ref<HTMLElement | null>(null);
+
+// High-performance direct GPU translation + rAF throttling
 const isDragging = ref(false);
 const isDismissing = ref(false);
-const startY = ref(0);
-const startTime = ref(0);
+const gestureDismissed = ref(false);
 
-const sheetStyle = computed(() => {
-  if (translateY.value === 0) return {};
-  return {
-    transform: `translateY(${translateY.value}px)`,
-  };
-});
+let currentTranslateY = 0;
+let pendingTranslateY = 0;
+let rafId: number | null = null;
+let gestureStartTime = 0;
 
-const overlayStyle = computed(() => {
-  if (translateY.value <= 0) return {};
-  const progress = Math.min(translateY.value / 400, 1);
-  const opacity = Math.max(0, 0.65 * (1 - progress));
-  return {
-    backgroundColor: `rgba(0, 0, 0, ${opacity})`,
-  };
-});
+// Mobile Touch tracking
+let touchStartY = 0;
+let touchStartX = 0;
+let touchLastY = 0;
+let pullStartY = 0;
+let isPulling = false;
+let isHorizontal = false;
+let activeScrollTarget: HTMLElement | null = null;
 
-const handleOverlayClick = () => {
-  if (!isDragging.value && !isDismissing.value) {
+const applySheetStyles = (y: number) => {
+  if (!sheetRef.value) return;
+  if (y <= 0) {
+    sheetRef.value.style.transform = '';
+    sheetRef.value.style.willChange = '';
+    if (overlayRef.value) overlayRef.value.style.backgroundColor = '';
+  } else {
+    sheetRef.value.style.willChange = 'transform';
+    sheetRef.value.style.transform = `translate3d(0, ${y}px, 0)`;
+    if (overlayRef.value) {
+      const progress = Math.min(y / 400, 1);
+      const opacity = Math.max(0, 0.65 * (1 - progress));
+      overlayRef.value.style.backgroundColor = `rgba(0, 0, 0, ${opacity})`;
+    }
+  }
+};
+
+const updateTranslate = (y: number) => {
+  pendingTranslateY = y;
+  if (rafId === null) {
+    rafId = requestAnimationFrame(() => {
+      currentTranslateY = pendingTranslateY;
+      applySheetStyles(pendingTranslateY);
+      rafId = null;
+    });
+  }
+};
+
+const dismissSheet = (velocity = 0) => {
+  // 1. Immediately cancel any pending rAF to prevent overwriting transform
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  isDismissing.value = true;
+  gestureDismissed.value = true;
+
+  const startY = pendingTranslateY || currentTranslateY;
+  const targetY = window.innerHeight;
+  const remainingDistance = Math.max(0, targetY - startY);
+
+  // Dynamic physics timing:
+  // If user is already halfway down, duration is proportionally shorter so it glides away without hesitation!
+  const baseDuration = (remainingDistance / (targetY || 1)) * 260;
+  const velocityFactor = Math.max(1, Math.min(3, velocity));
+  const durationMs = Math.round(Math.max(120, Math.min(240, baseDuration / velocityFactor)));
+
+  // 2. Hardware-accelerated GPU animation via Web Animations API (Zero layout recalculation)
+  if (sheetRef.value) {
+    sheetRef.value.style.willChange = 'transform';
+    const anim = sheetRef.value.animate(
+      [
+        { transform: `translate3d(0, ${startY}px, 0)` },
+        { transform: `translate3d(0, ${targetY}px, 0)` }
+      ],
+      {
+        duration: durationMs,
+        easing: 'cubic-bezier(0.2, 0.9, 0.3, 1)',
+        fill: 'forwards'
+      }
+    );
+
+    anim.onfinish = () => {
+      emit('close');
+      resetState();
+    };
+  } else {
     emit('close');
+    resetState();
+  }
+
+  // 3. Smooth backdrop fade
+  if (overlayRef.value) {
+    const currentProgress = Math.min(startY / 400, 1);
+    const startOpacity = Math.max(0, 0.65 * (1 - currentProgress));
+    overlayRef.value.animate(
+      [
+        { backgroundColor: `rgba(0, 0, 0, ${startOpacity})` },
+        { backgroundColor: 'rgba(0, 0, 0, 0)' }
+      ],
+      {
+        duration: durationMs,
+        easing: 'ease-out',
+        fill: 'forwards'
+      }
+    );
+  }
+};
+
+const springBack = () => {
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  const startY = pendingTranslateY || currentTranslateY;
+  if (startY <= 0) {
+    resetState();
+    return;
+  }
+
+  const durationMs = Math.round(Math.max(160, Math.min(240, (startY / 200) * 220)));
+
+  if (sheetRef.value) {
+    sheetRef.value.style.willChange = 'transform';
+    const anim = sheetRef.value.animate(
+      [
+        { transform: `translate3d(0, ${startY}px, 0)` },
+        { transform: 'translate3d(0, 0, 0)' }
+      ],
+      {
+        duration: durationMs,
+        easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+        fill: 'forwards'
+      }
+    );
+
+    anim.onfinish = () => {
+      resetState();
+    };
+  } else {
+    resetState();
+  }
+
+  if (overlayRef.value) {
+    const currentProgress = Math.min(startY / 400, 1);
+    const startOpacity = Math.max(0, 0.65 * (1 - currentProgress));
+    overlayRef.value.animate(
+      [
+        { backgroundColor: `rgba(0, 0, 0, ${startOpacity})` },
+        { backgroundColor: 'rgba(0, 0, 0, 0.65)' }
+      ],
+      {
+        duration: durationMs,
+        easing: 'ease-out',
+        fill: 'forwards'
+      }
+    );
   }
 };
 
 const resetState = () => {
-  translateY.value = 0;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  currentTranslateY = 0;
+  pendingTranslateY = 0;
   isDragging.value = false;
   isDismissing.value = false;
+  isPulling = false;
+  isHorizontal = false;
+  gestureDismissed.value = false;
+  activeScrollTarget = null;
+  if (sheetRef.value) {
+    sheetRef.value.style.transform = '';
+    sheetRef.value.style.transition = '';
+    sheetRef.value.style.willChange = '';
+  }
+  if (overlayRef.value) {
+    overlayRef.value.style.backgroundColor = '';
+    overlayRef.value.style.transition = '';
+  }
 };
 
-// Pointer Events for Smooth Touch and Mouse Gestures
+const handleOverlayClick = () => {
+  if (!isDragging.value && !isDismissing.value && !isPulling) {
+    emit('close');
+  }
+};
+
+// Locate active scrollable container under user's finger
+const getActiveScrollTarget = (target: HTMLElement | null): HTMLElement | null => {
+  if (!target) return null;
+  const textarea = target.closest('textarea');
+  if (textarea && textarea.scrollHeight > textarea.clientHeight + 2) {
+    return textarea;
+  }
+  const preview = target.closest('.preview-canvas') as HTMLElement | null;
+  if (preview && preview.scrollHeight > preview.clientHeight + 2) {
+    return preview;
+  }
+  const editorBody = target.closest('.editor-body') as HTMLElement | null;
+  if (editorBody && editorBody.scrollHeight > editorBody.clientHeight + 2) {
+    return editorBody;
+  }
+  return null;
+};
+
+let initialScrollTop = 0;
+
+// Mobile Touch Gestures (Nested Scrolling + Pull-Down to Dismiss)
+const handleTouchStart = (e: TouchEvent) => {
+  if (e.touches.length !== 1 || isDismissing.value) return;
+
+  const target = e.target as HTMLElement;
+  if (target.closest('button') || target.closest('input')) {
+    return;
+  }
+
+  const touch = e.touches[0];
+  touchStartY = touch.clientY;
+  touchStartX = touch.clientX;
+  touchLastY = touch.clientY;
+  pullStartY = touch.clientY;
+  gestureStartTime = Date.now();
+  isPulling = false;
+  isHorizontal = false;
+
+  activeScrollTarget = getActiveScrollTarget(target);
+  initialScrollTop = activeScrollTarget ? activeScrollTarget.scrollTop : 0;
+
+  // If touched on top drag handle bar or footer, immediately engage pulling
+  if (target.closest('.top-drag-zone') || target.closest('.editor-footer')) {
+    isPulling = true;
+    isDragging.value = true;
+    pullStartY = touch.clientY;
+  }
+};
+
+const handleTouchMove = (e: TouchEvent) => {
+  if (e.touches.length !== 1 || isDismissing.value) return;
+
+  const touch = e.touches[0];
+  const currentY = touch.clientY;
+  const currentX = touch.clientX;
+  const deltaX = currentX - touchStartX;
+  const deltaY = currentY - touchStartY;
+
+  // Lock horizontal gesture if user is swiping horizontally
+  if (!isPulling && !isHorizontal) {
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 8) {
+      isHorizontal = true;
+      return;
+    }
+  }
+  if (isHorizontal) return;
+
+  // If already actively pulling the sheet:
+  if (isPulling) {
+    const pullDistance = currentY - pullStartY;
+    if (pullDistance > 0) {
+      updateTranslate(pullDistance);
+      if (e.cancelable) e.preventDefault();
+    } else {
+      updateTranslate(0);
+      if (activeScrollTarget) {
+        // Pushed back above top: restore native content scrolling
+        isPulling = false;
+        isDragging.value = false;
+        pullStartY = currentY;
+      }
+    }
+    touchLastY = currentY;
+    return;
+  }
+
+  // Not pulling yet: user is touching inside content area
+  const movingDown = currentY > touchLastY;
+  const currentScrollTop = activeScrollTarget ? activeScrollTarget.scrollTop : 0;
+
+  if (movingDown && currentScrollTop <= 0) {
+    // Content has reached the top ("到顶了") and finger is moving down -> pull sheet down!
+    isPulling = true;
+    isDragging.value = true;
+    pullStartY = initialScrollTop <= 0 ? touchStartY : currentY;
+    gestureStartTime = Date.now();
+
+    // Blur active keyboard so screen transitions cleanly
+    if (document.activeElement instanceof HTMLElement && document.activeElement.tagName === 'TEXTAREA') {
+      document.activeElement.blur();
+    }
+
+    const pullDistance = currentY - pullStartY;
+    updateTranslate(pullDistance);
+    if (e.cancelable) e.preventDefault();
+  }
+
+  touchLastY = currentY;
+};
+
+const handleTouchEnd = () => {
+  if (!isPulling) return;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  isPulling = false;
+  isDragging.value = false;
+
+  const currentY = pendingTranslateY || currentTranslateY;
+  const timeElapsed = Date.now() - gestureStartTime;
+  const velocity = currentY / (timeElapsed || 1);
+
+  if (currentY > 70 || (currentY > 25 && velocity > 0.32)) {
+    dismissSheet(velocity);
+  } else {
+    springBack();
+  }
+};
+
+const handleTouchCancel = () => {
+  if (isPulling) {
+    if (rafId !== null) {
+      cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    isPulling = false;
+    isDragging.value = false;
+    springBack();
+  }
+};
+
+// Pointer Events for Desktop Mouse Dragging on Top Drag Zone
+let mouseStartY = 0;
+let mouseStartTime = 0;
+let isMouseDragging = false;
+
 const handlePointerDown = (e: PointerEvent) => {
-  // Ignore clicks on buttons, inputs, or interactive controls
+  if (e.pointerType === 'touch') return;
   const target = e.target as HTMLElement;
   if (target.closest('button') || target.closest('input') || target.closest('textarea')) {
     return;
   }
-
+  isMouseDragging = true;
   isDragging.value = true;
-  isDismissing.value = false;
-  startY.value = e.clientY;
-  startTime.value = Date.now();
+  mouseStartY = e.clientY;
+  mouseStartTime = Date.now();
 
   const el = e.currentTarget as HTMLElement;
   if (el && el.setPointerCapture) {
@@ -172,38 +476,32 @@ const handlePointerDown = (e: PointerEvent) => {
 };
 
 const handlePointerMove = (e: PointerEvent) => {
-  if (!isDragging.value || isDismissing.value) return;
-
-  const delta = e.clientY - startY.value;
+  if (e.pointerType === 'touch' || !isMouseDragging || isDismissing.value) return;
+  const delta = e.clientY - mouseStartY;
   if (delta > 0) {
-    // Pulling down: 1:1 direct tracking
-    translateY.value = delta;
+    updateTranslate(delta);
   } else {
-    // Pulling up: rubber-band elastic resistance
-    translateY.value = delta * 0.15;
+    updateTranslate(delta * 0.15);
   }
 };
 
 const handlePointerUp = (e: PointerEvent) => {
-  if (!isDragging.value) return;
+  if (e.pointerType === 'touch' || !isMouseDragging) return;
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+    rafId = null;
+  }
+  isMouseDragging = false;
   isDragging.value = false;
 
-  const delta = e.clientY - startY.value;
-  const timeElapsed = Date.now() - startTime.value;
-  const velocity = delta / (timeElapsed || 1); // px per ms
+  const delta = e.clientY - mouseStartY;
+  const timeElapsed = Date.now() - mouseStartTime;
+  const velocity = delta / (timeElapsed || 1);
 
-  // Threshold: Dragged down > 70px OR fast downward flick velocity > 0.35
-  if (delta > 70 || (delta > 25 && velocity > 0.35)) {
-    isDismissing.value = true;
-    // Animate smoothly to bottom of screen
-    translateY.value = window.innerHeight;
-    setTimeout(() => {
-      emit('close');
-      resetState();
-    }, 220);
+  if (delta > 70 || (delta > 25 && velocity > 0.32)) {
+    dismissSheet(velocity);
   } else {
-    // Spring back to top
-    translateY.value = 0;
+    springBack();
   }
 
   const el = e.currentTarget as HTMLElement;
@@ -215,10 +513,41 @@ const handlePointerUp = (e: PointerEvent) => {
 };
 
 const handlePointerCancel = (e: PointerEvent) => {
-  if (!isDragging.value) return;
+  if (e.pointerType === 'touch' || !isMouseDragging) return;
+  isMouseDragging = false;
   isDragging.value = false;
-  translateY.value = 0;
+  springBack();
 };
+
+watch(
+  () => sheetRef.value,
+  (newEl, oldEl) => {
+    if (oldEl) {
+      oldEl.removeEventListener('touchstart', handleTouchStart);
+      oldEl.removeEventListener('touchmove', handleTouchMove);
+      oldEl.removeEventListener('touchend', handleTouchEnd);
+      oldEl.removeEventListener('touchcancel', handleTouchCancel);
+    }
+    if (newEl) {
+      newEl.addEventListener('touchstart', handleTouchStart, { passive: true });
+      newEl.addEventListener('touchmove', handleTouchMove, { passive: false });
+      newEl.addEventListener('touchend', handleTouchEnd, { passive: true });
+      newEl.addEventListener('touchcancel', handleTouchCancel, { passive: true });
+    }
+  }
+);
+
+onBeforeUnmount(() => {
+  if (sheetRef.value) {
+    sheetRef.value.removeEventListener('touchstart', handleTouchStart);
+    sheetRef.value.removeEventListener('touchmove', handleTouchMove);
+    sheetRef.value.removeEventListener('touchend', handleTouchEnd);
+    sheetRef.value.removeEventListener('touchcancel', handleTouchCancel);
+  }
+  if (rafId !== null) {
+    cancelAnimationFrame(rafId);
+  }
+});
 
 watch(
   () => props.note,
@@ -422,6 +751,8 @@ const confirmDelete = async () => {
   opacity: 1 !important;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }
 
 .edit-canvas {
@@ -467,6 +798,8 @@ const confirmDelete = async () => {
   resize: none;
   font-family: inherit;
   outline: none;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }
 
 .note-content-textarea::placeholder {
@@ -479,6 +812,8 @@ const confirmDelete = async () => {
   padding: 20px 22px;
   overflow-y: auto;
   background-color: var(--bg-secondary) !important;
+  overscroll-behavior-y: contain;
+  touch-action: pan-y;
 }
 
 .preview-title {

@@ -46,10 +46,16 @@ class ClipboardItem {
       'content': content,
       'timestamp': timestamp.toIso8601String(),
       'isPinned': isFavorite,
+      'isFavorite': isFavorite,
+      'is_favorite': isFavorite ? 1 : 0,
       'appName': appName,
+      'app_name': appName,
       'appIconPath': appIconPath,
+      'app_icon_path': appIconPath,
       'imagePath': imagePath,
+      'image_path': imagePath,
       'imageSignature': imageSignature,
+      'image_signature': imageSignature,
     };
   }
 

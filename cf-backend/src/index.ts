@@ -53,11 +53,13 @@ export default {
         response = await handleFilesMetadata(env, url);
       } else if (path === '/api/v1/files/upload' && method === 'POST') {
         response = await handleFileUpload(request, env);
-      } else if (path.startsWith('/api/v1/files/') && method === 'GET') {
-        const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
+      } else if (path.startsWith('/api/v1/files/') && (method === 'GET' || method === 'HEAD')) {
+        const queryKey = url.searchParams.get('fileKey') || url.searchParams.get('key');
+        const fileKey = queryKey || decodeURIComponent(path.replace('/api/v1/files/', ''));
         response = await handleFileGet(fileKey, env);
       } else if (path.startsWith('/api/v1/files/') && method === 'DELETE') {
-        const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
+        const queryKey = url.searchParams.get('fileKey') || url.searchParams.get('key');
+        const fileKey = queryKey || decodeURIComponent(path.replace('/api/v1/files/', ''));
         response = await handleFileDelete(fileKey, env);
       } else if (path === '/api/v1/pin' && method === 'GET') {
         response = await handlePinGet(env);
@@ -65,8 +67,22 @@ export default {
         response = await handlePinVerify(request, env);
       } else if (path === '/api/v1/pin/set' && method === 'POST') {
         response = await handlePinSet(request, env);
+      } else if (path === '/api/v1/admin/cleanup' && (method === 'POST' || method === 'GET')) {
+        response = await handleAdminCleanup(request, env);
       } else if (env.ASSETS) {
-        return await env.ASSETS.fetch(request);
+        const assetRes = await env.ASSETS.fetch(request);
+        if (path === '/' || path.endsWith('.html')) {
+          const htmlHeaders = new Headers(assetRes.headers);
+          htmlHeaders.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+          htmlHeaders.set('Pragma', 'no-cache');
+          htmlHeaders.set('Expires', '0');
+          return new Response(assetRes.body, {
+            status: assetRes.status,
+            statusText: assetRes.statusText,
+            headers: htmlHeaders,
+          });
+        }
+        return assetRes;
       } else {
         response = new Response(JSON.stringify({ error: 'Endpoint Not Found', path }), {
           status: 404,
@@ -139,8 +155,10 @@ async function handlePullSync(request: Request, env: Env, url: URL): Promise<Res
 
   // 查笔记
   const notesStmt = env.DB.prepare('SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since);
-  // 查剪贴板
-  const clipboardsStmt = env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since);
+  // 查剪贴板: 增量拉取时同时确保所有有效收藏 (is_favorite = 1 且未删除) 均能返回，防止客户端丢失收藏
+  const clipboardsStmt = since === '1970-01-01T00:00:00.000Z'
+    ? env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since)
+    : env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? OR (is_favorite = 1 AND is_deleted = 0) ORDER BY updated_at ASC LIMIT 500').bind(since);
   // 查设置
   const settingsStmt = env.DB.prepare('SELECT * FROM app_settings WHERE updated_at > ?').bind(since);
 
@@ -425,8 +443,27 @@ async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
       const files = listRes.objects
         .filter((obj) => {
           const key = obj.key;
+          const lowerKey = key.toLowerCase();
+          // 绝对排除系统安装包、执行文件与更新信息
+          if (
+            lowerKey.endsWith('.exe') ||
+            lowerKey.endsWith('.dmg') ||
+            lowerKey.endsWith('.pkg') ||
+            lowerKey.endsWith('.setup') ||
+            lowerKey.endsWith('.iss') ||
+            lowerKey.endsWith('.msi') ||
+            key === 'release_info.json'
+          ) {
+            return false;
+          }
+          // 排除隐藏文件
+          if (key.includes('/.') || key.startsWith('.')) return false;
+          // 仅允许 files/ 目录与 clipboard_images/ 目录下的有效业务文件
+          if (!key.startsWith('files/') && !key.startsWith('clipboard_images/')) {
+            return false;
+          }
           if (scope === 'files') {
-            if (key.includes('/.') || key.startsWith('files/.')) return false;
+            if (!key.startsWith('files/') || key.startsWith('files/.')) return false;
           }
           return true;
         })
@@ -648,4 +685,131 @@ async function handlePinSet(request: Request, env: Env): Promise<Response> {
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+}
+
+// 运维专用：全面清洗 pod-quick-files 存储桶与 D1 file_metadata 表
+async function handleAdminCleanup(request: Request, env: Env): Promise<Response> {
+  const isAuthed = await validatePinToken(request, env);
+  if (!isAuthed) {
+    return new Response(JSON.stringify({ error: 'Unauthorized: Invalid PIN token' }), { status: 401 });
+  }
+  if (!env.FILES_BUCKET) {
+    return new Response(JSON.stringify({ error: 'FILES_BUCKET is not configured' }), { status: 500 });
+  }
+
+  // 1. 获取 D1 中所有有效（未删除）的剪贴板图片路径
+  const activeClipImages = new Set<string>();
+  try {
+    const clipRows = await env.DB.prepare(
+      'SELECT image_path FROM clipboard_items WHERE image_path IS NOT NULL AND is_deleted = 0'
+    ).all<{ image_path: string }>();
+    (clipRows.results || []).forEach((row) => {
+      if (row.image_path) {
+        activeClipImages.add(row.image_path.trim().replaceAll('\\', '/'));
+      }
+    });
+  } catch (e) {
+    console.error('Failed to query clipboard_items in cleanup:', e);
+  }
+
+  // 2. 遍历 R2 pod-quick-files 存储桶中的所有对象
+  let truncated = true;
+  let cursor: string | undefined = undefined;
+  const deletedFiles: string[] = [];
+  const keptFiles: string[] = [];
+
+  while (truncated) {
+    const listRes = await env.FILES_BUCKET.list({ cursor, limit: 1000 });
+    for (const obj of listRes.objects) {
+      const key = obj.key;
+      const lowerKey = key.toLowerCase();
+
+      let shouldDelete = false;
+      let reason = '';
+
+      // A. 安装包、执行文件与发布元数据（绝对不该在 pod-quick-files 用户数据桶）
+      if (
+        lowerKey.endsWith('.exe') ||
+        lowerKey.endsWith('.dmg') ||
+        lowerKey.endsWith('.pkg') ||
+        lowerKey.endsWith('.setup') ||
+        lowerKey.endsWith('.iss') ||
+        lowerKey.endsWith('.msi') ||
+        key === 'release_info.json'
+      ) {
+        shouldDelete = true;
+        reason = '软件安装包/发布配置 (应属于 pod-quick 分发桶)';
+      }
+      // B. 回收站文件与隐藏文件
+      else if (
+        key.includes('/.trash/') ||
+        key.startsWith('files/.trash/') ||
+        key.startsWith('.trash/') ||
+        key.includes('/.') ||
+        key.startsWith('.')
+      ) {
+        shouldDelete = true;
+        reason = '回收站或隐藏残留文件';
+      }
+      // C. 孤立剪贴板图片（不在 D1 活跃记录中）
+      else if (key.startsWith('clipboard_images/')) {
+        const normKey = key.replaceAll('\\', '/');
+        if (!activeClipImages.has(normKey)) {
+          shouldDelete = true;
+          reason = '已删除或孤立剪贴板图片';
+        }
+      }
+      // D. 根目录非业务文件（非 files/ 且非 clipboard_images/）
+      else if (!key.startsWith('files/')) {
+        shouldDelete = true;
+        reason = '非规范目录冗余文件';
+      }
+
+      if (shouldDelete) {
+        try {
+          await env.FILES_BUCKET.delete(key);
+          deletedFiles.push(`${key} [${reason}]`);
+        } catch (delErr) {
+          console.error(`Failed to delete ${key}:`, delErr);
+        }
+      } else {
+        keptFiles.push(key);
+      }
+    }
+
+    truncated = listRes.truncated;
+    cursor = listRes.truncated ? (listRes as any).cursor : undefined;
+  }
+
+  // 3. 清理 D1 file_metadata 数据库中的冗余记录
+  let d1DeletedCount = 0;
+  try {
+    const d1Res = await env.DB.prepare(
+      `DELETE FROM file_metadata
+       WHERE file_key LIKE '%/.trash/%'
+          OR file_key LIKE 'files/.trash/%'
+          OR file_key LIKE '.trash/%'
+          OR file_key LIKE '%.exe'
+          OR file_key LIKE '%.dmg'
+          OR file_key LIKE '%.setup'
+          OR file_key = 'release_info.json'
+          OR (file_key NOT LIKE 'files/%' AND file_key NOT LIKE 'clipboard_images/%')`
+    ).run();
+    d1DeletedCount = d1Res.meta?.changes || 0;
+  } catch (d1Err) {
+    console.error('Failed to clean file_metadata in D1:', d1Err);
+  }
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      summary: `清洗完成！R2 pod-quick-files 物理删除 ${deletedFiles.length} 个冗余文件，保留 ${keptFiles.length} 个有效业务文件；D1 清理 ${d1DeletedCount} 条冗余元数据。`,
+      deletedR2Count: deletedFiles.length,
+      keptR2Count: keptFiles.length,
+      deletedD1Count: d1DeletedCount,
+      deletedFiles,
+      keptFiles,
+    }),
+    { headers: { 'Content-Type': 'application/json' } }
+  );
 }

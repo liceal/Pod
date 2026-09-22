@@ -49,34 +49,54 @@
           v-for="item in filteredItems"
           :key="item.id"
           class="card clip-card"
-          :class="{ 'has-image': item.image_path }"
+          :class="{
+            'has-image': item.image_path,
+            'pure-image-card': isPureImage(item),
+            'color-item-card': detectItemType(item) === 'COLOR'
+          }"
+          @click="handleCardClick(item)"
         >
           <!-- Card Top: Meta & App info -->
           <div class="card-meta">
             <div class="app-info">
               <span v-if="item.app_name" class="badge">{{ item.app_name }}</span>
-              <span v-else-if="item.image_path" class="badge badge-accent">图片</span>
+              <span v-else-if="detectItemType(item) === 'IMAGE'" class="badge badge-accent">图片</span>
+              <span v-else-if="detectItemType(item) === 'COLOR'" class="badge badge-color">颜色</span>
+              <span v-else-if="detectItemType(item) === 'DATETIME'" class="badge badge-datetime">时间戳</span>
+              <span v-else-if="detectItemType(item) === 'URL'" class="badge badge-url">链接</span>
               <span v-else class="badge">文本</span>
               <span class="time-text">{{ formatTime(item.timestamp) }}</span>
             </div>
 
-            <!-- Copy button -->
-            <button
-              class="copy-action-btn"
-              :class="{ copied: copiedId === item.id }"
-              @click="copyContent(item)"
-              title="复制到手机剪切板"
-            >
-              <Icons :name="copiedId === item.id ? 'check' : 'copy'" size="14" />
-              <span>{{ copiedId === item.id ? '已复制' : '复制' }}</span>
-            </button>
+            <!-- Action buttons -->
+            <div class="card-actions-group">
+              <button
+                class="fav-action-btn"
+                :class="{ active: isFav(item) }"
+                @click.stop="toggleFavorite(item)"
+                :title="isFav(item) ? '取消收藏' : '加入收藏'"
+              >
+                <Icons :name="isFav(item) ? 'star-filled' : 'star'" size="15" />
+              </button>
+
+              <!-- Copy button -->
+              <button
+                class="copy-action-btn"
+                :class="{ copied: copiedId === item.id }"
+                @click.stop="copyContent(item)"
+                title="复制到手机剪切板"
+              >
+                <Icons :name="copiedId === item.id ? 'check' : 'copy'" size="14" />
+                <span>{{ copiedId === item.id ? '已复制' : '复制' }}</span>
+              </button>
+            </div>
           </div>
 
-          <!-- Image Preview if clipboard image -->
+          <!-- 1. Pure Image Preview (Directly shown, no [图片] text, no drawer hint) -->
           <div
             v-if="item.image_path"
             class="clip-image-preview"
-            @click="previewImage(item)"
+            @click.stop="previewImage(item)"
           >
             <img
               :src="getImageUrl(item.image_path)"
@@ -85,18 +105,52 @@
             />
           </div>
 
-          <!-- Card Content Body -->
+          <!-- 2. Color Preview Card (Live Color Swatch & Code) -->
           <div
-            v-if="item.content"
-            class="clip-text"
-            :class="{ expanded: expandedId === item.id }"
-            @click="toggleExpand(item.id)"
+            v-else-if="detectItemType(item) === 'COLOR' && parseColor(item.content)"
+            class="color-card-body"
           >
-            {{ item.content }}
+            <div class="color-preview-box-wrapper">
+              <div
+                class="color-preview-box"
+                :style="{ backgroundColor: parseColor(item.content)!.cssColor }"
+              ></div>
+            </div>
+            <div class="color-info-col">
+              <div class="color-val-row">
+                <span class="color-val-text">{{ parseColor(item.content)!.hex }}</span>
+                <span v-if="parseColor(item.content)!.isTransparent" class="color-sub-badge">透明色</span>
+              </div>
+              <span class="color-rgb-text">{{ parseColor(item.content)!.rgb }}</span>
+            </div>
           </div>
 
-          <!-- Card Footer Actions (Links / Expand toggle) -->
-          <div class="card-footer-actions">
+          <!-- 3. DateTime Preview Card (Human-readable local time) -->
+          <div
+            v-else-if="detectItemType(item) === 'DATETIME' && parseTimestamp(item.content)"
+            class="datetime-card-body"
+          >
+            <div class="datetime-icon-box">
+              <Icons name="history" size="18" />
+            </div>
+            <div class="datetime-info-col">
+              <span class="datetime-primary-text">{{ parseTimestamp(item.content)!.formattedLocal }}</span>
+              <span class="datetime-sub-text">
+                {{ parseTimestamp(item.content)!.weekday }} · {{ parseTimestamp(item.content)!.relativeTime }}
+              </span>
+            </div>
+          </div>
+
+          <!-- 4. Text Content Body (Strip placeholder [图片]) -->
+          <div
+            v-else-if="getDisplayContent(item)"
+            class="clip-text"
+          >
+            {{ getDisplayContent(item) }}
+          </div>
+
+          <!-- Card Footer Actions (Only for non-pure-images) -->
+          <div v-if="!isPureImage(item)" class="card-footer-actions">
             <a
               v-if="isUrl(item.content)"
               :href="item.content"
@@ -108,13 +162,10 @@
               <span>访问网页</span>
             </a>
 
-            <button
-              v-if="item.content && item.content.length > 120"
-              class="expand-toggle-btn"
-              @click.stop="toggleExpand(item.id)"
-            >
-              {{ expandedId === item.id ? '收起' : '展开全文' }}
-            </button>
+            <span class="card-detail-hint">
+              <span>{{ detectItemType(item) === 'COLOR' ? '查看色彩格式' : detectItemType(item) === 'DATETIME' ? '查看时间详情' : '轻触查看详情' }}</span>
+              <Icons name="chevron-right" size="12" />
+            </span>
           </div>
         </div>
       </div>
@@ -127,6 +178,16 @@
       :title="activeImageTitle"
       @close="isImageModalOpen = false"
     />
+
+    <!-- Clipboard Detail Modal (Bottom Sheet with nested scroll pull-down dismiss) -->
+    <ClipboardDetailModal
+      :visible="isDetailOpen"
+      :item="activeClipItem"
+      @close="isDetailOpen = false"
+      @toggle-favorite="toggleFavorite"
+      @preview-image="previewImage"
+      @toast="(msg, type) => emit('toast', msg, type)"
+    />
   </div>
 </template>
 
@@ -134,8 +195,17 @@
 import { ref, computed } from 'vue';
 import Icons from '../components/Icons.vue';
 import ImageModal from '../components/ImageModal.vue';
+import ClipboardDetailModal from '../components/ClipboardDetailModal.vue';
 import { ClipboardItem } from '../types';
 import { ApiClient } from '../api/client';
+import {
+  parseColor,
+  parseTimestamp,
+  isUrl,
+  isPureImage,
+  getDisplayContent,
+  detectItemType,
+} from '../utils/typeDetector';
 
 const props = defineProps<{
   items: ClipboardItem[];
@@ -148,23 +218,42 @@ const emit = defineEmits<{
 const searchQuery = ref('');
 const currentTab = ref<'all' | 'fav' | 'image' | 'links'>('all');
 const copiedId = ref<string | null>(null);
-const expandedId = ref<string | null>(null);
+
+const isDetailOpen = ref(false);
+const activeClipItem = ref<ClipboardItem | null>(null);
+
+const handleCardClick = (item: ClipboardItem) => {
+  if (isPureImage(item)) {
+    previewImage(item);
+  } else {
+    openDetailModal(item);
+  }
+};
+
+const openDetailModal = (item: ClipboardItem) => {
+  activeClipItem.value = item;
+  isDetailOpen.value = true;
+};
 
 const isImageModalOpen = ref(false);
 const activeImageUrl = ref('');
 const activeImageTitle = ref('');
 
+const isFav = (item: ClipboardItem): boolean => {
+  return Boolean(
+    item.is_favorite === 1 ||
+    item.is_favorite === true ||
+    (item as any).isFavorite === true ||
+    (item as any).isPinned === true
+  );
+};
+
 const tabs = computed(() => [
   { id: 'all' as const, name: '全部', count: props.items.length },
-  { id: 'image' as const, name: '图片', count: props.items.filter((i) => !!i.image_path).length },
-  { id: 'links' as const, name: '链接', count: props.items.filter((i) => isUrl(i.content)).length },
-  { id: 'fav' as const, name: '收藏', count: props.items.filter((i) => !!i.is_favorite).length },
+  { id: 'image' as const, name: '图片', count: props.items.filter((i) => detectItemType(i) === 'IMAGE').length },
+  { id: 'links' as const, name: '链接', count: props.items.filter((i) => detectItemType(i) === 'URL').length },
+  { id: 'fav' as const, name: '收藏', count: props.items.filter(isFav).length },
 ]);
-
-const isUrl = (text?: string): boolean => {
-  if (!text) return false;
-  return /^https?:\/\/[^\s/$.?#].[^\s]*$/i.test(text.trim());
-};
 
 const getImageUrl = (imagePath: string): string => {
   if (imagePath.startsWith('http')) return imagePath;
@@ -194,11 +283,11 @@ const filteredItems = computed(() => {
   let list = props.items;
 
   if (currentTab.value === 'image') {
-    list = list.filter((i) => !!i.image_path);
+    list = list.filter((i) => detectItemType(i) === 'IMAGE');
   } else if (currentTab.value === 'links') {
-    list = list.filter((i) => isUrl(i.content));
+    list = list.filter((i) => detectItemType(i) === 'URL');
   } else if (currentTab.value === 'fav') {
-    list = list.filter((i) => !!i.is_favorite);
+    list = list.filter(isFav);
   }
 
   if (searchQuery.value.trim()) {
@@ -212,43 +301,66 @@ const filteredItems = computed(() => {
   return list;
 });
 
-const toggleExpand = (id: string) => {
-  expandedId.value = expandedId.value === id ? null : id;
-};
-
 const copyContent = async (item: ClipboardItem) => {
-  const textToCopy = item.content || item.image_path || '';
+  let textToCopy = getDisplayContent(item) || item.content || item.image_path || '';
+  const itemType = detectItemType(item);
+  let successMsg = '已复制到剪切板';
+
+  if (itemType === 'IMAGE') {
+    textToCopy = getImageUrl(item.image_path || '');
+    successMsg = '已复制图片链接';
+  } else if (itemType === 'COLOR') {
+    const c = parseColor(item.content);
+    if (c) {
+      textToCopy = c.hex;
+      successMsg = `已复制 HEX 色值 (${c.hex})`;
+    }
+  } else if (itemType === 'DATETIME') {
+    const dt = parseTimestamp(item.content);
+    if (dt) {
+      textToCopy = dt.formattedLocal;
+      successMsg = `已复制时间 (${dt.formattedLocal})`;
+    }
+  }
+
   if (!textToCopy) return;
 
   try {
     if (navigator.clipboard && navigator.clipboard.writeText) {
       await navigator.clipboard.writeText(textToCopy);
     } else {
-      const ta = document.createElement('textarea');
-      ta.value = textToCopy;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
-      document.body.appendChild(ta);
-      ta.focus();
-      ta.select();
+      const textarea = document.createElement('textarea');
+      textarea.value = textToCopy;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
       document.execCommand('copy');
-      document.body.removeChild(ta);
+      document.body.removeChild(textarea);
     }
-
-    if (navigator.vibrate) {
-      navigator.vibrate(30);
-    }
-
     copiedId.value = item.id;
-    emit('toast', '已复制到手机剪切板', 'success');
-
+    emit('toast', successMsg, 'success');
     setTimeout(() => {
-      if (copiedId.value === item.id) {
-        copiedId.value = null;
-      }
+      if (copiedId.value === item.id) copiedId.value = null;
     }, 2000);
   } catch (err) {
-    emit('toast', '复制失败，请手动长按复制', 'error');
+    emit('toast', '复制失败，请手动选取复制', 'error');
+  }
+};
+
+const toggleFavorite = async (item: ClipboardItem) => {
+  const currentFav = isFav(item);
+  const nextFav = !currentFav;
+  item.is_favorite = nextFav ? 1 : 0;
+  (item as any).isPinned = nextFav;
+  (item as any).isFavorite = nextFav;
+  item.updated_at = new Date().toISOString();
+
+  const res = await ApiClient.saveClipboardItem(item);
+  if (res.success) {
+    emit('toast', nextFav ? '已加入收藏' : '已取消收藏', 'success');
+  } else {
+    emit('toast', `收藏更新失败: ${res.error || '未知错误'}`, 'error');
   }
 };
 </script>
@@ -399,6 +511,38 @@ const copyContent = async (item: ClipboardItem) => {
   color: var(--text-muted);
 }
 
+.card-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fav-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border-color);
+  background-color: var(--bg-tertiary);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.16s ease;
+  touch-action: manipulation;
+  padding: 0;
+}
+
+.fav-action-btn:active {
+  transform: scale(0.9);
+}
+
+.fav-action-btn.active {
+  background: rgba(245, 158, 11, 0.15);
+  border-color: rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+}
+
 .copy-action-btn {
   display: flex;
   align-items: center;
@@ -442,20 +586,42 @@ const copyContent = async (item: ClipboardItem) => {
   object-fit: cover;
 }
 
+.pure-image-card .clip-image-preview {
+  margin: 6px 0 2px;
+  max-height: 240px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.pure-image-card .clip-image-preview img {
+  max-height: 240px;
+  object-fit: contain;
+}
+
+.clip-card {
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.clip-card:active {
+  transform: scale(0.985);
+}
+
 .clip-text {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 4.8em;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  position: relative;
+  text-overflow: ellipsis;
   font-family: inherit;
-}
-
-.clip-text.expanded {
-  max-height: none;
+  margin: 4px 0 6px;
 }
 
 .card-footer-actions {
@@ -475,12 +641,146 @@ const copyContent = async (item: ClipboardItem) => {
   text-decoration: none;
 }
 
-.expand-toggle-btn {
-  background: transparent;
-  border: none;
+.card-detail-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--accent-color);
+  font-size: 11.5px;
+  font-weight: 500;
+  margin-left: auto;
+  opacity: 0.85;
+}
+
+/* Badges for types */
+.badge-color {
+  background: rgba(236, 72, 153, 0.15);
+  color: #ec4899;
+  border-color: rgba(236, 72, 153, 0.3);
+}
+
+.badge-datetime {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border-color: rgba(16, 185, 129, 0.3);
+}
+
+.badge-url {
+  background: rgba(14, 165, 233, 0.15);
+  color: #0ea5e9;
+  border-color: rgba(14, 165, 233, 0.3);
+}
+
+/* Color Card Body in List */
+.color-card-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin: 6px 0;
+}
+
+.color-preview-box-wrapper {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  overflow: hidden;
+  background-image: linear-gradient(45deg, rgba(128, 128, 128, 0.2) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(128, 128, 128, 0.2) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(128, 128, 128, 0.2) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(128, 128, 128, 0.2) 75%);
+  background-size: 8px 8px;
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.color-preview-box {
+  width: 100%;
+  height: 100%;
+}
+
+.color-info-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.color-val-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.color-val-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.color-sub-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(245, 158, 11, 0.15);
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+.color-rgb-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11.5px;
   color: var(--text-muted);
-  font-size: 12px;
-  cursor: pointer;
-  padding: 2px 4px;
+}
+
+/* Datetime Card Body in List */
+.datetime-card-body {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  margin: 6px 0;
+}
+
+.datetime-icon-box {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.datetime-info-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.datetime-primary-text {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.datetime-sub-text {
+  font-size: 11.5px;
+  color: var(--text-muted);
 }
 </style>

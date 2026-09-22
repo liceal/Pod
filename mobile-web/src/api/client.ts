@@ -10,18 +10,22 @@ const STORAGE_KEY_CLIPBOARD = 'unclutter_cached_clipboard';
 const STORAGE_KEY_FILES = 'unclutter_cached_files';
 
 export class ApiClient {
-  private static defaultBaseUrl = 'https://your-subdomain.workers.dev';
+  private static defaultBaseUrl = 'https://your-domain.com';
 
   public static getBaseUrl(): string {
     const saved = localStorage.getItem(STORAGE_KEY_WORKER_URL);
-    if (saved && saved.trim()) {
+    if (saved && saved.trim() && !saved.includes('workers.dev')) {
       return saved.trim().replace(/\/+$/, '');
     }
-    // If hosted on worker directly, use origin
-    if (typeof window !== 'undefined' && window.location.origin.includes('workers.dev')) {
+    // If hosted in browser (custom domain your-domain.com, localhost, or worker), dynamically use origin!
+    if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) {
       return window.location.origin;
     }
     return this.defaultBaseUrl;
+  }
+
+  public static getWorkerUrl(): string {
+    return this.getBaseUrl();
   }
 
   public static setBaseUrl(url: string) {
@@ -207,19 +211,35 @@ export class ApiClient {
     }
   }
 
+  private static inMemoryLastSyncTime = '';
+
   public static getLastSyncTime(): string {
-    return localStorage.getItem(STORAGE_KEY_LAST_SYNC) || '1970-01-01T00:00:00.000Z';
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY_LAST_SYNC);
+      if (stored) return stored;
+    } catch (e) {
+      console.warn('Failed to read last sync time from localStorage', e);
+    }
+    return this.inMemoryLastSyncTime || '1970-01-01T00:00:00.000Z';
   }
 
   public static setLastSyncTime(iso: string) {
-    localStorage.setItem(STORAGE_KEY_LAST_SYNC, iso);
+    this.inMemoryLastSyncTime = iso;
+    try {
+      localStorage.setItem(STORAGE_KEY_LAST_SYNC, iso);
+    } catch (e) {
+      console.warn('Failed to save last sync time to localStorage', e);
+    }
   }
 
   public static clearCache() {
-    localStorage.removeItem(STORAGE_KEY_NOTES);
-    localStorage.removeItem(STORAGE_KEY_CLIPBOARD);
-    localStorage.removeItem(STORAGE_KEY_FILES);
-    localStorage.removeItem(STORAGE_KEY_LAST_SYNC);
+    this.inMemoryLastSyncTime = '';
+    try {
+      localStorage.removeItem(STORAGE_KEY_NOTES);
+      localStorage.removeItem(STORAGE_KEY_CLIPBOARD);
+      localStorage.removeItem(STORAGE_KEY_FILES);
+      localStorage.removeItem(STORAGE_KEY_LAST_SYNC);
+    } catch {}
   }
 
   // Full Pull Sync
@@ -253,6 +273,10 @@ export class ApiClient {
         throw new Error(json.error || '返回数据格式不正确');
       }
 
+      // Immediately record successful sync time
+      const syncTimeIso = new Date().toISOString();
+      this.setLastSyncTime(syncTimeIso);
+
       // Merge notes
       const existingNotes = this.getCachedNotes();
       const notesMap = new Map<string, Note>();
@@ -263,17 +287,26 @@ export class ApiClient {
         .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime());
       this.setCachedNotes(mergedNotes);
 
-      // Merge clipboard
+      // Merge clipboard: Always preserve ALL favorited items so they are never lost!
+      // In addition, retain up to 100 most recent non-favorited history items to protect mobile localStorage.
       const existingClip = this.getCachedClipboard();
       const clipMap = new Map<string, ClipboardItem>();
       existingClip.forEach((c) => clipMap.set(c.id, c));
       (json.data.clipboardItems || []).forEach((c) => clipMap.set(c.id, c));
-      const mergedClip = Array.from(clipMap.values())
-        .filter((c) => !c.is_deleted)
+
+      const isFavItem = (c: ClipboardItem) =>
+        Boolean(c.is_favorite === 1 || c.is_favorite === true || (c as any).isFavorite === true || (c as any).isPinned === true);
+
+      const activeItems = Array.from(clipMap.values()).filter((c) => !c.is_deleted);
+      const favItems = activeItems.filter((c) => isFavItem(c));
+      const nonFavItems = activeItems
+        .filter((c) => !isFavItem(c))
+        .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
+        .slice(0, 100);
+
+      const mergedClip = [...favItems, ...nonFavItems]
         .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       this.setCachedClipboard(mergedClip);
-
-      this.setLastSyncTime(new Date().toISOString());
 
       return {
         notes: mergedNotes,
@@ -288,6 +321,52 @@ export class ApiClient {
         pulledCount: 0,
         error: err.message || String(err),
       };
+    }
+  }
+
+  // Push ClipboardItem to D1
+  public static async saveClipboardItem(item: ClipboardItem): Promise<{ success: boolean; error?: string }> {
+    const base = this.getBaseUrl();
+    const payload = {
+      notes: [],
+      clipboardItems: [item],
+      settings: [],
+    };
+
+    // Update local cache immediately
+    const clips = this.getCachedClipboard();
+    const idx = clips.findIndex((c) => c.id === item.id);
+    if (idx >= 0) {
+      clips[idx] = { ...item };
+    } else {
+      clips.unshift(item);
+    }
+    this.setCachedClipboard(clips);
+
+    try {
+      const res = await fetch(`${base}/api/v1/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-requested-with-web': 'true',
+          'x-pin-token': this.getPinToken(),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (res.status === 401) {
+        this.handleAuthFailure();
+        throw new Error('PIN_EXPIRED');
+      }
+
+      if (!res.ok) {
+        throw new Error(`保存剪贴板项失败: HTTP ${res.status}`);
+      }
+      const json: SyncResponse = await res.json();
+      return { success: json.success };
+    } catch (err: any) {
+      console.error('saveClipboardItem error:', err);
+      return { success: false, error: err.message || String(err) };
     }
   }
 

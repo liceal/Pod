@@ -251,10 +251,24 @@ class _FilesPaneState extends State<FilesPane> {
     'svg',
   ];
 
+  static const _textExts = [
+    'txt', 'md', 'markdown', 'json', 'log', 'yaml', 'yml', 'xml', 'csv',
+    'dart', 'py', 'js', 'ts', 'jsx', 'tsx', 'vue', 'html', 'htm', 'css',
+    'scss', 'less', 'sql', 'sh', 'bat', 'cmd', 'ps1', 'c', 'cpp', 'h',
+    'hpp', 'cs', 'java', 'go', 'rs', 'php', 'rb', 'swift', 'ini', 'conf',
+    'cfg', 'properties', 'env', 'gitignore', 'dockerfile', 'makefile'
+  ];
+
   bool _isImage(FileSystemEntity file) {
     if (file is Directory) return false;
     final ext = file.path.split('.').last.toLowerCase();
     return _imageExts.contains(ext);
+  }
+
+  static bool isTextFile(FileSystemEntity file) {
+    if (file is Directory) return false;
+    final ext = file.path.split('.').last.toLowerCase();
+    return _textExts.contains(ext);
   }
 
   void _copySelectedFile() {
@@ -404,16 +418,27 @@ class _FilesPaneState extends State<FilesPane> {
         Offset.zero & overlay.size,
       ),
       items: [
-        if (!isDir && _isImage(file)) ...[
+        if (!isDir) ...[
           PopupMenuItem<String>(
             value: 'preview',
             height: 32,
             child: Row(
               children: [
-                const Icon(Icons.photo_size_select_large_rounded, size: 14),
+                Icon(
+                  _isImage(file)
+                      ? Icons.photo_size_select_large_rounded
+                      : (isTextFile(file)
+                            ? Icons.text_snippet_rounded
+                            : Icons.remove_red_eye_rounded),
+                  size: 14,
+                ),
                 const SizedBox(width: 8),
                 Text(
-                  context.text('预览图片', 'Preview Image'),
+                  _isImage(file)
+                      ? context.text('预览图片', 'Preview Image')
+                      : (isTextFile(file)
+                            ? context.text('预览文本', 'Preview Text')
+                            : context.text('预览文件', 'Preview File')),
                   style: const TextStyle(fontSize: 11),
                 ),
               ],
@@ -658,7 +683,11 @@ class _FilesPaneState extends State<FilesPane> {
   /// 返回 (图标, 颜色)
   (IconData, Color) _getFileIconAndColor(String path, {bool? isDir}) {
     final isDirectory = isDir ?? widget.state.getCachedIsDirectory(path);
-    if (isDirectory) {
+    return staticFileIconAndColor(path, isDir: isDirectory);
+  }
+
+  static (IconData, Color) staticFileIconAndColor(String path, {bool isDir = false}) {
+    if (isDir) {
       return (Icons.folder_rounded, const Color(0xFFFFB300));
     }
     final ext = path.split('.').last.toLowerCase();
@@ -2558,31 +2587,74 @@ class _GridFileCardState extends State<_GridFileCard> {
                                         ),
                                     ],
                                   )
-                                : AspectRatio(
-                                    aspectRatio: 1.0,
-                                    child: FractionallySizedBox(
-                                      widthFactor: 0.6,
-                                      heightFactor: 0.6,
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: widget.iconColor.withOpacity(
-                                            0.12,
+                                : Stack(
+                                    children: [
+                                      Center(
+                                        child: AspectRatio(
+                                          aspectRatio: 1.0,
+                                          child: FractionallySizedBox(
+                                            widthFactor: 0.6,
+                                            heightFactor: 0.6,
+                                            child: Container(
+                                              decoration: BoxDecoration(
+                                                color: widget.iconColor.withOpacity(
+                                                  0.12,
+                                                ),
+                                                borderRadius: BorderRadius.zero,
+                                              ),
+                                              child: LayoutBuilder(
+                                                builder: (context, constraints) {
+                                                  final iconSize =
+                                                      constraints.maxWidth * 0.6;
+                                                  return Icon(
+                                                    widget.icon,
+                                                    size: iconSize,
+                                                    color: widget.iconColor,
+                                                  );
+                                                },
+                                              ),
+                                            ),
                                           ),
-                                          borderRadius: BorderRadius.zero,
-                                        ),
-                                        child: LayoutBuilder(
-                                          builder: (context, constraints) {
-                                            final iconSize =
-                                                constraints.maxWidth * 0.6;
-                                            return Icon(
-                                              widget.icon,
-                                              size: iconSize,
-                                              color: widget.iconColor,
-                                            );
-                                          },
                                         ),
                                       ),
-                                    ),
+                                      if (_isHovered && widget.file is! Directory)
+                                        Positioned(
+                                          top: 2,
+                                          right: 2,
+                                          child: Tooltip(
+                                            message: context.text(
+                                              '预览文件',
+                                              'Preview File',
+                                            ),
+                                            child: GestureDetector(
+                                              onTap: widget.onPreview,
+                                              child: MouseRegion(
+                                                cursor:
+                                                    SystemMouseCursors.click,
+                                                child: Container(
+                                                  padding: const EdgeInsets.all(
+                                                    3,
+                                                  ),
+                                                  decoration: BoxDecoration(
+                                                    color: Colors.black
+                                                        .withOpacity(0.55),
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                          4,
+                                                        ),
+                                                  ),
+                                                  child: const Icon(
+                                                    Icons
+                                                        .remove_red_eye_rounded,
+                                                    size: 13,
+                                                    color: Colors.white,
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                           ),
                         ),
@@ -3085,11 +3157,36 @@ class _DetailsFileCardState extends State<_DetailsFileCard> {
                                         ),
                                 ),
                               )
-                            : Icon(
-                                widget.icon,
-                                size: 10 * scaleFactor,
-                                color: widget.iconColor,
-                              ),
+                            : (widget.file is! Directory
+                                ? Tooltip(
+                                    message: context.text('预览文件', 'Preview File'),
+                                    child: GestureDetector(
+                                      onTap: widget.onPreview,
+                                      child: _isHovered
+                                          ? Container(
+                                              color: widget.isDark
+                                                  ? Colors.white10
+                                                  : Colors.black.withOpacity(0.08),
+                                              child: Icon(
+                                                Icons.remove_red_eye_rounded,
+                                                size: 11 * scaleFactor,
+                                                color: widget.isDark
+                                                    ? Colors.white70
+                                                    : Colors.black87,
+                                              ),
+                                            )
+                                          : Icon(
+                                              widget.icon,
+                                              size: 10 * scaleFactor,
+                                              color: widget.iconColor,
+                                            ),
+                                    ),
+                                  )
+                                : Icon(
+                                    widget.icon,
+                                    size: 10 * scaleFactor,
+                                    color: widget.iconColor,
+                                  )),
                       ),
                       const SizedBox(width: 4),
                       // Name
@@ -3225,12 +3322,65 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
   double _lastImageViewportWidth = 320.0;
   double _lastImageViewportHeight = 220.0;
 
+  bool get _isText => _FilesPaneState.isTextFile(widget.file);
+  bool get _isImage => _FilesPaneState._imageExts.contains(
+        widget.file.path.split('.').last.toLowerCase(),
+      );
+  String? _textContent;
+  bool _isTextLoading = false;
+  String? _textError;
+  bool _wordWrap = true;
+
   @override
   void initState() {
     super.initState();
     _transformationController = TransformationController();
     _loadFileStats();
-    _resolveImageSize();
+    if (_isText) {
+      _loadTextContent();
+    } else if (_isImage) {
+      _resolveImageSize();
+    }
+  }
+
+  void _loadTextContent() {
+    setState(() {
+      _isTextLoading = true;
+      _textError = null;
+    });
+    try {
+      if (!widget.file.existsSync()) {
+        setState(() {
+          _isTextLoading = false;
+          _textError = '文件不存在';
+        });
+        return;
+      }
+      final length = widget.file.lengthSync();
+      String text;
+      if (length > 1024 * 1024) {
+        final raf = widget.file.openSync();
+        final bytes = raf.readSync(500 * 1024);
+        raf.closeSync();
+        text = '${utf8.decode(bytes, allowMalformed: true)}\n\n[提示: 文件超过1MB，仅展示前500KB预览内容]';
+      } else {
+        final bytes = widget.file.readAsBytesSync();
+        text = utf8.decode(bytes, allowMalformed: true);
+      }
+      if (mounted) {
+        setState(() {
+          _textContent = text;
+          _isTextLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _textError = e.toString();
+          _isTextLoading = false;
+        });
+      }
+    }
   }
 
   void _loadFileStats() {
@@ -3346,7 +3496,11 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        context.text('图片预览', 'Image Preview'),
+                        _isText
+                            ? context.text('文本预览', 'Text Preview')
+                            : (_isImage
+                                ? context.text('图片预览', 'Image Preview')
+                                : context.text('文件详情', 'File Details')),
                         style: TextStyle(
                           fontSize: 12,
                           fontWeight: FontWeight.bold,
@@ -3362,10 +3516,17 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                      if (dimensionText.isNotEmpty) ...[
+                      if (!_isText && dimensionText.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         Text(
                           dimensionText,
+                          style: TextStyle(fontSize: 10, color: subColor),
+                        ),
+                      ],
+                      if (_isText && _textContent != null) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          '${_textContent!.split('\n').length} 行',
                           style: TextStyle(fontSize: 10, color: subColor),
                         ),
                       ],
@@ -3388,37 +3549,73 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
                       isDark: widget.isDark,
                       onTap: widget.onBack,
                     ),
-                    const SizedBox(width: 4),
-                    _ToolbarButton(
-                      icon: Icons.zoom_in_rounded,
-                      tooltip: context.text('放大', 'Zoom In'),
-                      isDark: widget.isDark,
-                      onTap: () => _zoom(1.2),
-                    ),
-                    const SizedBox(width: 4),
-                    _ToolbarButton(
-                      icon: Icons.zoom_out_rounded,
-                      tooltip: context.text('缩小', 'Zoom Out'),
-                      isDark: widget.isDark,
-                      onTap: () => _zoom(0.8),
-                    ),
-                    const SizedBox(width: 4),
-                    _ToolbarButton(
-                      icon: Icons.settings_backup_restore_rounded,
-                      tooltip: context.text('重置', 'Reset'),
-                      isDark: widget.isDark,
-                      onTap: _reset,
-                    ),
-                    const SizedBox(width: 8),
-                    _HeaderSaveImageButton(
-                      imagePath: widget.file.path,
-                      isDark: widget.isDark,
-                    ),
-                    const SizedBox(width: 4),
-                    _HeaderCopyFileButton(
-                      filePath: widget.file.path,
-                      isDark: widget.isDark,
-                    ),
+                    if (_isText) ...[
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.copy_rounded,
+                        tooltip: context.text('复制全文', 'Copy Text'),
+                        isDark: widget.isDark,
+                        onTap: () {
+                          if (_textContent != null) {
+                            Clipboard.setData(ClipboardData(text: _textContent!));
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  context.text('已复制全文到剪贴板', 'Text copied to clipboard'),
+                                  style: const TextStyle(fontSize: 11),
+                                ),
+                                duration: const Duration(seconds: 1),
+                              ),
+                            );
+                          }
+                        },
+                      ),
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: _wordWrap ? Icons.wrap_text_rounded : Icons.notes_rounded,
+                        tooltip: _wordWrap
+                            ? context.text('切换单行', 'Single Line')
+                            : context.text('切换折行', 'Word Wrap'),
+                        isDark: widget.isDark,
+                        onTap: () {
+                          setState(() {
+                            _wordWrap = !_wordWrap;
+                          });
+                        },
+                      ),
+                    ] else ...[
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.zoom_in_rounded,
+                        tooltip: context.text('放大', 'Zoom In'),
+                        isDark: widget.isDark,
+                        onTap: () => _zoom(1.2),
+                      ),
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.zoom_out_rounded,
+                        tooltip: context.text('缩小', 'Zoom Out'),
+                        isDark: widget.isDark,
+                        onTap: () => _zoom(0.8),
+                      ),
+                      const SizedBox(width: 4),
+                      _ToolbarButton(
+                        icon: Icons.settings_backup_restore_rounded,
+                        tooltip: context.text('重置', 'Reset'),
+                        isDark: widget.isDark,
+                        onTap: _reset,
+                      ),
+                      const SizedBox(width: 8),
+                      _HeaderSaveImageButton(
+                        imagePath: widget.file.path,
+                        isDark: widget.isDark,
+                      ),
+                      const SizedBox(width: 4),
+                      _HeaderCopyFileButton(
+                        filePath: widget.file.path,
+                        isDark: widget.isDark,
+                      ),
+                    ],
                     const SizedBox(width: 4),
                     _ToolbarButton(
                       icon: Icons.open_in_new_rounded,
@@ -3447,60 +3644,123 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
             child: Container(
               width: double.infinity,
               padding: EdgeInsets.zero,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  _lastImageViewportWidth = constraints.maxWidth;
-                  _lastImageViewportHeight = constraints.maxHeight;
-
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(6),
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: RepaintBoundary(
-                            child: CustomPaint(
-                              painter: _FileCheckerboardPainter(
-                                squareSize: 8.0,
-                                lightColor: widget.isDark
-                                    ? const Color(0xFF1C1C1C)
-                                    : Colors.white,
-                                darkColor: widget.isDark
-                                    ? const Color(0xFF141414)
-                                    : const Color(0xFFF2F2F2),
-                              ),
-                            ),
-                          ),
+              child: _isText
+                  ? Container(
+                      decoration: BoxDecoration(
+                        color: widget.isDark
+                            ? const Color(0xFF161616)
+                            : const Color(0xFFFAFAFA),
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: widget.isDark
+                              ? const Color(0xFF2C2C2C)
+                              : const Color(0xFFE5E5E5),
+                          width: 1,
                         ),
-                        Positioned.fill(
-                          child: RepaintBoundary(
-                            child: InteractiveViewer(
-                              transformationController:
-                                  _transformationController,
-                              maxScale: 20.0,
-                              minScale: 0.5,
-                              boundaryMargin: const EdgeInsets.all(480.0),
-                              panEnabled: true,
-                              scaleEnabled: true,
-                              trackpadScrollCausesScale: true,
-                              child: SizedBox(
-                                width: double.infinity,
-                                height: double.infinity,
-                                child: Center(
-                                  child: Image.file(
-                                    widget.file,
-                                    fit: BoxFit.contain,
-                                    filterQuality: FilterQuality.medium,
+                      ),
+                      child: _isTextLoading
+                          ? const Center(
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : _textError != null
+                              ? Center(
+                                  child: Text(
+                                    '无法读取文件内容: $_textError',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: subColor,
+                                    ),
+                                  ),
+                                )
+                              : SelectionArea(
+                                  child: SingleChildScrollView(
+                                    scrollDirection: Axis.vertical,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 14,
+                                      vertical: 10,
+                                    ),
+                                    child: _wordWrap
+                                        ? Text(
+                                            _textContent ?? '',
+                                            style: TextStyle(
+                                              fontFamily: 'Consolas',
+                                              fontSize: 12,
+                                              height: 1.5,
+                                              color: textColor,
+                                            ),
+                                          )
+                                        : SingleChildScrollView(
+                                            scrollDirection: Axis.horizontal,
+                                            child: Text(
+                                              _textContent ?? '',
+                                              style: TextStyle(
+                                                fontFamily: 'Consolas',
+                                                fontSize: 12,
+                                                height: 1.5,
+                                                color: textColor,
+                                              ),
+                                            ),
+                                          ),
                                   ),
                                 ),
+                    )
+                  : _isImage
+                      ? LayoutBuilder(
+                          builder: (context, constraints) {
+                            _lastImageViewportWidth = constraints.maxWidth;
+                            _lastImageViewportHeight = constraints.maxHeight;
+
+                            return ClipRRect(
+                              borderRadius: BorderRadius.circular(6),
+                              child: Stack(
+                                children: [
+                                  Positioned.fill(
+                                    child: RepaintBoundary(
+                                      child: CustomPaint(
+                                        painter: _FileCheckerboardPainter(
+                                          squareSize: 8.0,
+                                          lightColor: widget.isDark
+                                              ? const Color(0xFF1C1C1C)
+                                              : Colors.white,
+                                          darkColor: widget.isDark
+                                              ? const Color(0xFF141414)
+                                              : const Color(0xFFF2F2F2),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                  Positioned.fill(
+                                    child: RepaintBoundary(
+                                      child: InteractiveViewer(
+                                        transformationController:
+                                            _transformationController,
+                                        maxScale: 20.0,
+                                        minScale: 0.5,
+                                        boundaryMargin:
+                                            const EdgeInsets.all(480.0),
+                                        panEnabled: true,
+                                        scaleEnabled: true,
+                                        trackpadScrollCausesScale: true,
+                                        child: SizedBox(
+                                          width: double.infinity,
+                                          height: double.infinity,
+                                          child: Center(
+                                            child: Image.file(
+                                              widget.file,
+                                              fit: BoxFit.contain,
+                                              filterQuality: FilterQuality.medium,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
                               ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
+                            );
+                          },
+                        )
+                      : _buildBinaryFilePreview(textColor, subColor),
             ),
           ),
         ],
@@ -3526,11 +3786,131 @@ class _FileDetailPreviewState extends State<_FileDetailPreview> {
 
     return BackGestureDetector(onBack: widget.onBack, child: detailWithEsc);
   }
-}
 
 // ══════════════════════════════════════════════════
 // Checkerboard Background Painter for File Preview
 // ══════════════════════════════════════════════════
+
+  Widget _buildBinaryFilePreview(Color textColor, Color subColor) {
+    final (icon, iconColor) = _FilesPaneState.staticFileIconAndColor(widget.file.path);
+    final ext = widget.file.path.split('.').last.toLowerCase().toUpperCase();
+    final fileName = widget.file.uri.pathSegments.lastWhere(
+      (s) => s.isNotEmpty,
+      orElse: () => '',
+    );
+
+    return Center(
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 380),
+        padding: const EdgeInsets.all(24),
+        decoration: BoxDecoration(
+          color: widget.isDark ? const Color(0xFF1A1A1A) : Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: widget.isDark ? Colors.white10 : Colors.black12,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.08),
+              blurRadius: 16,
+              offset: const Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 64,
+              height: 64,
+              decoration: BoxDecoration(
+                color: iconColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 36, color: iconColor),
+            ),
+            const SizedBox(height: 14),
+            Text(
+              fileName,
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: widget.isDark
+                        ? Colors.white12
+                        : Colors.black.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    ext.isNotEmpty ? ext : 'FILE',
+                    style: TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.bold,
+                      color: subColor,
+                    ),
+                  ),
+                ),
+                if (_fileSizeStr.isNotEmpty) ...[
+                  const SizedBox(width: 8),
+                  Text(
+                    _fileSizeStr,
+                    style: TextStyle(fontSize: 11, color: subColor),
+                  ),
+                ],
+              ],
+            ),
+            const SizedBox(height: 20),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new_rounded, size: 14),
+                  label: Text(context.text('打开文件', 'Open File')),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(fontSize: 11),
+                  ),
+                  onPressed: () => widget.state.openFile(widget.file),
+                ),
+                const SizedBox(width: 10),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.folder_open_rounded, size: 14),
+                  label: Text(context.text('显示目录', 'Show in Explorer')),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 8,
+                    ),
+                    textStyle: const TextStyle(fontSize: 11),
+                  ),
+                  onPressed: () =>
+                      widget.state.revealFileInExplorer(widget.file),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+}
+
 class _FileCheckerboardPainter extends CustomPainter {
   final double squareSize;
   final Color lightColor;
