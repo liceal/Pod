@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS clipboard_items (
     is_deleted INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_clipboard_updated_at ON clipboard_items(updated_at);
+CREATE INDEX IF NOT EXISTS idx_clipboard_fav_ts ON clipboard_items(is_favorite, timestamp DESC);
 
 -- 3. 应用配置数据表
 CREATE TABLE IF NOT EXISTS app_settings (

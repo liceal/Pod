@@ -48,7 +48,7 @@ export default {
       } else if (path === '/api/v1/sync' && method === 'GET') {
         response = await handlePullSync(request, env, url);
       } else if (path === '/api/v1/sync' && method === 'POST') {
-        response = await handlePushSync(request, env);
+        response = await handlePushSync(request, env, ctx);
       } else if ((path === '/api/v1/files/metadata' || path === '/api/v1/file-metadata') && method === 'GET') {
         response = await handleFilesMetadata(env, url);
       } else if (path === '/api/v1/files/upload' && method === 'POST') {
@@ -184,8 +184,109 @@ async function handlePullSync(request: Request, env: Env, url: URL): Promise<Res
   );
 }
 
+// 剪贴板历史云端淘汰机制 (Eviction Policy)
+// 策略：所有收藏项 (is_favorite = 1) 永久保留；非收藏项仅保留最新的前 keepLimit 条（默认 100 条）
+// 超额的旧数据将从 D1 数据库中物理删除，若关联的 R2 图片已无任何其他记录引用，亦同步从 R2 存储桶中删除。
+async function evictOldClipboardItems(env: Env, customLimit?: number): Promise<{ evictedCount: number; deletedImagesCount: number }> {
+  try {
+    // 1. 获取保留上限 (默认 100 条，若 PC 端在 app_settings 设置了更大值则取较大者)
+    let limit = customLimit ?? 100;
+    if (!customLimit) {
+      try {
+        const settingRow = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'app_settings'").first<{ value: string }>();
+        if (settingRow?.value) {
+          const parsed = JSON.parse(settingRow.value);
+          if (typeof parsed.clipboardHistoryLimit === 'number' && parsed.clipboardHistoryLimit > 0) {
+            limit = Math.max(100, parsed.clipboardHistoryLimit);
+          }
+        }
+      } catch {
+        // 使用默认 100
+      }
+    }
+
+    // 2. 查找待淘汰的非收藏候选记录
+    const candidateQuery = `
+      SELECT id, image_path FROM clipboard_items
+      WHERE is_favorite = 0
+        AND id NOT IN (
+          SELECT id FROM clipboard_items
+          WHERE is_favorite = 0
+          ORDER BY timestamp DESC
+          LIMIT ?
+        )
+    `;
+
+    const candidates = await env.DB.prepare(candidateQuery).bind(limit).all<{ id: string; image_path: string | null }>();
+    const toDelete = candidates.results || [];
+
+    if (toDelete.length === 0) {
+      return { evictedCount: 0, deletedImagesCount: 0 };
+    }
+
+    // 3. 处理 R2 图片引用释放
+    let deletedImagesCount = 0;
+    if (env.FILES_BUCKET) {
+      const candidateImages = toDelete
+        .map(row => row.image_path)
+        .filter((p): p is string => !!p && p.trim().length > 0);
+
+      if (candidateImages.length > 0) {
+        const uniqueCandidateImages = Array.from(new Set(candidateImages));
+
+        for (const imgPath of uniqueCandidateImages) {
+          const cleanKey = imgPath.trim().replaceAll('\\', '/');
+          // 检查该图片是否还被任何保留的记录引用（包括所有收藏项，以及保留在前 limit 条的活跃历史）
+          const refCheck = await env.DB.prepare(
+            `SELECT COUNT(*) as count FROM clipboard_items 
+             WHERE image_path = ? 
+               AND (
+                 is_favorite = 1 
+                 OR id IN (
+                   SELECT id FROM clipboard_items 
+                   WHERE is_favorite = 0 
+                   ORDER BY timestamp DESC 
+                   LIMIT ?
+                 )
+               )`
+          ).bind(imgPath, limit).first<{ count: number }>();
+
+          if (!refCheck || refCheck.count === 0) {
+            try {
+              await env.FILES_BUCKET.delete(cleanKey);
+              deletedImagesCount++;
+            } catch (r2Err) {
+              console.warn(`[Eviction] 释放 R2 废弃剪贴板图片失败: ${cleanKey}`, r2Err);
+            }
+          }
+        }
+      }
+    }
+
+    // 4. 从 D1 物理删除陈旧非收藏记录
+    const deleteRes = await env.DB.prepare(`
+      DELETE FROM clipboard_items
+      WHERE is_favorite = 0
+        AND id NOT IN (
+          SELECT id FROM clipboard_items
+          WHERE is_favorite = 0
+          ORDER BY timestamp DESC
+          LIMIT ?
+        )
+    `).bind(limit).run();
+
+    const evictedCount = deleteRes.meta?.changes ?? toDelete.length;
+    console.log(`[Eviction] 剪贴板历史淘汰完成: 物理移除 ${evictedCount} 条陈旧记录，释放 R2 图片 ${deletedImagesCount} 张 (保留最新 ${limit} 条非收藏项，收藏项全部受保护)`);
+
+    return { evictedCount, deletedImagesCount };
+  } catch (error) {
+    console.error('[Eviction] 剪贴板淘汰过程异常:', error);
+    return { evictedCount: 0, deletedImagesCount: 0 };
+  }
+}
+
 // 批量推送同步接口
-async function handlePushSync(request: Request, env: Env): Promise<Response> {
+async function handlePushSync(request: Request, env: Env, ctx?: ExecutionContext): Promise<Response> {
   const t0 = performance.now();
   const body: any = await request.json();
   const { notes = [], clipboardItems = [], settings = [] } = body;
@@ -269,6 +370,16 @@ async function handlePushSync(request: Request, env: Env): Promise<Response> {
   let batchRes: D1Response[] = [];
   if (stmts.length > 0) {
     batchRes = await env.DB.batch(stmts);
+  }
+
+  // 剪贴板历史滚动淘汰 (Eviction Policy)
+  // 当有剪贴板记录推送时触发：非收藏项仅保留最新 100 条（或按用户设置），超额历史物理清理，关联废弃图片同步从 R2 释放
+  if (clipboardItems.length > 0) {
+    if (ctx && typeof ctx.waitUntil === 'function') {
+      ctx.waitUntil(evictOldClipboardItems(env));
+    } else {
+      await evictOldClipboardItems(env);
+    }
   }
 
   const dbDurationMs = (performance.now() - t0).toFixed(2);
@@ -697,6 +808,9 @@ async function handleAdminCleanup(request: Request, env: Env): Promise<Response>
     return new Response(JSON.stringify({ error: 'FILES_BUCKET is not configured' }), { status: 500 });
   }
 
+  // 0. 执行剪贴板淘汰清理（淘汰超出上限的陈旧非收藏项与释放孤儿图片）
+  const clipEviction = await evictOldClipboardItems(env);
+
   // 1. 获取 D1 中所有有效（未删除）的剪贴板图片路径
   const activeClipImages = new Set<string>();
   try {
@@ -803,10 +917,12 @@ async function handleAdminCleanup(request: Request, env: Env): Promise<Response>
   return new Response(
     JSON.stringify({
       success: true,
-      summary: `清洗完成！R2 pod-quick-files 物理删除 ${deletedFiles.length} 个冗余文件，保留 ${keptFiles.length} 个有效业务文件；D1 清理 ${d1DeletedCount} 条冗余元数据。`,
+      summary: `清洗完成！R2 pod-quick-files 物理删除 ${deletedFiles.length} 个冗余文件，保留 ${keptFiles.length} 个有效业务文件；D1 清理 ${d1DeletedCount} 条冗余元数据；淘汰陈旧剪贴板 ${clipEviction.evictedCount} 条 (释放 R2 图片 ${clipEviction.deletedImagesCount} 张)。`,
       deletedR2Count: deletedFiles.length,
       keptR2Count: keptFiles.length,
       deletedD1Count: d1DeletedCount,
+      evictedClipboards: clipEviction.evictedCount,
+      evictedClipImages: clipEviction.deletedImagesCount,
       deletedFiles,
       keptFiles,
     }),
