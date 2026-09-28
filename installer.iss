@@ -2,7 +2,9 @@
 ; 免证书认证、无安装阻碍的标准 Windows 安装包
 
 #define MyAppName "PodQuick"
-#define MyAppVersion "1.0.7"
+#ifndef MyAppVersion
+#define MyAppVersion "1.0.9"
+#endif
 #define MyAppPublisher "liceal"
 #define MyAppURL "https://your-subdomain.workers.dev"
 #define MyAppExeName "PodQuick.exe"

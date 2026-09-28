@@ -69,27 +69,33 @@ echo.
 
 echo [4/4] 开始制作「Windows 标准安装包 (免证书认证)」 [PodQuick_Setup.exe]...
 set "ISCC_PATH="
-if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
-) else if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-) else if exist "C:\Program Files\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=C:\Program Files\Inno Setup 6\ISCC.exe"
-) else if exist "C:\Program Files\Inno Setup 7\ISCC.exe" (
-    set "ISCC_PATH=C:\Program Files\Inno Setup 7\ISCC.exe"
-)
+if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program Files\Inno Setup 6\ISCC.exe"
+if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+if exist "C:\Program Files\Inno Setup 7\ISCC.exe" set "ISCC_PATH=C:\Program Files\Inno Setup 7\ISCC.exe"
 
-if "%ISCC_PATH%"=="" (
-    echo [警告] 未检测到 Inno Setup 编译器 ISCC.exe，跳过制作标准安装包。
-    echo 提示: 您可以运行 winget install JRSoftware.InnoSetup 进行安装。
-) else (
-    "%ISCC_PATH%" /Q installer.iss
-    if %errorlevel% equ 0 (
-        echo [成功] 标准安装包已生成：build\PodQuick_Setup.exe
-    ) else (
-        echo [错误] 标准安装包制作失败。
+set "APP_VER=1.0.9"
+if exist "release_info.json" (
+    for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content release_info.json -Raw | ConvertFrom-Json).version"`) do (
+        set "APP_VER=%%v"
     )
 )
+
+if "%ISCC_PATH%"=="" goto :skip_inno
+echo 正在使用 Inno Setup 编译标准安装包，版本号: %APP_VER%...
+"%ISCC_PATH%" /DMyAppVersion="%APP_VER%" /Q installer.iss
+if %errorlevel% equ 0 (
+    echo [成功] 标准安装包已生成：build\PodQuick_Setup.exe
+) else (
+    echo [错误] 标准安装包制作失败。
+)
+goto :after_inno
+
+:skip_inno
+echo [警告] 未检测到 Inno Setup 编译器 ISCC.exe，跳过制作标准安装包。
+echo 提示: 您可以运行 winget install JRSoftware.InnoSetup 进行安装。
+
+:after_inno
 echo.
 
 echo ===================================================
