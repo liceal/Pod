@@ -988,6 +988,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             if (dir.existsSync()) {
               final list = dir.listSync(recursive: true).whereType<File>().toList();
               for (final f in list) {
+                final normPath = f.path.replaceAll('\\', '/');
+                if (normPath.contains('/.') || normPath.contains('.trash')) continue;
                 final name = f.path.split(Platform.pathSeparator).last;
                 if (name.startsWith('.') || name.endsWith('.tmp')) continue;
                 allLocalFiles.add(f);
@@ -1140,6 +1142,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
             // 严格白名单：只同步属于文件管理(files/)或剪贴板图片(clipboard_images/)的内容
             if (!relKey.startsWith('files/') && !relKey.startsWith('clipboard_images/')) {
+              continue;
+            }
+            if (relKey.contains('/.') || relKey.contains('.trash')) {
               continue;
             }
 
