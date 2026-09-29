@@ -5,8 +5,8 @@
 #ifndef MyAppVersion
 #define MyAppVersion "1.0.9"
 #endif
-#define MyAppPublisher "liceal"
-#define MyAppURL "https://your-subdomain.workers.dev"
+#define MyAppPublisher "UnClutter"
+#define MyAppURL "https://github.com/your-username/unClutter"
 #define MyAppExeName "PodQuick.exe"
 
 [Setup]

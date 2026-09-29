@@ -648,7 +648,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   // --- Cloudflare D1 Sync Methods ---
 
   Future<void> _pullAndMergeCloudData({required Function(String msg) onLog}) async {
-    onLog(text('📥 开始从 Cloudflare D1 拉取增量变更 (Git 风格拉取)...', 'Pulling deltas from Cloudflare D1 (Git-style pull)...'));
+    onLog(text('📥 开始从 Cloudflare D1 拉取增量变更...', 'Pulling deltas from Cloudflare D1...'));
 
     Map<String, dynamic>? pullRes;
     final sinceTime = _lastD1SyncTime ?? DateTime.fromMillisecondsSinceEpoch(0);
@@ -1008,6 +1008,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             } catch (_) {}
           }
 
+          // 读取 / 比对 OneDrive 式本地同步快照表 (last_sync_snapshot.json)
+          final snapshotFile = File('${dataDir.path}${Platform.pathSeparator}last_sync_snapshot.json');
+          final Set<String> lastSyncedKeys = {};
+          final bool hasSnapshot = snapshotFile.existsSync();
+          if (hasSnapshot) {
+            try {
+              final content = snapshotFile.readAsStringSync();
+              final list = jsonDecode(content) as List;
+              lastSyncedKeys.addAll(list.cast<String>());
+            } catch (_) {}
+          }
+
           addD1Log(text('🔍 扫描到 ${allLocalFiles.length} 个本地文件，正在查询云端文件元数据比对差异...', 'Scanning ${allLocalFiles.length} local files, querying cloud metadata...'));
 
           // 1. 获取云端文件元数据记录 (file_metadata 表 / R2 List)
@@ -1075,12 +1087,52 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             localMap[k] = f;
           }
 
+          // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹
+          if (hasSnapshot) {
+            for (final oldKey in lastSyncedKeys) {
+              if (!localMap.containsKey(oldKey)) {
+                deletedKeys.add(oldKey);
+              }
+            }
+          }
+
+          // 核心校验辅助函数：判断云端 Key 是否已被标记删除（包含文件夹父路径前缀匹配）
+          bool isKeyDeleted(String key) {
+            for (final delKey in deletedKeys) {
+              if (key == delKey) return true;
+              final prefix = delKey.endsWith('/') ? delKey : '$delKey/';
+              if (key.startsWith(prefix)) return true;
+            }
+            return false;
+          }
+
+          // 异地删除下发：如果一个文件上次快照存在，但云端已无此文件且本地未被手动标记/修改，说明其他设备删除了该文件，本地同步清理至回收站
+          if (hasSnapshot && cloudMetadata.isNotEmpty) {
+            for (final oldKey in lastSyncedKeys) {
+              if (localMap.containsKey(oldKey) && !cloudMetadata.containsKey(oldKey) && !isKeyDeleted(oldKey)) {
+                final localFile = localMap[oldKey];
+                if (localFile != null && localFile.existsSync()) {
+                  try {
+                    final root = getDataDirectoryPathSync();
+                    final trashDir = Directory('$root${Platform.pathSeparator}files${Platform.pathSeparator}.trash');
+                    if (!trashDir.existsSync()) trashDir.createSync(recursive: true);
+                    final name = localFile.path.split(Platform.pathSeparator).last;
+                    localFile.renameSync('${trashDir.path}${Platform.pathSeparator}${DateTime.now().millisecondsSinceEpoch}_$name');
+                    localMap.remove(oldKey);
+                    deletedRemoteCount++;
+                  } catch (_) {}
+                }
+              }
+            }
+          }
+
           // 2. 差异比对：
           // A. 找出云端需要物理删除的文件 (toDeleteRemote)
           final toDeleteRemote = <String>[];
-          for (final delKey in deletedKeys) {
-            if (cloudMetadata.containsKey(delKey)) {
-              toDeleteRemote.add(delKey);
+          for (final entry in cloudMetadata.entries) {
+            final remoteKey = entry.key;
+            if (isKeyDeleted(remoteKey)) {
+              toDeleteRemote.add(remoteKey);
             }
           }
 
@@ -1090,8 +1142,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final remoteKey = entry.key;
             final remoteInfo = entry.value;
 
-            // 如果本地已手动删除此文件，跳过下载
-            if (deletedKeys.contains(remoteKey)) continue;
+            // 如果本地已手动/OS删除此文件或整个文件夹，跳过下载
+            if (isKeyDeleted(remoteKey)) continue;
             // 忽略隐藏文件与临时文件
             if (remoteKey.contains('/.') || remoteKey.startsWith('.')) continue;
 
@@ -1166,12 +1218,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             } else {
               final stat = file.statSync();
               final localSize = stat.size;
-              final localModified = stat.modified;
+              final localModified = stat.modified.toUtc();
               final remoteSize = (remote['file_size'] as num?)?.toInt() ?? -1;
               final remoteUpdatedStr = remote['updated_at'] as String?;
               DateTime? remoteUpdated;
               if (remoteUpdatedStr != null) {
-                remoteUpdated = DateTime.tryParse(remoteUpdatedStr);
+                final parsed = DateTime.tryParse(remoteUpdatedStr);
+                if (parsed != null) remoteUpdated = parsed.toUtc();
               }
 
               // 如果文件大小完全一致，且云端更新时间不早于本地修改时间(留2秒容差)，判定为无变动跳过
@@ -1190,12 +1243,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           }
 
           addD1Log(text(
-            '📊 差异比对完成：需上传 ${toUpload.length} 个，需下载 ${toDownload.length} 个，需云端销毁 ${toDeleteRemote.length} 个，无变动跳过 $skippedIdenticalCount 个',
-            'Diff check: ${toUpload.length} to upload, ${toDownload.length} to download, ${toDeleteRemote.length} to delete, $skippedIdenticalCount skipped',
+            '📊 差异统计: + ${toUpload.length} 上传  |  - ${toDeleteRemote.length} 销毁  |  ↓ ${toDownload.length} 下载  |  = $skippedIdenticalCount 无变动',
+            'Diff stats: + ${toUpload.length} upload | - ${toDeleteRemote.length} delete | ↓ ${toDownload.length} download | = $skippedIdenticalCount unchanged',
           ));
 
           // 3. 执行云端销毁 (Delete)
-          for (final delKey in toDeleteRemote) {
+          for (int i = 0; i < toDeleteRemote.length; i++) {
+            final delKey = toDeleteRemote[i];
+            final fileName = delKey.split('/').last;
+            final progressIndex = i + 1;
+            addD1Log('- [$progressIndex/${toDeleteRemote.length}] 销毁 $fileName');
+
             bool ok = false;
             if (workerService != null) {
               ok = await workerService.deleteFileFromR2(delKey);
@@ -1206,7 +1264,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               deletedRemoteCount++;
               deletedKeys.remove(delKey);
               cloudMetadata.remove(delKey);
-              addD1Log('  🗑️ 已从云端物理删除: $delKey');
             }
           }
           // 更新保存墓碑表
@@ -1223,7 +1280,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final remoteInfo = toDownload[i];
             final relKey = remoteInfo['file_key'] as String;
             final target = resolveLocalTarget(relKey);
+            final fileName = relKey.split('/').last;
             final progressIndex = i + 1;
+
+            addD1Log('↓ [$progressIndex/${toDownload.length}] 下载 $fileName');
 
             bool ok = false;
             if (workerService != null) {
@@ -1234,9 +1294,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
             if (ok) {
               newlyDownloadedCount++;
-              addD1Log('  [$progressIndex/${toDownload.length}] 📥 已下载并保存: $relKey');
             } else {
-              addD1Log('  [$progressIndex/${toDownload.length}] ❌ 下载失败: $relKey');
+              addD1Log('❌ [$progressIndex/${toDownload.length}] 下载失败: $fileName');
             }
           }
 
@@ -1247,12 +1306,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final fileName = file.path.split(Platform.pathSeparator).last;
             final progressIndex = i + 1;
 
+            addD1Log('↑ [$progressIndex/${toUpload.length}] 上传 $fileName');
+
             if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
               final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
               final res = await service.uploadFileToR2(file: file, fileKey: relativePath);
               if (res['success'] == true) {
                 newlyUploadedCount++;
-                addD1Log('  [$progressIndex/${toUpload.length}] ✅ 已增量上传: $relativePath');
 
                 // 双重保障：若填写了 REST API 凭据，同步把元数据也写一份到 D1，确保 100% 写入 D1 元数据
                 if (settings.cfAccountId?.trim().isNotEmpty == true &&
@@ -1275,13 +1335,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   ));
                 }
               } else {
-                addD1Log('  [$progressIndex/${toUpload.length}] ❌ 上传失败: $relativePath (${res['error'] ?? res['status']})');
+                addD1Log('❌ [$progressIndex/${toUpload.length}] 上传失败: $fileName (${res['error'] ?? res['status']})');
               }
             } else if (r2Service != null) {
               final ok = await r2Service.uploadFile(file, relativePath);
               if (ok) {
                 newlyUploadedCount++;
-                addD1Log('  [$progressIndex/${toUpload.length}] ✅ (S3) 已增量上传: $relativePath');
 
                 // 如果是 REST API 模式，同步记录文件元数据到 D1 数据库
                 if (settings.cfAccountId?.trim().isNotEmpty == true &&
@@ -1305,7 +1364,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   );
                 }
               } else {
-                addD1Log('  [$progressIndex/${toUpload.length}] ❌ (S3) 上传失败: $relativePath');
+                addD1Log('❌ [$progressIndex/${toUpload.length}] (S3) 上传失败: $fileName');
               }
             } else {
               addD1Log(text(
@@ -1319,9 +1378,30 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           // 6. 同步完成后，立刻刷新 PC 文件管理
           await _scanStoredFiles();
 
+          // 7. 更新写回 OneDrive 式本地同步快照表 (last_sync_snapshot.json)
+          try {
+            final currentSnapshotKeys = <String>{};
+            for (final dir in scanDirs) {
+              if (dir.existsSync()) {
+                final list = dir.listSync(recursive: true).whereType<File>().toList();
+                for (final f in list) {
+                  final normPath = f.path.replaceAll('\\', '/');
+                  if (normPath.contains('/.') || normPath.contains('.trash')) continue;
+                  final name = f.path.split(Platform.pathSeparator).last;
+                  if (name.startsWith('.') || name.endsWith('.tmp')) continue;
+                  final relKey = computeRelativeKey(f);
+                  if (relKey.startsWith('files/') || relKey.startsWith('clipboard_images/')) {
+                    currentSnapshotKeys.add(relKey);
+                  }
+                }
+              }
+            }
+            snapshotFile.writeAsStringSync(jsonEncode(currentSnapshotKeys.toList()));
+          } catch (_) {}
+
           addD1Log(text(
-            '✅ R2 文件存储双向同步完成 (上传: $newlyUploadedCount, 下载: $newlyDownloadedCount, 销毁: $deletedRemoteCount, 跳过: $skippedIdenticalCount)',
-            '✅ R2 File Sync completed (Uploaded: $newlyUploadedCount, Downloaded: $newlyDownloadedCount, Deleted: $deletedRemoteCount, Skipped: $skippedIdenticalCount)',
+            '✅ 同步完成: + $newlyUploadedCount 上传  |  - $deletedRemoteCount 销毁  |  ↓ $newlyDownloadedCount 下载  |  = $skippedIdenticalCount 无变动',
+            '✅ Sync completed: + $newlyUploadedCount uploaded | - $deletedRemoteCount deleted | ↓ $newlyDownloadedCount downloaded | = $skippedIdenticalCount unchanged',
           ));
         } catch (e) {
           addD1Log(text('⚠️ R2 文件同步异常: $e', '⚠️ R2 Sync error: $e'));
@@ -1335,9 +1415,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       final isSuccess = d1Result['success'] == true;
       final fileSummary = (newlyUploadedCount > 0 || newlyDownloadedCount > 0 || deletedRemoteCount > 0)
-          ? '，文件存储已双向同步(上传: $newlyUploadedCount, 下载: $newlyDownloadedCount, 销毁: $deletedRemoteCount)'
+          ? '，文件存储 (+ $newlyUploadedCount 上传, - $deletedRemoteCount 销毁, ↓ $newlyDownloadedCount 下载)'
           : (skippedIdenticalCount > 0
-              ? '，全部本地文件均与云端保持最新(智能跳过 $skippedIdenticalCount 个)'
+              ? '，全部本地文件与云端保持最新 (= $skippedIdenticalCount 无变动)'
               : '');
 
       final message = isSuccess
@@ -3948,16 +4028,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final dataDir = getDataDirectoryPathSync();
       final filesDir = '$dataDir/files';
       final normFilesDir = filesDir.replaceAll('\\', '/');
-      final normEntity = entityPath.replaceAll('\\', '/');
-
-      String relKey = normEntity;
-      if (normEntity.startsWith(normFilesDir)) {
-        relKey = normEntity.substring(normFilesDir.length);
-      }
-      if (relKey.startsWith('/')) relKey = relKey.substring(1);
-      if (relKey.isEmpty || relKey.startsWith('.') || relKey.contains('/.')) return;
-
-      final fullKey = 'files/$relKey';
+      final normDataDir = dataDir.replaceAll('\\', '/');
 
       final deletedFile = File('$dataDir/deleted_files.json');
       final Set<String> deletedKeys = {};
@@ -3968,7 +4039,37 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           deletedKeys.addAll(list.cast<String>());
         } catch (_) {}
       }
-      deletedKeys.add(fullKey);
+
+      void addKeyForPath(String targetPath) {
+        final normEntity = targetPath.replaceAll('\\', '/');
+        String relKey = normEntity;
+        if (normEntity.startsWith(normFilesDir)) {
+          relKey = normEntity.substring(normFilesDir.length);
+        } else if (normEntity.startsWith(normDataDir)) {
+          relKey = normEntity.substring(normDataDir.length);
+        }
+        if (relKey.startsWith('/')) relKey = relKey.substring(1);
+        if (relKey.isEmpty || relKey.startsWith('.') || relKey.contains('/.')) return;
+        final fullKey = (relKey.startsWith('files/') || relKey.startsWith('clipboard_images/') || relKey.startsWith('images/'))
+            ? relKey
+            : 'files/$relKey';
+        deletedKeys.add(fullKey);
+      }
+
+      final type = FileSystemEntity.typeSync(entityPath);
+      if (type == FileSystemEntityType.directory) {
+        addKeyForPath(entityPath);
+        final dir = Directory(entityPath);
+        if (dir.existsSync()) {
+          final children = dir.listSync(recursive: true).whereType<File>();
+          for (final f in children) {
+            addKeyForPath(f.path);
+          }
+        }
+      } else {
+        addKeyForPath(entityPath);
+      }
+
       await deletedFile.writeAsString(jsonEncode(deletedKeys.toList()));
     } catch (e) {
       debugPrint('Failed to record deleted file: $e');

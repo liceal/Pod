@@ -80,7 +80,7 @@
                 v-model="workerUrl"
                 type="url"
                 class="form-input"
-                placeholder="https://your-domain.com"
+                placeholder="https://your-worker-domain.workers.dev"
               />
               <button class="btn btn-secondary btn-sm" @click="saveWorkerUrl">
                 保存
@@ -349,7 +349,7 @@
                 </li>
                 <li>
                   <strong>独立自定义域名（免翻墙直连）</strong>
-                  原生适配 <code>your-domain.com</code>，国内 4G/5G/WiFi 直连秒开秒同步，彻底摆脱 workers.dev 封锁与梯子分流烦恼。
+                  原生适配自定义域名与 CDN 加速，国内 4G/5G/WiFi 直连秒开秒同步，摆脱网络延迟烦恼。
                 </li>
                 <li>
                   <strong>PWA 独立桌面模式与沉浸手势</strong>

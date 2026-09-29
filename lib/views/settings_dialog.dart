@@ -2139,7 +2139,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               _isCheckingUpdate = true;
                               _updateCheckResult = null;
                             });
-                            final info = await UpdateService.checkUpdate();
+                            final info = await UpdateService.checkUpdate(widget.state.settings);
                             if (mounted) {
                               setState(() => _isCheckingUpdate = false);
                               if (info != null) {

@@ -1,10 +1,10 @@
 # PodQuick R2 Windows Upload Script
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
-$accountId = 'YOUR_CLOUDFLARE_ACCOUNT_ID'
-$accessKeyId = 'YOUR_R2_ACCESS_KEY_ID'
-$secretAccessKey = 'YOUR_R2_SECRET_ACCESS_KEY'
-$bucketName = 'pod-quick'
+$accountId = if ($env:R2_ACCOUNT_ID) { $env:R2_ACCOUNT_ID } else { 'YOUR_ACCOUNT_ID' }
+$accessKeyId = if ($env:R2_ACCESS_KEY_ID) { $env:R2_ACCESS_KEY_ID } else { 'YOUR_ACCESS_KEY_ID' }
+$secretAccessKey = if ($env:R2_SECRET_ACCESS_KEY) { $env:R2_SECRET_ACCESS_KEY } else { 'YOUR_SECRET_ACCESS_KEY' }
+$bucketName = if ($env:R2_BUCKET_NAME) { $env:R2_BUCKET_NAME } else { 'pod-quick' }
 
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "  PodQuick R2 Upload (Windows)   " -ForegroundColor Cyan

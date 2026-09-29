@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../utils/localization.dart';
+import '../models/app_settings.dart';
 import 'r2_sync_service.dart';
 
 class AppVersionInfo {
@@ -64,20 +65,32 @@ class UpdateService {
     }
   }
 
-  static R2SyncService get _syncService => R2SyncService(
-        accountId: 'YOUR_CLOUDFLARE_ACCOUNT_ID',
-        accessKeyId: 'YOUR_R2_ACCESS_KEY_ID',
-        secretAccessKey:
-            'YOUR_R2_SECRET_ACCESS_KEY',
-        bucketName: 'pod-quick',
-      );
+  static R2SyncService? getSyncService([AppSettings? settings]) {
+    if (settings == null) return null;
+    final accountId = settings.r2AccountId?.trim() ?? settings.cfAccountId?.trim() ?? '';
+    final accessKeyId = settings.r2AccessKeyId?.trim() ?? '';
+    final secretAccessKey = settings.r2SecretAccessKey?.trim() ?? '';
+    final bucketName = settings.r2BucketName?.trim() ?? settings.cfR2BucketName?.trim() ?? '';
+    if (accountId.isEmpty || accessKeyId.isEmpty || secretAccessKey.isEmpty || bucketName.isEmpty) {
+      return null;
+    }
+    return R2SyncService(
+      accountId: accountId,
+      accessKeyId: accessKeyId,
+      secretAccessKey: secretAccessKey,
+      bucketName: bucketName,
+      customEndpoint: settings.r2CustomEndpoint,
+    );
+  }
 
   /// 检查是否有新版本（优先读取 release_info.json，回退备选时间戳比对）
-  static Future<AppVersionInfo?> checkUpdate() async {
+  static Future<AppVersionInfo?> checkUpdate([AppSettings? settings]) async {
+    final syncService = getSyncService(settings);
+    if (syncService == null) return null;
     try {
       final tempDir = await getTemporaryDirectory();
       final tempFile = File('${tempDir.path}/podquick_release_info.json');
-      final hasReleaseInfo = await _syncService.downloadFile('release_info.json', tempFile);
+      final hasReleaseInfo = await syncService.downloadFile('release_info.json', tempFile);
 
       if (hasReleaseInfo && await tempFile.exists()) {
         final bytes = await tempFile.readAsBytes();
@@ -103,7 +116,7 @@ class UpdateService {
 
       // 如果未找到 release_info.json，通过 HEAD 请求比对 PodQuick_Setup.exe 编译时间
       final remoteFile = Platform.isWindows ? 'PodQuick_Setup.exe' : 'PodQuick.dmg';
-      final remoteInfo = await _syncService.getObjectInfo(remoteFile);
+      final remoteInfo = await syncService.getObjectInfo(remoteFile);
 
       if (remoteInfo != null) {
         final currentExePath = Platform.resolvedExecutable;
@@ -145,7 +158,7 @@ class UpdateService {
   }
 
   /// 后台持续独立下载任务（市面上成熟安装包静默更新方案）
-  static Future<void> startBackgroundDownload(AppVersionInfo info) async {
+  static Future<void> startBackgroundDownload(AppVersionInfo info, [AppSettings? settings]) async {
     if (isDownloading) return;
 
     isDownloading = true;
@@ -169,6 +182,11 @@ class UpdateService {
         return;
       }
 
+      final syncService = getSyncService(settings);
+      if (syncService == null) {
+        throw Exception('未配置云端存储参数，无法进行安装包下载。');
+      }
+
       // Windows 静默下载标准安装包 (PodQuick_Setup.exe) 并进行软件主流覆盖升级
       final tempDir = await getTemporaryDirectory();
       final remoteFileName = (info.windowsUrl.isNotEmpty) ? info.windowsUrl : 'PodQuick_Setup.exe';
@@ -180,7 +198,7 @@ class UpdateService {
       downloadStatusText = '正在从云端下载安装包 ($remoteFileName)...';
       _notify();
 
-      final ok = await _syncService.downloadFile(
+      final ok = await syncService.downloadFile(
         remoteFileName,
         targetFile,
         onProgress: (downloaded, total) {

@@ -10,14 +10,14 @@ const STORAGE_KEY_CLIPBOARD = 'unclutter_cached_clipboard';
 const STORAGE_KEY_FILES = 'unclutter_cached_files';
 
 export class ApiClient {
-  private static defaultBaseUrl = 'https://your-domain.com';
+  private static defaultBaseUrl = '';
 
   public static getBaseUrl(): string {
     const saved = localStorage.getItem(STORAGE_KEY_WORKER_URL);
     if (saved && saved.trim() && !saved.includes('workers.dev')) {
       return saved.trim().replace(/\/+$/, '');
     }
-    // If hosted in browser (custom domain your-domain.com, localhost, or worker), dynamically use origin!
+    // If hosted in browser (custom domain, localhost, or worker), dynamically use origin!
     if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) {
       return window.location.origin;
     }

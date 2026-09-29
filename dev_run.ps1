@@ -1,6 +1,5 @@
-# dev_run.ps1 - 解决中文路径乱码与 CMake 缓存冲突的调试运行脚本
-$tempPath = "c:\liceal\code\unclutter_temp_build"
-$currentPath = "c:\liceal\code\unClutter复刻"
+$tempPath = Join-Path $env:TEMP "unclutter_temp_build"
+$currentPath = $PSScriptRoot
 
 # 1. 首先清理主工作区的冲突构建缓存
 Write-Host "正在清理本地缓存..." -ForegroundColor Cyan

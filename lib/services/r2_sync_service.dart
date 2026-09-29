@@ -44,6 +44,7 @@ class R2SyncService {
   final String secretAccessKey;
   final String bucketName;
   final String? customEndpoint;
+  final String? workerUrl;
   final String region;
 
   R2SyncService({
@@ -52,6 +53,7 @@ class R2SyncService {
     required this.secretAccessKey,
     required this.bucketName,
     this.customEndpoint,
+    this.workerUrl,
     this.region = 'auto',
   });
 
@@ -451,14 +453,16 @@ class R2SyncService {
   Future<bool> deleteFile(String remoteKey) async {
     final cleanKey = remoteKey.startsWith('/') ? remoteKey.substring(1) : remoteKey;
 
-    // 1. Try deleting via Cloudflare Worker DELETE endpoint
-    const defaultWorkerUrl = 'https://your-subdomain.workers.dev';
-    try {
-      final uri = Uri.parse('$defaultWorkerUrl/api/v1/files/${Uri.encodeComponent(cleanKey)}');
-      final response = await http.delete(uri).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) return true;
-    } catch (e) {
-      debugPrint('⚠️ [R2Sync] Worker file delete failed, falling back to direct S3 API: $e');
+    // 1. Try deleting via Cloudflare Worker DELETE endpoint if workerUrl is configured
+    if (workerUrl != null && workerUrl!.trim().isNotEmpty) {
+      try {
+        final cleanWorkerUrl = workerUrl!.trim().replaceAll(RegExp(r'/+$'), '');
+        final uri = Uri.parse('$cleanWorkerUrl/api/v1/files/${Uri.encodeComponent(cleanKey)}');
+        final response = await http.delete(uri).timeout(const Duration(seconds: 10));
+        if (response.statusCode == 200) return true;
+      } catch (e) {
+        debugPrint('⚠️ [R2Sync] Worker file delete failed, falling back to direct S3 API: $e');
+      }
     }
 
     // 2. Direct R2 S3 DELETE API fallback
@@ -511,6 +515,18 @@ class R2SyncService {
         } catch (_) {}
       }
 
+      // 读取 / 比对 OneDrive 式本地同步快照表 (last_sync_snapshot.json)
+      final snapshotFile = File('$dataDirectoryPath/last_sync_snapshot.json');
+      final Set<String> lastSyncedKeys = {};
+      final bool hasSnapshot = await snapshotFile.exists();
+      if (hasSnapshot) {
+        try {
+          final content = await snapshotFile.readAsString();
+          final list = jsonDecode(content) as List;
+          lastSyncedKeys.addAll(list.cast<String>());
+        } catch (_) {}
+      }
+
       onProgress?.call('正在连接 R2 获取云端文件列表...', 0, 0);
       final remoteObjects = await listRemoteObjects();
       final remoteMap = <String, R2ObjectInfo>{
@@ -533,6 +549,25 @@ class R2SyncService {
         localMap[cleanRel] = f;
       }
 
+      // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹
+      if (hasSnapshot) {
+        for (final oldKey in lastSyncedKeys) {
+          if (!localMap.containsKey(oldKey)) {
+            deletedKeys.add(oldKey);
+          }
+        }
+      }
+
+      // 核心校验辅助函数：判断云端 Key 是否已被标记删除（包含文件夹父路径前缀匹配）
+      bool isKeyDeleted(String key) {
+        for (final delKey in deletedKeys) {
+          if (key == delKey) return true;
+          final prefix = delKey.endsWith('/') ? delKey : '$delKey/';
+          if (key.startsWith(prefix)) return true;
+        }
+        return false;
+      }
+
       final toUpload = <String, File>{};
       for (final entry in localMap.entries) {
         final relKey = entry.key;
@@ -551,8 +586,8 @@ class R2SyncService {
 
       for (final remoteObj in remoteObjects) {
         final relKey = remoteObj.key;
-        if (deletedKeys.contains(relKey)) {
-          // 本地已被用户手动删除 -> 加入云端物理注销队列！
+        if (isKeyDeleted(relKey)) {
+          // 本地已被用户在应用内或 OS 手动删除 -> 加入云端物理注销队列！
           toDeleteRemote.add(remoteObj);
           continue;
         }
@@ -639,6 +674,23 @@ class R2SyncService {
           failCount++;
         }
       }
+
+      // 保存写回 OneDrive 式本地同步快照表 (last_sync_snapshot.json)
+      try {
+        final currentSnapshotKeys = <String>[];
+        final updatedEntities = await dir.list(recursive: true).toList();
+        final updatedFiles = updatedEntities.whereType<File>().toList();
+        for (final f in updatedFiles) {
+          final normPath = f.path.replaceAll('\\', '/');
+          final relPath = normPath.startsWith(normalizedBase)
+              ? normPath.substring(normalizedBase.length)
+              : normPath;
+          final cleanRel = relPath.startsWith('/') ? relPath.substring(1) : relPath;
+          if (cleanRel.isEmpty || cleanRel.startsWith('.') || cleanRel.contains('/.')) continue;
+          currentSnapshotKeys.add(cleanRel);
+        }
+        await snapshotFile.writeAsString(jsonEncode(currentSnapshotKeys));
+      } catch (_) {}
 
       if (failCount > 0) {
         onProgress?.call('部分文件同步失败 ($syncCount 成功, $failCount 失败)', totalTasks, totalTasks);
