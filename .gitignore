@@ -49,3 +49,8 @@ node_modules/
 .wrangler/
 dist/
 
+# Local Environment & Secrets
+.env
+.env.local
+.env.*.local
+*.local

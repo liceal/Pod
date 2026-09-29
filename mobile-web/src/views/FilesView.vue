@@ -178,6 +178,13 @@
               >
                 <Icons name="download" size="16" />
               </a>
+              <button
+                class="file-action-icon-btn delete"
+                title="删除文件"
+                @click.stop="deleteFile(file)"
+              >
+                <Icons name="trash" size="16" />
+              </button>
             </div>
           </div>
         </div>
@@ -208,6 +215,13 @@
                 <h4 class="folder-name text-truncate">{{ folder.name }}</h4>
                 <span class="folder-count">{{ folder.totalCount }} 项内容</span>
               </div>
+              <button
+                class="folder-delete-btn"
+                title="删除文件夹"
+                @click.stop="deleteFolder(folder)"
+              >
+                <Icons name="trash" size="16" />
+              </button>
               <Icons name="chevron-right" size="16" class="folder-arrow" />
             </div>
           </div>
@@ -270,6 +284,13 @@
                 >
                   <Icons name="eye" size="13" />
                 </button>
+                <button
+                  class="card-trash-badge"
+                  title="删除图片"
+                  @click.stop="deleteFile(file)"
+                >
+                  <Icons name="trash" size="13" />
+                </button>
                 <div class="photo-info-bar">
                   <span class="photo-name text-truncate">{{ file.file_name }}</span>
                   <span class="photo-size">{{ formatSize(file.file_size) }}</span>
@@ -285,6 +306,13 @@
                     @click.stop="handleFileClick(file)"
                   >
                     <Icons name="eye" size="13" />
+                  </button>
+                  <button
+                    class="card-trash-badge"
+                    title="删除文件"
+                    @click.stop="deleteFile(file)"
+                  >
+                    <Icons name="trash" size="13" />
                   </button>
                   <div class="doc-icon">
                     <Icons name="files" size="30" />
@@ -311,6 +339,14 @@
                       <Icons name="download" size="12" />
                       <span>下载</span>
                     </a>
+                    <button
+                      class="doc-pill-btn delete-pill"
+                      title="删除文件"
+                      @click.stop="deleteFile(file)"
+                    >
+                      <Icons name="trash" size="12" />
+                      <span>删除</span>
+                    </button>
                   </div>
                 </div>
               </template>
@@ -362,6 +398,13 @@
                 >
                   <Icons name="download" size="16" />
                 </a>
+                <button
+                  class="file-action-icon-btn delete"
+                  title="删除文件"
+                  @click.stop="deleteFile(file)"
+                >
+                  <Icons name="trash" size="16" />
+                </button>
               </div>
             </div>
           </div>
@@ -376,6 +419,7 @@
       :title="activeImageTitle"
       :subtitle="activeImageSubtitle"
       @close="isLightboxOpen = false"
+      @delete="handleLightboxDelete"
     />
 
     <!-- File Preview Modal (txt, md, json, code, pdf, audio, video, etc.) -->
@@ -384,6 +428,7 @@
       :file="previewFile"
       :file-url="previewFileUrl"
       @close="previewModalVisible = false"
+      @delete="handleModalDeleteFile"
       @toast="(msg, type) => emit('toast', msg, type)"
     />
   </div>
@@ -420,6 +465,7 @@ const isLightboxOpen = ref(false);
 const activeImageUrl = ref('');
 const activeImageTitle = ref('');
 const activeImageSubtitle = ref('');
+const activeImageFile = ref<FileMetadata | null>(null);
 
 // File Preview state (txt, md, json, code, pdf, audio, video)
 const previewModalVisible = ref(false);
@@ -725,10 +771,62 @@ const uploadToFolder = async (file: File, fileKey: string) => {
 };
 
 const openLightbox = (file: FileMetadata) => {
+  activeImageFile.value = file;
   activeImageUrl.value = getFileUrl(file.file_key);
   activeImageTitle.value = file.file_name;
   activeImageSubtitle.value = `${getParentDir(file.file_key)} • ${formatSize(file.file_size)}`;
   isLightboxOpen.value = true;
+};
+
+const deleteFile = async (file: FileMetadata) => {
+  if (!confirm(`确定要彻底删除文件「${file.file_name}」吗？\n删除后将在多端自动同步。`)) {
+    return;
+  }
+
+  const res = await ApiClient.deleteFile(file.file_key);
+  if (res.success) {
+    files.value = files.value.filter((f) => f.file_key !== file.file_key);
+    emit('toast', `已成功删除文件: ${file.file_name}`, 'success');
+    if (previewModalVisible.value && previewFile.value?.file_key === file.file_key) {
+      previewModalVisible.value = false;
+    }
+    if (isLightboxOpen.value && activeImageFile.value?.file_key === file.file_key) {
+      isLightboxOpen.value = false;
+    }
+  } else {
+    emit('toast', `删除失败: ${res.error || '网络异常'}`, 'error');
+  }
+};
+
+const deleteFolder = async (folder: FolderNode) => {
+  const folderPrefix = `files/${folder.path}/`;
+  const folderFiles = files.value.filter((f) => f.file_key.startsWith(folderPrefix));
+
+  if (!confirm(`确定要彻底删除文件夹「${folder.name}」及其下的全部 ${folderFiles.length} 项文件吗？\n删除后将在多端自动同步。`)) {
+    return;
+  }
+
+  emit('toast', `正在删除文件夹「${folder.name}」...`, 'info');
+  let deletedCount = 0;
+  for (const f of folderFiles) {
+    const res = await ApiClient.deleteFile(f.file_key);
+    if (res.success) {
+      deletedCount++;
+    }
+  }
+
+  files.value = files.value.filter((f) => !f.file_key.startsWith(folderPrefix));
+  emit('toast', `已成功删除文件夹「${folder.name}」（共 ${deletedCount} 个文件）`, 'success');
+};
+
+const handleLightboxDelete = async () => {
+  if (activeImageFile.value) {
+    await deleteFile(activeImageFile.value);
+  }
+};
+
+const handleModalDeleteFile = async (file: FileMetadata) => {
+  await deleteFile(file);
 };
 
 defineExpose({
@@ -1106,6 +1204,32 @@ defineExpose({
   color: var(--text-muted);
 }
 
+.folder-delete-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.folder-delete-btn:hover {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.folder-delete-btn:active {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.22);
+  transform: scale(0.9);
+}
+
 /* Photo & File Grid */
 .photos-grid {
   display: grid;
@@ -1286,6 +1410,31 @@ defineExpose({
   background: var(--accent-color);
 }
 
+.card-trash-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.52);
+  color: #ff6b6b;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 3;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.card-trash-badge:active {
+  transform: scale(0.9);
+  background: #ef4444;
+  color: #ffffff;
+}
+
 /* Document actions row (preview vs download) */
 .doc-actions-row {
   display: flex;
@@ -1316,9 +1465,20 @@ defineExpose({
   background: var(--bg-secondary);
 }
 
+.doc-pill-btn.delete-pill {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
 .doc-pill-btn:active {
   transform: scale(0.94);
   background: var(--accent-color);
+  color: #ffffff;
+}
+
+.doc-pill-btn.delete-pill:active {
+  background: #ef4444;
   color: #ffffff;
 }
 
@@ -1347,6 +1507,20 @@ defineExpose({
 
 .file-action-icon-btn.preview {
   color: var(--accent-color);
+}
+
+.file-action-icon-btn.delete {
+  color: #ef4444;
+}
+
+.file-action-icon-btn.delete:hover {
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.file-action-icon-btn.delete:active {
+  background: #ef4444;
+  color: #fff;
+  transform: scale(0.92);
 }
 
 .file-action-icon-btn:active {

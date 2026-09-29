@@ -1,6 +1,24 @@
 # PodQuick R2 Windows Upload Script
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
+# 1. Load credentials from local private config (.env.local or .env)
+$envFiles = @("$PSScriptRoot\.env.local", "$PSScriptRoot\.env")
+foreach ($envFile in $envFiles) {
+    if (Test-Path $envFile) {
+        Get-Content $envFile | ForEach-Object {
+            $line = $_.Trim()
+            if ($line -and !$line.StartsWith('#') -and $line.Contains('=')) {
+                $parts = $line.Split('=', 2)
+                $k = $parts[0].Trim()
+                $v = $parts[1].Trim().Trim('"').Trim("'")
+                if ($k -and $v -and ![Environment]::GetEnvironmentVariable($k, 'Process')) {
+                    [Environment]::SetEnvironmentVariable($k, $v, 'Process')
+                }
+            }
+        }
+    }
+}
+
 $accountId = if ($env:R2_ACCOUNT_ID) { $env:R2_ACCOUNT_ID } else { 'YOUR_ACCOUNT_ID' }
 $accessKeyId = if ($env:R2_ACCESS_KEY_ID) { $env:R2_ACCESS_KEY_ID } else { 'YOUR_ACCESS_KEY_ID' }
 $secretAccessKey = if ($env:R2_SECRET_ACCESS_KEY) { $env:R2_SECRET_ACCESS_KEY } else { 'YOUR_SECRET_ACCESS_KEY' }
@@ -9,6 +27,21 @@ $bucketName = if ($env:R2_BUCKET_NAME) { $env:R2_BUCKET_NAME } else { 'pod-quick
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "  PodQuick R2 Upload (Windows)   " -ForegroundColor Cyan
 Write-Host "====================================" -ForegroundColor Cyan
+
+# 2. Check credentials
+$hasCreds = ($accountId -ne 'YOUR_ACCOUNT_ID' -and ![string]::IsNullOrWhiteSpace($accountId) -and $accessKeyId -ne 'YOUR_ACCESS_KEY_ID' -and ![string]::IsNullOrWhiteSpace($accessKeyId) -and $secretAccessKey -ne 'YOUR_SECRET_ACCESS_KEY' -and ![string]::IsNullOrWhiteSpace($secretAccessKey))
+
+if (-not $hasCreds) {
+    Write-Host "ERROR: Cloudflare R2 credentials are not configured!" -ForegroundColor Red
+    Write-Host "Please create a .env.local file in the project root with the following (see .env.example):" -ForegroundColor Yellow
+    Write-Host "R2_ACCOUNT_ID=YOUR_CLOUDFLARE_ACCOUNT_ID" -ForegroundColor Gray
+    Write-Host "R2_ACCESS_KEY_ID=YOUR_R2_ACCESS_KEY_ID" -ForegroundColor Gray
+    Write-Host "R2_SECRET_ACCESS_KEY=YOUR_R2_SECRET_ACCESS_KEY" -ForegroundColor Gray
+    Write-Host "R2_BUCKET_NAME=pod-quick" -ForegroundColor Gray
+    Write-Host ""
+    Write-Host "Note: .env.local is in .gitignore and will never be committed to Git." -ForegroundColor Green
+    exit 1
+}
 
 $exePath = "$PSScriptRoot\build\PodQuick.exe"
 if (!(Test-Path $exePath)) {
@@ -57,13 +90,22 @@ function Upload-R2File($filePath, $remoteKey) {
     $authHeader = "AWS4-HMAC-SHA256 Credential=$accessKeyId/$credentialScope, SignedHeaders=$signedHeaders, Signature=$signature"
     $url = "https://$hostHeader$canonicalPath"
 
-    $resp = curl.exe -s -w "%{http_code}" -X PUT $url -H "Host: $hostHeader" -H "x-amz-date: $amzDate" -H "x-amz-content-sha256: $payloadHash" -H "Authorization: $authHeader" -H "Content-Type: application/octet-stream" --data-binary "@$filePath"
+    $tmpOut = [System.IO.Path]::GetTempFileName()
+    $httpCode = curl.exe -s -o $tmpOut -w "%{http_code}" -X PUT $url -H "Host: $hostHeader" -H "x-amz-date: $amzDate" -H "x-amz-content-sha256: $payloadHash" -H "Authorization: $authHeader" -H "Content-Type: application/octet-stream" --data-binary "@$filePath"
+    $body = ""
+    if (Test-Path $tmpOut) {
+        $body = [System.IO.File]::ReadAllText($tmpOut)
+        Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue
+    }
 
-    if ($resp -eq "200" -or $resp -eq "201") {
+    if ($httpCode -eq "200" -or $httpCode -eq "201") {
         Write-Host "SUCCESS: Uploaded $fileName to R2 root!" -ForegroundColor Green
         Write-Host "URL: $url" -ForegroundColor Green
     } else {
-        Write-Host "FAILED: Upload $fileName (HTTP $resp)" -ForegroundColor Red
+        Write-Host "FAILED: Upload $fileName (HTTP $httpCode)" -ForegroundColor Red
+        if ($body) {
+            Write-Host "Server Response: $body" -ForegroundColor DarkYellow
+        }
     }
 }
 

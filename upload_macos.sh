@@ -15,10 +15,27 @@ if [ ! -f "$DMG_FILE" ]; then
   exit 1
 fi
 
+# 1. 尝试从本地私有配置文件 .env.local 或 .env 加载凭证 (不提交 Git)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$SCRIPT_DIR/.env.local" ]; then
+  export $(grep -v '^#' "$SCRIPT_DIR/.env.local" | xargs)
+elif [ -f "$SCRIPT_DIR/.env" ]; then
+  export $(grep -v '^#' "$SCRIPT_DIR/.env" | xargs)
+fi
+
 ACCOUNT_ID="${R2_ACCOUNT_ID:-YOUR_ACCOUNT_ID}"
 ACCESS_KEY_ID="${R2_ACCESS_KEY_ID:-YOUR_ACCESS_KEY_ID}"
 SECRET_ACCESS_KEY="${R2_SECRET_ACCESS_KEY:-YOUR_SECRET_ACCESS_KEY}"
 BUCKET_NAME="${R2_BUCKET_NAME:-pod-quick}"
+
+if [ "$ACCOUNT_ID" = "YOUR_ACCOUNT_ID" ] || [ -z "$ACCOUNT_ID" ] || \
+   [ "$ACCESS_KEY_ID" = "YOUR_ACCESS_KEY_ID" ] || [ -z "$ACCESS_KEY_ID" ] || \
+   [ "$SECRET_ACCESS_KEY" = "YOUR_SECRET_ACCESS_KEY" ] || [ -z "$SECRET_ACCESS_KEY" ]; then
+  echo "❌ 错误: 未配置 Cloudflare R2 上传密钥！"
+  echo "请在项目根目录创建 .env.local 文件并填入实际密钥 (参考 .env.example)。"
+  echo "提示: .env.local 已加入 .gitignore，不会被提交到 Git 仓库，确保密钥安全。"
+  exit 1
+fi
 
 upload_to_r2() {
   local FILE_PATH="$1"

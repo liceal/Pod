@@ -549,10 +549,10 @@ class R2SyncService {
         localMap[cleanRel] = f;
       }
 
-      // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹
+      // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹 (仅限用户文件 files/)
       if (hasSnapshot) {
         for (final oldKey in lastSyncedKeys) {
-          if (!localMap.containsKey(oldKey)) {
+          if (oldKey.startsWith('files/') && !localMap.containsKey(oldKey)) {
             deletedKeys.add(oldKey);
           }
         }
@@ -687,7 +687,9 @@ class R2SyncService {
               : normPath;
           final cleanRel = relPath.startsWith('/') ? relPath.substring(1) : relPath;
           if (cleanRel.isEmpty || cleanRel.startsWith('.') || cleanRel.contains('/.')) continue;
-          currentSnapshotKeys.add(cleanRel);
+          if (cleanRel.startsWith('files/')) {
+            currentSnapshotKeys.add(cleanRel);
+          }
         }
         await snapshotFile.writeAsString(jsonEncode(currentSnapshotKeys));
       } catch (_) {}

@@ -83,6 +83,16 @@
                 <span class="btn-label">下载</span>
               </a>
 
+              <!-- Delete Button -->
+              <button
+                class="action-btn action-btn-danger"
+                title="删除文件"
+                @click.stop="handleDelete"
+              >
+                <Icons name="trash" size="15" />
+                <span class="btn-label">删除</span>
+              </button>
+
               <!-- Close Button -->
               <button class="action-btn close-btn" title="关闭预览" @click.stop="emit('close')">
                 <Icons name="close" size="18" />
@@ -198,8 +208,14 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void;
+  (e: 'delete', file: FileMetadata): void;
   (e: 'toast', msg: string, type?: 'success' | 'error' | 'info'): void;
 }>();
+
+const handleDelete = () => {
+  if (!props.file) return;
+  emit('delete', props.file);
+};
 
 const overlayRef = ref<HTMLElement | null>(null);
 const dialogRef = ref<HTMLElement | null>(null);
@@ -942,6 +958,23 @@ const formatTime = (iso: string): string => {
 
 .action-btn-accent:hover {
   opacity: 0.9;
+}
+
+.action-btn-danger {
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.action-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.5);
+}
+
+.action-btn-danger:active {
+  background: #ef4444;
+  color: #fff;
+  transform: scale(0.96);
 }
 
 .close-btn {

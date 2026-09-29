@@ -656,7 +656,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (settings.cfD1Mode == 0) {
       final url = settings.cfWorkerUrl.trim();
       if (url.isNotEmpty) {
-        final service = CfD1SyncService(workerUrl: url, isDevMode: true);
+        final service = CfD1SyncService(workerUrl: url, isDevMode: kDebugMode);
         pullRes = await service.pullFromCloudflare(since: sinceTime);
       }
     } else {
@@ -847,7 +847,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         return {'success': false, 'error': err};
       }
       addD1Log(text('正在通过 Worker 端点 ($url) 上传...', 'Pushing via Worker endpoint ($url)...'));
-      final service = CfD1SyncService(workerUrl: url, isDevMode: true);
+      final service = CfD1SyncService(workerUrl: url, isDevMode: kDebugMode);
       final metrics = await service.pushToCloudflare(
         notes: allNotes,
         clipboardItems: allClipboards,
@@ -1026,7 +1026,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           Map<String, Map<String, dynamic>> cloudMetadata = {};
           CfD1SyncService? workerService;
           if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
-            workerService = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
+            workerService = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: kDebugMode);
             cloudMetadata = await workerService.fetchRemoteFilesMetadata();
             if (cloudMetadata.isEmpty &&
                 settings.cfAccountId?.trim().isNotEmpty == true &&
@@ -1087,10 +1087,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             localMap[k] = f;
           }
 
-          // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹
+          // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹 (仅限用户文件 files/)
           if (hasSnapshot) {
             for (final oldKey in lastSyncedKeys) {
-              if (!localMap.containsKey(oldKey)) {
+              if (oldKey.startsWith('files/') && !localMap.containsKey(oldKey)) {
                 deletedKeys.add(oldKey);
               }
             }
@@ -1106,10 +1106,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             return false;
           }
 
-          // 异地删除下发：如果一个文件上次快照存在，但云端已无此文件且本地未被手动标记/修改，说明其他设备删除了该文件，本地同步清理至回收站
+          // 异地删除下发：如果一个文件上次快照存在，但云端已无此文件且本地未被手动标记/修改，说明其他设备删除了该文件，本地同步清理至回收站 (仅限用户文件 files/)
           if (hasSnapshot && cloudMetadata.isNotEmpty) {
             for (final oldKey in lastSyncedKeys) {
-              if (localMap.containsKey(oldKey) && !cloudMetadata.containsKey(oldKey) && !isKeyDeleted(oldKey)) {
+              if (oldKey.startsWith('files/') && localMap.containsKey(oldKey) && !cloudMetadata.containsKey(oldKey) && !isKeyDeleted(oldKey)) {
                 final localFile = localMap[oldKey];
                 if (localFile != null && localFile.existsSync()) {
                   try {
@@ -1309,7 +1309,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             addD1Log('↑ [$progressIndex/${toUpload.length}] 上传 $fileName');
 
             if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
-              final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: true);
+              final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: kDebugMode);
               final res = await service.uploadFileToR2(file: file, fileKey: relativePath);
               if (res['success'] == true) {
                 newlyUploadedCount++;
@@ -1390,7 +1390,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                   final name = f.path.split(Platform.pathSeparator).last;
                   if (name.startsWith('.') || name.endsWith('.tmp')) continue;
                   final relKey = computeRelativeKey(f);
-                  if (relKey.startsWith('files/') || relKey.startsWith('clipboard_images/')) {
+                  if (relKey.startsWith('files/')) {
                     currentSnapshotKeys.add(relKey);
                   }
                 }

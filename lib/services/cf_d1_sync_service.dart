@@ -43,7 +43,7 @@ class CfD1SyncService {
 
   CfD1SyncService({
     required this.workerUrl,
-    this.isDevMode = true,
+    this.isDevMode = kDebugMode,
   });
 
   String get _cleanBaseUrl {

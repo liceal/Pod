@@ -39,6 +39,14 @@
             >
               <Icons name="download" size="20" />
             </a>
+            <button
+              v-if="imageUrl"
+              class="action-icon-btn delete-btn"
+              title="删除图片"
+              @click="emit('delete')"
+            >
+              <Icons name="trash" size="19" />
+            </button>
             <button class="action-icon-btn" title="关闭" @click="emit('close')">
               <Icons name="close" size="22" />
             </button>
@@ -105,6 +113,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void;
+  (e: 'delete'): void;
 }>();
 
 const viewportRef = ref<HTMLElement | null>(null);
@@ -641,6 +650,19 @@ onBeforeUnmount(() => {
 
 .reset-btn {
   background: var(--accent-color, #3b82f6);
+  color: #ffffff;
+}
+
+.action-icon-btn.delete-btn {
+  color: #ff6b6b;
+}
+
+.action-icon-btn.delete-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+
+.action-icon-btn.delete-btn:active {
+  background: #ef4444;
   color: #ffffff;
 }
 
