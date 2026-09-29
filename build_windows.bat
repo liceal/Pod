@@ -9,6 +9,7 @@ echo.
 
 echo 正在检查并释放运行中的 PodQuick 实例以防文件占用锁死...
 taskkill /F /IM PodQuick.exe >nul 2>&1
+taskkill /F /IM PodQuick_Setup.exe >nul 2>&1
 
 echo [1/3] 开始 Flutter Windows 编译 [Release 模式]...
 if not exist "build\native_assets\windows" mkdir "build\native_assets\windows"
@@ -74,7 +75,7 @@ if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program File
 if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC_PATH=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist "C:\Program Files\Inno Setup 7\ISCC.exe" set "ISCC_PATH=C:\Program Files\Inno Setup 7\ISCC.exe"
 
-set "APP_VER=1.0.9"
+set "APP_VER=1.1.0"
 if exist "release_info.json" (
     for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content release_info.json -Raw | ConvertFrom-Json).version"`) do (
         set "APP_VER=%%v"
