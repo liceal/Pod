@@ -165,14 +165,16 @@ class _PodPanelState extends State<PodPanel>
     widget.state.startAutoCollapseTimer();
   }
 
-  // 顶部感应条/把手双向滚轮处理：上滑收起 / 下滑展开
+  // 顶部感应条/把手双向滚轮处理：上滑收起 / 下滑展开 (支持反转方向)
   void _handleTopScrollSignal(PointerSignalEvent event) {
     if (event is! PointerScrollEvent) return;
 
     final dy = event.scrollDelta.dy;
+    final effectiveDy =
+        widget.state.settings.invertScrollDirection ? -dy : dy;
 
-    if (dy > 0) {
-      // 下滑 → 展开 / 取消正在进行的收起动画
+    if (effectiveDy > 0) {
+      // 下滑 (或反转后) → 展开 / 取消正在进行的收起动画
       if (widget.state.settings.triggerMode == TriggerMode.hotkeyOnly ||
           widget.state.settings.triggerMode == TriggerMode.hoverOnly) {
         return;
@@ -185,10 +187,13 @@ class _PodPanelState extends State<PodPanel>
         // 完全收起状态，展开
         widget.state.expandPanel();
       }
-    } else if (dy < 0) {
-      // 上滑 → 收起
+    } else if (effectiveDy < 0) {
+      // 上滑 (或反转后) → 收起
       _hoverTimer?.cancel(); // 向上滚动时取消悬浮延迟展开，避免误触展开
-      if (widget.state.isExpanded && !widget.state.isAnimating) {
+      if (widget.state.isAnimating && widget.state.isExpanded) {
+        // 正在展开中，反向收起
+        widget.state.cancelExpandAndCollapse();
+      } else if (widget.state.isExpanded && !widget.state.isAnimating) {
         widget.state.collapsePanel();
       }
     }
@@ -268,12 +273,11 @@ class _PodPanelState extends State<PodPanel>
                       clipBehavior: Clip.none,
                       children: [
                         // 1. Sliding Panel Box
-                        OverflowBox(
-                          minWidth: widget.state.lastCalculatedWidth,
-                          maxWidth: widget.state.lastCalculatedWidth,
-                          minHeight: 350,
-                          maxHeight: 350,
-                          alignment: Alignment.topCenter,
+                        Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          height: 350,
                           child: ClipRect(
                             child: SlideTransition(
                               position: _slideAnimation,

@@ -196,11 +196,24 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   /// Get the active screen dimensions and position containing the mouse cursor
   Future<Map<String, double>> getActiveScreenInfo() async {
+    if (Platform.isMacOS) {
+      try {
+        final res =
+            await _menuBarScrollChannel.invokeMethod('getCurrentScreenInfo');
+        if (res is Map) {
+          return Map<String, double>.from(
+            res.map((k, v) => MapEntry(k as String, (v as num).toDouble())),
+          );
+        }
+      } catch (e) {
+        debugPrint('Failed to get macOS active screen info: $e');
+      }
+    }
     final display = await _getCurrentDisplay();
     final double sw = display.size.width;
     final double sx = (display.visiblePosition ?? Offset.zero).dx;
     final double sy = (display.visiblePosition ?? Offset.zero).dy;
-    return {'x': sx, 'width': sw, 'visibleY': sy};
+    return {'x': sx, 'y': 0.0, 'width': sw, 'visibleY': sy};
   }
 
   String _imageSignature(Uint8List bytes) {
@@ -454,7 +467,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   // --- Initializer ---
   Future<void> initialize() async {
-    _clearTrashDir();
     _prefs = await SharedPreferences.getInstance();
     final appSupport = await getApplicationSupportDirectory();
     _defaultDataDirSync = '${appSupport.path}/data'.replaceAll('\\', '/');
@@ -464,6 +476,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Load Local Data
     _loadSettings();
+    _clearTrashDir();
     final lastSyncMs = _prefs.getInt('last_d1_sync_time');
     if (lastSyncMs != null) {
       _lastD1SyncTime = DateTime.fromMillisecondsSinceEpoch(lastSyncMs);
@@ -1630,7 +1643,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       return;
     }
 
-    if (dy > 0) {
+    final double effectiveDy = settings.invertScrollDirection ? -dy : dy;
+
+    if (effectiveDy > 0) {
       // Throttle expand only
       final now = DateTime.now();
       if (now.difference(_lastScrollAction).inMilliseconds < 200) return;
@@ -1641,8 +1656,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } else if (!isExpanded && !isAnimating) {
         expandPanel(focus: true, duration: const Duration(milliseconds: 250));
       }
-    } else if (dy < 0) {
-      if (isExpanded && !isAnimating) {
+    } else if (effectiveDy < 0) {
+      if (isAnimating && isExpanded) {
+        cancelExpandAndCollapse();
+      } else if (isExpanded && !isAnimating) {
         collapsePanel(duration: const Duration(milliseconds: 250));
       }
     }
@@ -1705,7 +1722,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           lastCalculatedWidth = w;
           notifyListeners(); // Ensure Flutter UI updates to the new width immediately
         }
-        // Move window to correct screen position (cheap)
+
+        // Position window directly below the status bar
         await _menuBarScrollChannel.invokeMethod('expandOnScreen', {
           'x': info['x']! + (sw - w) / 2,
           'y': info['visibleY']!,
@@ -1825,6 +1843,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if (Platform.isMacOS) {
       try {
         await windowManager.setIgnoreMouseEvents(true);
+        await windowManager.hide();
       } catch (e) {
         debugPrint('Failed to set ignore mouse events on collapse: $e');
       }
@@ -1866,6 +1885,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
       onAnimationStateChanged?.call(const Duration(milliseconds: 250));
       _refreshPanelActivationAfterShow();
+    }
+  }
+
+  void cancelExpandAndCollapse() {
+    if (isExpanded) {
+      _autoCollapseTimer?.cancel();
+      isExpanded = false;
+      isAnimating = true;
+      FocusManager.instance.primaryFocus?.unfocus();
+      _restoreFocusAfterCollapse = _didGrabFocus;
+      _didGrabFocus = false;
+      onAnimationStateChanged?.call(const Duration(milliseconds: 200));
+      unawaited(_runPostCollapseMaintenance());
     }
   }
 

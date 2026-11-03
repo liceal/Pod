@@ -32,6 +32,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
   String? _updateCheckResult;
   late TriggerMode _triggerMode;
   late String _hotkey;
+  late bool _invertScrollDirection;
   late bool _isDarkTheme;
   late double _hoverTimeout;
   late double _panelWidth;
@@ -84,6 +85,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _dataSubTab = _savedDataSubTab.clamp(0, 1);
     _triggerMode = widget.state.settings.triggerMode;
     _hotkey = widget.state.settings.hotkey;
+    _invertScrollDirection = widget.state.settings.invertScrollDirection;
     _isDarkTheme = widget.state.settings.isDarkTheme;
     _hoverTimeout = widget.state.settings.hoverTimeoutMs.toDouble();
     _panelWidth = widget.state.settings.panelWidth;
@@ -447,6 +449,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final updated = AppSettings(
       triggerMode: _triggerMode,
       hotkey: _hotkey,
+      invertScrollDirection: _invertScrollDirection,
       isDarkTheme: _isDarkTheme,
       hoverTimeoutMs: _hoverTimeout.toInt(),
       panelWidth: _panelWidth,
@@ -1236,6 +1239,39 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   }
                 },
               ),
+              if (_triggerMode != TriggerMode.hotkeyOnly &&
+                  _triggerMode != TriggerMode.hoverOnly) ...[
+                const SizedBox(height: 12),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(
+                    _text('唤醒滚轮反向（开启相反）', 'Invert Scroll Wake Direction'),
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: textColor,
+                    ),
+                  ),
+                  subtitle: Text(
+                    _text(
+                      '滚轮下滚收起、上滚展开面板（默认下滚展开、上滚收起）',
+                      'Scroll down to collapse, scroll up to expand (default is inverted)',
+                    ),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: subColor.withValues(alpha: 0.8),
+                    ),
+                  ),
+                  value: _invertScrollDirection,
+                  activeColor: accentColor,
+                  onChanged: (val) {
+                    setState(() {
+                      _invertScrollDirection = val;
+                    });
+                  },
+                ),
+              ],
             ],
           ),
         );

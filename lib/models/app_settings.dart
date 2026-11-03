@@ -23,6 +23,7 @@ class AppSettings {
 
   final TriggerMode triggerMode;
   final String hotkey; // e.g., "alt+u"
+  final bool invertScrollDirection; // Reverse scroll wake direction (scroll down collapses, scroll up expands)
   final bool isDarkTheme;
   final int hoverTimeoutMs; // Delay before hover triggers slide-down
   final double panelWidth;
@@ -78,6 +79,7 @@ class AppSettings {
   AppSettings({
     this.triggerMode = TriggerMode.both,
     this.hotkey = 'alt+u',
+    this.invertScrollDirection = false,
     this.isDarkTheme = true,
     this.hoverTimeoutMs = 300,
     this.panelWidth = 900.0,
@@ -184,6 +186,7 @@ class AppSettings {
   AppSettings copyWith({
     TriggerMode? triggerMode,
     String? hotkey,
+    bool? invertScrollDirection,
     bool? isDarkTheme,
     int? hoverTimeoutMs,
     double? panelWidth,
@@ -222,6 +225,8 @@ class AppSettings {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
       hotkey: hotkey ?? this.hotkey,
+      invertScrollDirection:
+          invertScrollDirection ?? this.invertScrollDirection,
       isDarkTheme: isDarkTheme ?? this.isDarkTheme,
       hoverTimeoutMs: hoverTimeoutMs ?? this.hoverTimeoutMs,
       panelWidth: panelWidth ?? this.panelWidth,
@@ -264,6 +269,7 @@ class AppSettings {
     return {
       'triggerMode': triggerMode.name,
       'hotkey': hotkey,
+      'invertScrollDirection': invertScrollDirection,
       'isDarkTheme': isDarkTheme,
       'hoverTimeoutMs': hoverTimeoutMs,
       'panelWidth': panelWidth,
@@ -350,6 +356,7 @@ class AppSettings {
     return AppSettings(
       triggerMode: parseTriggerMode(json['triggerMode'] as String?),
       hotkey: json['hotkey'] as String? ?? 'alt+u',
+      invertScrollDirection: json['invertScrollDirection'] as bool? ?? false,
       isDarkTheme: json['isDarkTheme'] as bool? ?? true,
       hoverTimeoutMs: json['hoverTimeoutMs'] as int? ?? 300,
       panelWidth: (json['panelWidth'] as num?)?.toDouble() ?? 900.0,

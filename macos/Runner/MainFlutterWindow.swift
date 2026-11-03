@@ -15,6 +15,10 @@ class MainFlutterWindow: NSPanel {
     return false
   }
 
+  override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+    return frameRect
+  }
+
   private var dummyCloseButton: NSButton?
   private var dummyMiniaturizeButton: NSButton?
   private var dummyZoomButton: NSButton?
@@ -87,6 +91,7 @@ class MainFlutterWindow: NSPanel {
     self.styleMask.insert(.nonactivatingPanel)
     self.styleMask.insert(.utilityWindow)
     self.isFloatingPanel = true
+    self.level = .floating
     self.hidesOnDeactivate = false
     self.becomesKeyOnlyIfNeeded = false
     self.isExcludedFromWindowsMenu = true
@@ -352,9 +357,10 @@ class MainFlutterWindow: NSPanel {
     let mouseLoc = NSEvent.mouseLocation
     for screen in NSScreen.screens {
       let frame = screen.frame
-      // Check if mouse is within the top 20 pixels of the screen
+      // Match the entire system menu bar area (typically ~24-25pt, or ~38pt on MacBook notch screens)
+      let menuBarH = max(24.0, frame.maxY - screen.visibleFrame.maxY)
       if mouseLoc.x >= frame.minX && mouseLoc.x <= frame.maxX &&
-         mouseLoc.y >= frame.maxY - 20.0 && mouseLoc.y <= frame.maxY {
+         mouseLoc.y >= frame.maxY - menuBarH && mouseLoc.y <= frame.maxY {
         return screen
       }
     }
@@ -367,12 +373,10 @@ class MainFlutterWindow: NSPanel {
     let deltaY = event.scrollingDeltaY != 0 ? event.scrollingDeltaY : event.deltaY
     guard deltaY != 0 else { return }
 
-    // Only throttle expand (dy > 0), let collapse (dy < 0) pass through
-    if deltaY > 0 {
-      let now = ProcessInfo.processInfo.systemUptime
-      if now - lastScrollTime < 0.2 { return }
-      lastScrollTime = now
-    }
+    // Throttle scroll events to prevent event flooding (Dart handles direction-based actions)
+    let now = ProcessInfo.processInfo.systemUptime
+    if now - lastScrollTime < 0.1 { return }
+    lastScrollTime = now
 
     let frame = targetScreen.frame
     let visibleFrame = targetScreen.visibleFrame
