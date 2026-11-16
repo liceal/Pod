@@ -1,6 +1,6 @@
 {
-    "name": "unclutter",
-    "short_name": "unclutter",
+    "name": "PodQuick",
+    "short_name": "PodQuick",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

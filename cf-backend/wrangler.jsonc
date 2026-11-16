@@ -20,7 +20,7 @@
 	"r2_buckets": [
 		{
 			"binding": "FILES_BUCKET",
-			"bucket_name": "pod-quick-files-apac"
+			"bucket_name": "pod-quick-files"
 		}
 	],
 	"vars": {

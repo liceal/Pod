@@ -2,7 +2,7 @@ import { ref } from 'vue';
 
 export type ThemeMode = 'dark' | 'light' | 'warm' | 'system';
 
-const STORAGE_KEY = 'unclutter_theme_mode';
+const STORAGE_KEY = 'podquick_theme_mode';
 
 export const currentThemeMode = ref<ThemeMode>(
   (localStorage.getItem(STORAGE_KEY) as ThemeMode) || 'system'

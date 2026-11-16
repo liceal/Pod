@@ -70,6 +70,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   final List<FileUndoAction> _redoStack = [];
   List<Note> notes = [];
   List<Note> deletedNotes = [];
+  List<ClipboardItem> deletedClipboards = [];
   Note? activeNote;
 
   bool isExpanded = false;
@@ -502,8 +503,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     _startClipboardMonitoring();
 
-    // Background cleanup of orphaned images
+    // Background cleanup of orphaned images (on startup + periodic every 10 minutes)
     _cleanupUnusedClipboardImages();
+    _clipboardCleanupTimer?.cancel();
+    _clipboardCleanupTimer = Timer.periodic(const Duration(minutes: 10), (_) {
+      if (!_isShuttingDown) {
+        _trimClipboardHistoryToLimit();
+        _cleanupUnusedClipboardImages();
+      }
+    });
 
     if (Platform.isMacOS) {
       _menuBarScrollChannel.setMethodCallHandler(_onMenuBarScrollMethodCall);
@@ -546,7 +554,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _reloadHistoryDebounce?.cancel();
     _r2SyncTimer?.cancel();
     _cfD1SyncTimer?.cancel();
+    _clipboardCleanupTimer?.cancel();
   }
+
+  Timer? _clipboardCleanupTimer;
 
   // --- Cloudflare R2 Sync Methods ---
 
@@ -691,26 +702,32 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final List<Note> remoteNotes = (pullRes['notes'] as List?)?.cast<Note>() ?? [];
       final List<ClipboardItem> remoteClipboards = (pullRes['clipboardItems'] as List?)?.cast<ClipboardItem>() ?? [];
 
-      // 1. 合并便签 (Git 风格：墓碑检测 + 冲突备份 + 增量对比)
+      // 1. 合并便签 (做法一：整篇最新修改时间覆盖 LWW，不生成冲突副本，保持列表干净)
       int newNotesCount = 0;
       int updatedNotesCount = 0;
-      int conflictsCount = 0;
       final Map<String, Note> activeMap = {};
       final Map<String, Note> tombstoneMap = {};
 
-      for (final n in notes) activeMap[n.id] = n;
-      for (final dn in deletedNotes) tombstoneMap[dn.id] = dn;
-
-      final List<Note> backupNotes = [];
+      for (final n in notes) {
+        activeMap[n.id] = n;
+      }
+      for (final dn in deletedNotes) {
+        tombstoneMap[dn.id] = dn;
+      }
 
       for (final rNote in remoteNotes) {
         if (rNote.isDeleted) {
           // 云端为删除墓碑
           if (activeMap.containsKey(rNote.id)) {
-            activeMap.remove(rNote.id);
-            updatedNotesCount++;
+            final localNote = activeMap[rNote.id]!;
+            if (!localNote.updatedAt.isAfter(rNote.updatedAt)) {
+              activeMap.remove(rNote.id);
+              tombstoneMap[rNote.id] = rNote;
+              updatedNotesCount++;
+            }
+          } else {
+            tombstoneMap[rNote.id] = rNote;
           }
-          tombstoneMap[rNote.id] = rNote;
           continue;
         }
 
@@ -718,7 +735,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         if (tombstoneMap.containsKey(rNote.id)) {
           final tombstone = tombstoneMap[rNote.id]!;
           if (rNote.updatedAt.isAfter(tombstone.updatedAt)) {
-            // 云端更新时间在本地删除之后（在其他端重新编辑过） -> 恢复/更新
+            // 云端更新时间在本地删除之后 -> 恢复/更新
             tombstoneMap.remove(rNote.id);
             activeMap[rNote.id] = rNote;
             newNotesCount++;
@@ -731,40 +748,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           activeMap[rNote.id] = rNote;
           newNotesCount++;
         } else {
-          // 双端均有更新 -> 三方合并与冲突处理
+          // 双端均存在 -> 谁的时间最新就直接用谁覆盖 (Last-Write-Wins)
           final localNote = activeMap[rNote.id]!;
           if (rNote.updatedAt.isAfter(localNote.updatedAt)) {
-            if (localNote.updatedAt.isAfter(sinceTime) &&
-                localNote.content != rNote.content &&
-                localNote.content.isNotEmpty) {
-              // 双方在上次同步后均修改了内容且不相同 -> 产生冲突！
-              // 使用云端版本，同时将本地未上送的修改存为冲突备份
-              final backup = Note(
-                id: _uuid.v4(),
-                title: text('[冲突备份] ${localNote.title}', '[Conflict Backup] ${localNote.title}'),
-                content: localNote.content,
-                createdAt: DateTime.now(),
-                updatedAt: DateTime.now(),
-              );
-              backupNotes.add(backup);
-              conflictsCount++;
-            }
             activeMap[rNote.id] = rNote;
             updatedNotesCount++;
           }
         }
       }
 
-      if (backupNotes.isNotEmpty) {
-        for (final b in backupNotes) {
-          activeMap[b.id] = b;
-        }
-      }
-
-      deletedNotes = tombstoneMap.values.toList();
+      final cutoffTombstone = DateTime.now().subtract(const Duration(days: 7));
+      deletedNotes = tombstoneMap.values
+          .where((n) => n.updatedAt.isAfter(cutoffTombstone))
+          .toList();
       await _saveDeletedNotes();
 
-      if (newNotesCount > 0 || updatedNotesCount > 0 || conflictsCount > 0) {
+      if (newNotesCount > 0 || updatedNotesCount > 0) {
         notes = activeMap.values.toList()
           ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
 
@@ -780,42 +779,93 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         }
 
         await _saveNotes();
-        var msg = text(
-          '🎉 云端便签同步拉取完成：新增 $newNotesCount 条，更新 $updatedNotesCount 条',
+        onLog(text(
+          '🎉 云端便签同步完成：新增 $newNotesCount 条，更新 $updatedNotesCount 条',
           'Fetched notes: added $newNotesCount, updated $updatedNotesCount',
-        );
-        if (conflictsCount > 0) {
-          msg += text(' (检测到 $conflictsCount 处冲突，已生成本地备份)', ' ($conflictsCount conflicts backed up)');
-        }
-        onLog(msg);
+        ));
       } else {
-        onLog(text('ℹ️ 便签已与云端同步保持最新', 'Notes up to date.'));
+        onLog(text('ℹ️ 便签已与云端保持最新', 'Notes up to date.'));
       }
 
-      // 2. 合并剪贴板历史
+      // 2. 合并剪贴板历史（支持新增、收藏状态同步及删除墓碑同步）
       int newClipCount = 0;
-      final Set<String> existingClipIds = {};
-      for (final c in clipboardHistory) existingClipIds.add(c.id);
-      for (final c in clipboardFavorites) existingClipIds.add(c.id);
+      int updatedClipCount = 0;
+      final Map<String, ClipboardItem> historyMap = {
+        for (final c in clipboardHistory) c.id: c,
+      };
+      final Map<String, ClipboardItem> favMap = {
+        for (final c in clipboardFavorites) c.id: c,
+      };
+      final Map<String, ClipboardItem> delClipMap = {
+        for (final c in deletedClipboards) c.id: c,
+      };
 
       for (final rClip in remoteClipboards) {
-        if (!existingClipIds.contains(rClip.id)) {
-          if (rClip.isFavorite) {
-            clipboardFavorites.insert(0, rClip);
-          } else {
-            clipboardHistory.insert(0, rClip);
+        if (rClip.isDeleted) {
+          bool removed = false;
+          if (historyMap.containsKey(rClip.id)) {
+            historyMap.remove(rClip.id);
+            removed = true;
           }
-          existingClipIds.add(rClip.id);
+          if (favMap.containsKey(rClip.id)) {
+            favMap.remove(rClip.id);
+            removed = true;
+          }
+          if (removed) updatedClipCount++;
+          delClipMap[rClip.id] = rClip;
+          continue;
+        }
+
+        if (delClipMap.containsKey(rClip.id)) {
+          final tomb = delClipMap[rClip.id]!;
+          if (!rClip.updatedAt.isAfter(tomb.updatedAt)) {
+            continue;
+          }
+          delClipMap.remove(rClip.id);
+        }
+
+        final existingFav = favMap[rClip.id];
+        final existingHist = historyMap[rClip.id];
+        final existing = existingFav ?? existingHist;
+
+        if (existing == null) {
+          if (rClip.isFavorite) {
+            favMap[rClip.id] = rClip;
+          } else {
+            historyMap[rClip.id] = rClip;
+          }
           newClipCount++;
+        } else if (rClip.updatedAt.isAfter(existing.updatedAt) ||
+                   rClip.isFavorite != (existingFav != null)) {
+          if (rClip.isFavorite) {
+            favMap[rClip.id] = rClip;
+          } else {
+            favMap.remove(rClip.id);
+            historyMap[rClip.id] = rClip;
+          }
+          updatedClipCount++;
         }
       }
 
-      if (newClipCount > 0) {
-        clipboardHistory.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-        clipboardFavorites.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      final clipTombstoneCutoff = DateTime.now().subtract(const Duration(days: 7));
+      deletedClipboards = delClipMap.values
+          .where((c) => c.updatedAt.isAfter(clipTombstoneCutoff))
+          .toList();
+
+      if (newClipCount > 0 || updatedClipCount > 0) {
+        clipboardHistory = historyMap.values.toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        clipboardFavorites = favMap.values.toList()
+          ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+        // 拉取合并后立即按本地上限裁剪超出部分的旧剪贴板记录，并在后台释放孤立图片
+        _trimClipboardHistoryToLimit();
         await _saveClipboardHistory();
         await _saveClipboardFavorites();
-        onLog(text('🎉 剪贴板同步完成：合并新增 $newClipCount 条记录', 'Fetched clipboards: added $newClipCount'));
+        unawaited(_cleanupUnusedClipboardImages());
+        onLog(text(
+          '🎉 剪贴板同步完成：新增 $newClipCount 条，状态更新 $updatedClipCount 条',
+          'Fetched clipboards: added $newClipCount, updated $updatedClipCount',
+        ));
       }
 
       notifyListeners();
@@ -827,31 +877,62 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<Map<String, dynamic>> _pushLocalDataToD1Internal({bool isManual = true}) async {
-    addD1Log(text('开始 Cloudflare D1 数据库双向增量同步 (Git 模式)...', 'Starting Git-style D1 sync...'));
+    final DateTime? lastSyncBeforePull = _lastD1SyncTime;
 
     // 1. 先拉取云端增量数据并进行合并
     await _pullAndMergeCloudData(onLog: (msg) => addD1Log(msg));
 
-    // 2. 包含已删除墓碑在内的全量便签列表
+    // 2. 组装本地便签与剪贴板（含删除墓碑）
     final allNotes = [...notes, ...deletedNotes];
 
     final Map<String, ClipboardItem> clipMap = {};
-    for (final item in clipboardHistory) clipMap[item.id] = item;
-    for (final item in clipboardFavorites) clipMap[item.id] = item.copyWith(isFavorite: true);
+    for (final item in clipboardHistory) {
+      clipMap[item.id] = item;
+    }
+    for (final item in clipboardFavorites) {
+      clipMap[item.id] = item.copyWith(isFavorite: true);
+    }
+    for (final delItem in deletedClipboards) {
+      clipMap[delItem.id] = delItem.copyWith(isDeleted: true);
+    }
     final allClipboards = clipMap.values.toList();
 
+    // 3. 自动同步时仅推送增量（改哪条传哪条），避免每次全量重传
+    final List<Note> notesToPush;
+    final List<ClipboardItem> clipboardsToPush;
+    if (!isManual && lastSyncBeforePull != null) {
+      notesToPush = allNotes.where((n) => n.updatedAt.isAfter(lastSyncBeforePull)).toList();
+      clipboardsToPush = allClipboards.where((c) => c.updatedAt.isAfter(lastSyncBeforePull)).toList();
+      if (notesToPush.isEmpty && clipboardsToPush.isEmpty) {
+        final msg = text('已与云端保持最新（无本地新增改动需上传）', 'Up to date (no local changes to push)');
+        addD1Log('ℹ️ $msg');
+        return {
+          'success': true,
+          'notesCount': 0,
+          'clipboardCount': 0,
+          'settingsCount': 0,
+          'message': msg,
+        };
+      }
+    } else {
+      notesToPush = allNotes;
+      clipboardsToPush = allClipboards;
+    }
+
     addD1Log(text(
-      '读取待推送到 D1 数据: 便签 ${allNotes.length} 条 (含删除标记 ${deletedNotes.length} 条), 剪贴板 ${allClipboards.length} 条',
-      'Collected local data: ${allNotes.length} notes (${deletedNotes.length} deleted), ${allClipboards.length} clipboards',
+      '待推送变更: 便签 ${notesToPush.length} 条, 剪贴板 ${clipboardsToPush.length} 条',
+      'Pushing delta: ${notesToPush.length} notes, ${clipboardsToPush.length} clipboards',
     ));
 
-    final settingsList = [
-      {
-        'key': 'app_settings',
-        'value': jsonEncode(settings.toJson()),
-        'updatedAt': DateTime.now().toIso8601String(),
-      }
-    ];
+    final settingsList = isManual
+        ? [
+            {
+              'key': 'app_settings',
+              'value': jsonEncode(settings.toJson()),
+              'updatedAt': DateTime.now().toIso8601String(),
+            }
+          ]
+        : <Map<String, dynamic>>[];
 
     if (settings.cfD1Mode == 0) {
       final url = settings.cfWorkerUrl.trim();
@@ -860,23 +941,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         addD1Log('❌ $err');
         return {'success': false, 'error': err};
       }
-      addD1Log(text('正在通过 Worker 端点 ($url) 上传...', 'Pushing via Worker endpoint ($url)...'));
       final service = CfD1SyncService(workerUrl: url, isDevMode: kDebugMode);
       final metrics = await service.pushToCloudflare(
-        notes: allNotes,
-        clipboardItems: allClipboards,
+        notes: notesToPush,
+        clipboardItems: clipboardsToPush,
         settings: settingsList,
       );
       if (metrics != null && metrics.httpStatus == 200) {
         final msg = text(
-          '全量同步成功！已上传便签 ${allNotes.length} 条，剪贴板 ${allClipboards.length} 条 (RTT: ${metrics.clientRttMs.toStringAsFixed(1)}ms)',
+          '同步成功！上传便签 ${notesToPush.length} 条，剪贴板 ${clipboardsToPush.length} 条 (RTT: ${metrics.clientRttMs.toStringAsFixed(1)}ms)',
           'Successfully pushed data to Worker D1',
         );
         addD1Log('✅ $msg');
         return {
           'success': true,
-          'notesCount': allNotes.length,
-          'clipboardCount': allClipboards.length,
+          'notesCount': notesToPush.length,
+          'clipboardCount': clipboardsToPush.length,
           'settingsCount': settingsList.length,
           'rttMs': metrics.clientRttMs,
           'message': msg,
@@ -896,14 +976,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         return {'success': false, 'error': err};
       }
 
-      addD1Log(text('正在通过 Cloudflare REST API 直通同步...', 'Pushing directly via Cloudflare REST API...'));
-
       final res = await CfD1SyncService.pushLocalDataToD1RestApi(
         accountId: accountId,
         apiToken: apiToken,
         d1DatabaseId: dbId,
-        notes: allNotes,
-        clipboardItems: allClipboards,
+        notes: notesToPush,
+        clipboardItems: clipboardsToPush,
         settings: settingsList,
         onLog: (msg) => addD1Log(msg),
       );
@@ -985,6 +1063,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         addD1Log(text('📁 正在准备双向同步文件与图片 (Cloudflare R2 存储桶: $bucketName)...', 'Syncing files & images (R2 bucket: $bucketName)...'));
 
         try {
+          // 同步文件前，先确保本地超出条数上限的剪贴板及孤立图片已清理
+          _trimClipboardHistoryToLimit();
+          await _cleanupUnusedClipboardImages();
+          final activeClipImageKeys = _getActiveClipboardImageKeys();
+
           final dataDir = Directory(getDataDirectoryPathSync());
           final customFilesPath = settings.customFilesPath?.trim();
 
@@ -1142,10 +1225,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
           // 2. 差异比对：
           // A. 找出云端需要物理删除的文件 (toDeleteRemote)
+          // 包含：1) 本地已删除的文件(isKeyDeleted)；2) 云端剪贴板图片(clipboard_images/)中已超出历史上限或已被删除、不再被任何活跃剪贴板引用的过期图片
           final toDeleteRemote = <String>[];
           for (final entry in cloudMetadata.entries) {
             final remoteKey = entry.key;
             if (isKeyDeleted(remoteKey)) {
+              toDeleteRemote.add(remoteKey);
+            } else if (remoteKey.startsWith('clipboard_images/') &&
+                !activeClipImageKeys.contains(remoteKey)) {
               toDeleteRemote.add(remoteKey);
             }
           }
@@ -1166,6 +1253,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               continue;
             }
 
+            // 关键过滤：对于剪贴板图片(clipboard_images/)，只下载当前仍在有效剪贴板历史或收藏中的图片！
+            // 已超出条数上限淘汰或已删除的历史图片绝不下载（已归入 toDeleteRemote 在后台静默清理）
+            if (remoteKey.startsWith('clipboard_images/') &&
+                !activeClipImageKeys.contains(remoteKey)) {
+              continue;
+            }
+
             // 坚决排除安装包、执行文件与更新发布信息，防止误下载到用户数据目录
             final lowerKey = remoteKey.toLowerCase();
             if (lowerKey.endsWith('.exe') ||
@@ -1183,19 +1277,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               toDownload.add(remoteInfo);
             } else {
               final stat = localFile.statSync();
-              final localMTime = stat.modified;
-              final localSize = stat.size;
-              final remoteSize = (remoteInfo['file_size'] as num?)?.toInt() ?? -1;
+              final localMTime = stat.modified.toUtc();
               final remoteUpdatedStr = remoteInfo['updated_at'] as String?;
               DateTime? remoteUpdated;
               if (remoteUpdatedStr != null) {
-                remoteUpdated = DateTime.tryParse(remoteUpdatedStr);
+                remoteUpdated = DateTime.tryParse(remoteUpdatedStr)?.toUtc();
               }
 
-              // 云端时间晚于本地修改时间 > 2s 且大小不一致 -> 云端有较新版本，下载更新
+              // 云端时间晚于本地修改时间 > 2s -> 云端有较新版本，下载覆盖
               if (remoteUpdated != null &&
-                  remoteUpdated.isAfter(localMTime.add(const Duration(seconds: 2))) &&
-                  remoteSize != localSize) {
+                  remoteUpdated.isAfter(localMTime.add(const Duration(seconds: 2)))) {
                 toDownload.add(remoteInfo);
               }
             }
@@ -1208,6 +1299,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
             // 严格白名单：只同步属于文件管理(files/)或剪贴板图片(clipboard_images/)的内容
             if (!relKey.startsWith('files/') && !relKey.startsWith('clipboard_images/')) {
+              continue;
+            }
+            // 对于剪贴板图片，仅上传当前仍在有效剪贴板历史或收藏中的图片
+            if (relKey.startsWith('clipboard_images/') &&
+                !activeClipImageKeys.contains(relKey)) {
               continue;
             }
             if (relKey.contains('/.') || relKey.contains('.trash')) {
@@ -1257,39 +1353,11 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           }
 
           addD1Log(text(
-            '📊 差异统计: + ${toUpload.length} 上传  |  - ${toDeleteRemote.length} 销毁  |  ↓ ${toDownload.length} 下载  |  = $skippedIdenticalCount 无变动',
-            'Diff stats: + ${toUpload.length} upload | - ${toDeleteRemote.length} delete | ↓ ${toDownload.length} download | = $skippedIdenticalCount unchanged',
+            '📊 差异统计: + ${toUpload.length} 上传  |  ↓ ${toDownload.length} 下载  |  - ${toDeleteRemote.length} 后台待删  |  = $skippedIdenticalCount 无变动',
+            'Diff stats: + ${toUpload.length} upload | ↓ ${toDownload.length} download | - ${toDeleteRemote.length} bg delete | = $skippedIdenticalCount unchanged',
           ));
 
-          // 3. 执行云端销毁 (Delete)
-          for (int i = 0; i < toDeleteRemote.length; i++) {
-            final delKey = toDeleteRemote[i];
-            final fileName = delKey.split('/').last;
-            final progressIndex = i + 1;
-            addD1Log('- [$progressIndex/${toDeleteRemote.length}] 销毁 $fileName');
-
-            bool ok = false;
-            if (workerService != null) {
-              ok = await workerService.deleteFileFromR2(delKey);
-            } else if (r2Service != null) {
-              ok = await r2Service.deleteFile(delKey);
-            }
-            if (ok) {
-              deletedRemoteCount++;
-              deletedKeys.remove(delKey);
-              cloudMetadata.remove(delKey);
-            }
-          }
-          // 更新保存墓碑表
-          try {
-            if (deletedKeys.isEmpty && deletedFile.existsSync()) {
-              deletedFile.deleteSync();
-            } else if (deletedKeys.isNotEmpty) {
-              deletedFile.writeAsStringSync(jsonEncode(deletedKeys.toList()));
-            }
-          } catch (_) {}
-
-          // 4. 执行云端下载 (Download)
+          // 3. 优先执行云端下载 (Download)，并在落盘后对齐修改时间防止“乒乓重复上传”
           for (int i = 0; i < toDownload.length; i++) {
             final remoteInfo = toDownload[i];
             final relKey = remoteInfo['file_key'] as String;
@@ -1308,12 +1376,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
             if (ok) {
               newlyDownloadedCount++;
+              // 关键：将本地文件的修改时间对齐为云端时间，避免下次同步被误判为本地新改动而重复上传
+              final remoteUpdatedStr = remoteInfo['updated_at'] as String?;
+              if (remoteUpdatedStr != null) {
+                final parsed = DateTime.tryParse(remoteUpdatedStr);
+                if (parsed != null && target.existsSync()) {
+                  try {
+                    target.setLastModifiedSync(parsed.toLocal());
+                  } catch (_) {}
+                }
+              }
             } else {
               addD1Log('❌ [$progressIndex/${toDownload.length}] 下载失败: $fileName');
             }
           }
 
-          // 5. 执行本地上传 (Upload)
+          // 4. 优先执行本地上传 (Upload)
           for (int i = 0; i < toUpload.length; i++) {
             final file = toUpload[i];
             final relativePath = computeRelativeKey(file);
@@ -1328,7 +1406,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               if (res['success'] == true) {
                 newlyUploadedCount++;
 
-                // 双重保障：若填写了 REST API 凭据，同步把元数据也写一份到 D1，确保 100% 写入 D1 元数据
+                // 双重保障：若填写了 REST API 凭据，同步把元数据也写一份到 D1
                 if (settings.cfAccountId?.trim().isNotEmpty == true &&
                     settings.cfApiToken?.trim().isNotEmpty == true &&
                     settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
@@ -1356,7 +1434,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               if (ok) {
                 newlyUploadedCount++;
 
-                // 如果是 REST API 模式，同步记录文件元数据到 D1 数据库
                 if (settings.cfAccountId?.trim().isNotEmpty == true &&
                     settings.cfApiToken?.trim().isNotEmpty == true &&
                     settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
@@ -1382,17 +1459,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
               }
             } else {
               addD1Log(text(
-                '⚠️ 提示: Cloudflare 官方安全规定，R2 存储桶写入仅支持【Worker 托管节点模式】或【R2 S3 协议模式】。当前未配置 Worker 节点或 S3 凭据，请在设置中配置。',
+                '⚠️ 提示: R2 存储桶写入需配置 Worker 节点或 S3 凭据。',
                 'Note: R2 upload requires Worker Node mode or S3 credentials.',
               ));
               break;
             }
           }
 
-          // 6. 同步完成后，立刻刷新 PC 文件管理
+          // 5. 下载与上传完成后，立即刷新前台文件界面与本地快照，让用户 0 等待感知最新文件
           await _scanStoredFiles();
 
-          // 7. 更新写回 OneDrive 式本地同步快照表 (last_sync_snapshot.json)
           try {
             final currentSnapshotKeys = <String>{};
             for (final dir in scanDirs) {
@@ -1413,9 +1489,47 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             snapshotFile.writeAsStringSync(jsonEncode(currentSnapshotKeys.toList()));
           } catch (_) {}
 
+          // 6. 云端文件与过期剪贴板图片销毁放到后台异步慢慢删，绝不阻塞前台同步完成状态
+          if (toDeleteRemote.isNotEmpty) {
+            final pendingDeletes = List<String>.from(toDeleteRemote);
+            final remainingDeletedKeys = Set<String>.from(deletedKeys);
+            unawaited(Future(() async {
+              int cleanedCount = 0;
+              for (int i = 0; i < pendingDeletes.length; i++) {
+                final delKey = pendingDeletes[i];
+                final fileName = delKey.split('/').last;
+                bool ok = false;
+                try {
+                  if (workerService != null) {
+                    ok = await workerService.deleteFileFromR2(delKey);
+                  } else if (r2Service != null) {
+                    ok = await r2Service.deleteFile(delKey);
+                  }
+                } catch (_) {}
+                if (ok) {
+                  cleanedCount++;
+                  remainingDeletedKeys.remove(delKey);
+                  if (pendingDeletes.length <= 5) {
+                    addD1Log('🗑️ [后台清理 ${i + 1}/${pendingDeletes.length}] 已销毁云端 $fileName');
+                  }
+                }
+              }
+              if (pendingDeletes.length > 5 && cleanedCount > 0) {
+                addD1Log('🗑️ 后台自动清理完成：已静默销毁云端 $cleanedCount 个过期剪贴板图片/已删文件');
+              }
+              try {
+                if (remainingDeletedKeys.isEmpty && deletedFile.existsSync()) {
+                  deletedFile.deleteSync();
+                } else if (remainingDeletedKeys.isNotEmpty) {
+                  deletedFile.writeAsStringSync(jsonEncode(remainingDeletedKeys.toList()));
+                }
+              } catch (_) {}
+            }));
+          }
+
           addD1Log(text(
-            '✅ 同步完成: + $newlyUploadedCount 上传  |  - $deletedRemoteCount 销毁  |  ↓ $newlyDownloadedCount 下载  |  = $skippedIdenticalCount 无变动',
-            '✅ Sync completed: + $newlyUploadedCount uploaded | - $deletedRemoteCount deleted | ↓ $newlyDownloadedCount downloaded | = $skippedIdenticalCount unchanged',
+            '✅ 同步完成: + $newlyUploadedCount 上传  |  ↓ $newlyDownloadedCount 下载  |  = $skippedIdenticalCount 无变动 (后台异步清理 ${toDeleteRemote.length} 项)',
+            '✅ Sync completed: + $newlyUploadedCount uploaded | ↓ $newlyDownloadedCount downloaded | = $skippedIdenticalCount unchanged',
           ));
         } catch (e) {
           addD1Log(text('⚠️ R2 文件同步异常: $e', '⚠️ R2 Sync error: $e'));
@@ -1780,6 +1894,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       onAnimationStateChanged?.call(duration);
       _refreshPanelActivationAfterShow();
       _didGrabFocus = shouldFocus;
+
+      // 唤醒面板时：若开启了自动同步且距离上次同步超过 15 秒，后台静默拉取一次云端最新增量
+      if (settings.cfD1AutoSync &&
+          !_isD1Syncing &&
+          (_lastD1SyncTime == null ||
+              DateTime.now().difference(_lastD1SyncTime!).inSeconds >= 15)) {
+        final hasWorker = settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty;
+        final hasRest = settings.cfD1Mode == 1 && (settings.cfAccountId?.trim().isNotEmpty == true);
+        if (hasWorker || hasRest) {
+          unawaited(syncLocalDataToD1(isManual: false));
+        }
+      }
     } catch (e) {
       debugPrint('Failed to expand panel: $e');
     } finally {
@@ -1809,6 +1935,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     _autoCollapseTimer?.cancel();
     isAnimating = true;
     isExpanded = false;
+
+    // 收起面板时：若有尚未落盘或尚未上传的改动，立即在后台静默落盘并上传
+    if (_notesSaveTimer?.isActive ?? false) {
+      _notesSaveTimer?.cancel();
+      unawaited(_saveNotes().then((_) {
+        if (settings.cfD1AutoSync && !_isD1Syncing) {
+          _d1LiveSyncDebounceTimer?.cancel();
+          unawaited(syncLocalDataToD1(isManual: false));
+        }
+      }));
+    } else if (_d1LiveSyncDebounceTimer?.isActive ?? false) {
+      _d1LiveSyncDebounceTimer?.cancel();
+      if (settings.cfD1AutoSync && !_isD1Syncing) {
+        unawaited(syncLocalDataToD1(isManual: false));
+      }
+    }
 
     // Unfocus any active text inputs immediately to hide the OS IME and prevent cursor layout calculations
     // from blocking the main UI thread during the sliding animation.
@@ -2118,14 +2260,46 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  Set<String> _getActiveClipboardImageKeys() {
+    final keys = <String>{};
+    void addFromItem(ClipboardItem item) {
+      final raw = item.imagePath?.trim();
+      if (raw == null || raw.isEmpty) return;
+      final norm = raw.replaceAll('\\', '/');
+      if (norm.contains('clipboard_images/')) {
+        final fileName = norm.split('clipboard_images/').last;
+        if (fileName.isNotEmpty) {
+          keys.add('clipboard_images/$fileName');
+        }
+      } else if (!norm.contains('/')) {
+        keys.add('clipboard_images/$norm');
+      }
+    }
+
+    for (final item in clipboardHistory) {
+      addFromItem(item);
+    }
+    for (final item in clipboardFavorites) {
+      addFromItem(item);
+    }
+    return keys;
+  }
+
   bool _trimClipboardHistoryToLimit() {
     final limit = settings.clipboardHistoryLimit;
     if (clipboardHistory.length <= limit) return false;
 
+    final now = DateTime.now();
     final removedItems = clipboardHistory.sublist(limit);
     clipboardHistory = clipboardHistory.take(limit).toList();
     for (final item in removedItems) {
       _itemTypeCache.remove(item.id);
+      // 若该记录未被收藏，加入删除墓碑以便后台同步时通知云端 D1 标记清理，防止从云端反复拉回
+      final inFav = clipboardFavorites.any((f) => f.id == item.id);
+      if (!inFav) {
+        deletedClipboards.removeWhere((x) => x.id == item.id);
+        deletedClipboards.add(item.copyWith(isDeleted: true, updatedAt: now));
+      }
       _deleteClipboardImageIfUnused(item);
     }
     return true;
@@ -2144,12 +2318,18 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         );
     if (stillHasReference) return;
 
-    try {
-      final file = File(path);
-      if (file.existsSync()) file.deleteSync();
-    } catch (e) {
-      debugPrint('Failed to delete unused clipboard image: $e');
-    }
+    // 放入后台异步清理本地过期图片并记录云端待删墓碑，不阻塞前台
+    unawaited(Future(() async {
+      try {
+        await recordDeletedFile(path);
+        final file = File(path);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        debugPrint('Failed to delete unused clipboard image: $e');
+      }
+    }));
   }
 
   PhysicalKeyboardKey? _getPhysicalKey(String name) {
@@ -3172,6 +3352,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     await _saveClipboardHistory();
     notifyListeners();
+    _triggerD1LiveAutoSync();
   }
 
   Future<void> addClipboardImageItem(
@@ -3236,6 +3417,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       await _saveClipboardHistory();
       notifyListeners();
+      _triggerD1LiveAutoSync();
     } catch (e) {
       debugPrint('Failed to add clipboard image item: $e');
     }
@@ -3313,34 +3495,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     clipboardHistory.removeWhere((item) => item.id == id);
     clipboardFavorites.removeWhere((item) => item.id == id);
 
+    if (itemToDelete != null) {
+      deletedClipboards.removeWhere((x) => x.id == id);
+      deletedClipboards.add(
+        itemToDelete.copyWith(isDeleted: true, updatedAt: DateTime.now()),
+      );
+    }
+
     notifyListeners();
 
     Future.delayed(Duration.zero, () {
       _saveClipboardHistory();
       _saveClipboardFavorites();
+      _triggerD1LiveAutoSync();
 
       if (itemToDelete != null && itemToDelete.imagePath != null) {
-        final path = getImagePath(itemToDelete);
-        final stillHasReference =
-            clipboardHistory.any((x) => getImagePath(x) == path) ||
-            clipboardFavorites.any((x) => getImagePath(x) == path);
-        if (!stillHasReference) {
-          final file = File(path);
-          file.exists().then((exists) async {
-            if (exists) {
-              try {
-                await file.delete();
-              } catch (e) {
-                debugPrint('Failed to delete image file on item deletion: $e');
-              }
-            }
-          });
-        }
+        _deleteClipboardImageIfUnused(itemToDelete);
       }
     });
   }
 
   void toggleFavoriteClipboardItem(ClipboardItem item) {
+    final now = DateTime.now();
     final isFav = isItemFavorite(item);
     if (isFav) {
       if (item.imagePath != null) {
@@ -3352,38 +3528,44 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       } else {
         clipboardFavorites.removeWhere((x) => x.content == item.content);
       }
+      final histIdx = clipboardHistory.indexWhere((x) => x.id == item.id);
+      if (histIdx != -1) {
+        clipboardHistory[histIdx] = clipboardHistory[histIdx].copyWith(
+          isFavorite: false,
+          updatedAt: now,
+        );
+      }
     } else {
       clipboardFavorites.insert(
         0,
-        item.copyWith(isFavorite: true, timestamp: DateTime.now()),
+        item.copyWith(isFavorite: true, timestamp: now, updatedAt: now),
       );
     }
-    Future.delayed(Duration.zero, _saveClipboardFavorites);
+    Future.delayed(Duration.zero, () {
+      _saveClipboardFavorites();
+      _saveClipboardHistory();
+      _triggerD1LiveAutoSync();
+    });
     notifyListeners();
   }
 
   void clearClipboardHistory() {
     _itemTypeCache.clear();
-    for (final item in clipboardHistory) {
-      if (item.imagePath != null) {
-        final path = getImagePath(item);
-        final inFavorites = clipboardFavorites.any(
-          (x) => getImagePath(x) == path,
-        );
-        if (!inFavorites) {
-          try {
-            final file = File(path);
-            if (file.existsSync()) {
-              file.deleteSync();
-            }
-          } catch (e) {
-            debugPrint('Failed to delete image file during history clear: $e');
-          }
-        }
-      }
-    }
+    final now = DateTime.now();
+    final oldItems = List<ClipboardItem>.from(clipboardHistory);
     clipboardHistory.clear();
-    Future.delayed(Duration.zero, _saveClipboardHistory);
+    for (final item in oldItems) {
+      final inFav = clipboardFavorites.any((f) => f.id == item.id);
+      if (!inFav) {
+        deletedClipboards.removeWhere((x) => x.id == item.id);
+        deletedClipboards.add(item.copyWith(isDeleted: true, updatedAt: now));
+      }
+      _deleteClipboardImageIfUnused(item);
+    }
+    Future.delayed(Duration.zero, () {
+      _saveClipboardHistory();
+      _triggerD1LiveAutoSync();
+    });
     notifyListeners();
   }
 
@@ -3410,7 +3592,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         final normalized = file.path.replaceAll('\\', '/').toLowerCase();
         if (!usedPaths.contains(normalized)) {
           try {
-            file.deleteSync();
+            await recordDeletedFile(file.path);
+            await file.delete();
             debugPrint('Cleaned up orphaned image file: ${file.path}');
           } catch (_) {}
         }
@@ -4110,8 +4293,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> deleteFile(FileSystemEntity entity) async {
+    // 前台 0 毫秒立即从内存列表移除并刷新 UI
+    final targetPathNorm = entity.path.replaceAll('\\', '/').toLowerCase();
+    storedFiles.removeWhere(
+      (f) => f.path.replaceAll('\\', '/').toLowerCase() == targetPathNorm,
+    );
+    notifyListeners();
+
     try {
       if (entity.existsSync()) {
+        // 先记录待删路径（此时实体还在原位置，便于目录遍历）
         await recordDeletedFile(entity.path);
 
         final root = await _getFilesDirectoryPath();
@@ -4142,7 +4333,6 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
     } catch (e) {
       debugPrint('Failed to delete file to trash: $e');
-      // Fallback: delete permanently if move fails
       try {
         if (entity.existsSync()) {
           await entity.delete(recursive: true);
@@ -4388,7 +4578,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     if ((!isWorkerConfigured && !isRestConfigured) || !settings.cfD1AutoSync) return;
 
     _d1LiveSyncDebounceTimer?.cancel();
-    _d1LiveSyncDebounceTimer = Timer(const Duration(seconds: 3), () {
+    _d1LiveSyncDebounceTimer = Timer(const Duration(milliseconds: 1500), () {
       if (!_isD1Syncing && !_isShuttingDown) {
         addD1Log(text('⚡ 内容变动，触发即时云端同步...', 'Change detected, triggering live cloud sync...'));
         syncLocalDataToD1(isManual: false);
@@ -4532,18 +4722,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     );
     deletedNotes.removeWhere((n) => n.id == note.id);
     deletedNotes.add(tombstone);
-    await _saveDeletedNotes();
 
     if (notes.isEmpty) {
-      activeNote = null;
-      await createNote(); // Create a new empty note so there's always one
+      final newNote = Note(
+        id: _uuid.v4(),
+        title: text('新建便签 1', 'New Note 1'),
+        content: '',
+        createdAt: DateTime.now(),
+        updatedAt: DateTime.now(),
+      );
+      notes.add(newNote);
+      activeNote = newNote;
     } else if (activeNote?.id == note.id) {
       activeNote = notes.first;
     }
 
-    await _saveNotes();
+    // 前台 0 毫秒立即刷新界面，磁盘写入与云端同步放到后台
     notifyListeners();
-    _triggerD1LiveAutoSync();
+    unawaited(Future(() async {
+      await _saveDeletedNotes();
+      await _saveNotes();
+      _triggerD1LiveAutoSync();
+    }));
   }
 
   Future<void> deleteActiveNote() async {
@@ -4571,9 +4771,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       notes.insert(0, updated);
       activeNote = updated;
 
-      // Debounce saving to disk
+      // Debounce saving to disk (500ms + 1500ms = 停笔 2 秒静默上云)
       _notesSaveTimer?.cancel();
-      _notesSaveTimer = Timer(const Duration(milliseconds: 800), () async {
+      _notesSaveTimer = Timer(const Duration(milliseconds: 500), () async {
         await _saveNotes();
         _triggerD1LiveAutoSync();
       });

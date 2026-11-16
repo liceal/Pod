@@ -139,8 +139,8 @@ flutter:
 
 msix_config:
   display_name: PodQuick
-  publisher_display_name: liceal
-  identity_name: liceal.PodQuick
+  publisher_display_name: PodQuick
+  identity_name: PodQuick.App
   publisher: "CN=D51998C6-B33D-4D61-BA2A-DB4B43560E8F"
   msix_version: 1.0.4.0
   logo_path: assets/images/tray_icon.png

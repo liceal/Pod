@@ -40,7 +40,11 @@ jobs:
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_D1_DATABASE_ID: ${{ secrets.CLOUDFLARE_D1_DATABASE_ID }}
         run: |
           cd cf-backend
+          if [ -n "$CLOUDFLARE_D1_DATABASE_ID" ]; then
+            sed -i "s/YOUR_D1_DATABASE_ID/$CLOUDFLARE_D1_DATABASE_ID/g" wrangler.jsonc
+          fi
           npm install
           npx wrangler deploy

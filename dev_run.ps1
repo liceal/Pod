@@ -1,4 +1,4 @@
-$tempPath = Join-Path $env:TEMP "unclutter_temp_build"
+$tempPath = Join-Path $env:TEMP "podquick_temp_build"
 $currentPath = $PSScriptRoot
 
 # 1. 首先清理主工作区的冲突构建缓存

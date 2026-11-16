@@ -15,6 +15,9 @@ class AppVersionInfo {
   final String releaseNotes;
   final String windowsUrl;
   final String macUrl;
+  final String? macArmUrl;
+  final String? macIntelUrl;
+  final String? htmlUrl;
 
   AppVersionInfo({
     required this.version,
@@ -22,6 +25,9 @@ class AppVersionInfo {
     required this.releaseNotes,
     required this.windowsUrl,
     required this.macUrl,
+    this.macArmUrl,
+    this.macIntelUrl,
+    this.htmlUrl,
   });
 
   factory AppVersionInfo.fromJson(Map<String, dynamic> json) {
@@ -31,12 +37,18 @@ class AppVersionInfo {
       releaseNotes: json['releaseNotes'] as String? ?? '',
       windowsUrl: json['windowsUrl'] as String? ?? '',
       macUrl: json['macUrl'] as String? ?? '',
+      macArmUrl: json['macArmUrl'] as String?,
+      macIntelUrl: json['macIntelUrl'] as String?,
+      htmlUrl: json['htmlUrl'] as String?,
     );
   }
 }
 
 class UpdateService {
-  static String _currentVersion = '1.0.0';
+  static const String githubOwner = 'liceal';
+  static const String githubRepo = 'Pod';
+
+  static String _currentVersion = '1.1.0';
   static String get currentVersion => _currentVersion;
   static const int currentBuildNumber = 1;
 
@@ -58,11 +70,24 @@ class UpdateService {
       final jsonStr = await rootBundle.loadString('release_info.json');
       final json = jsonDecode(jsonStr) as Map<String, dynamic>;
       if (json['version'] != null && (json['version'] as String).isNotEmpty) {
-        _currentVersion = json['version'] as String;
+        _currentVersion = (json['version'] as String).replaceFirst(RegExp(r'^[vV]'), '');
       }
     } catch (e) {
       debugPrint('读取内置 release_info.json 失败: $e');
     }
+  }
+
+  /// 检测当前 macOS 是否为 Apple Silicon (ARM64)
+  static Future<bool> _isAppleSiliconMac() async {
+    if (!Platform.isMacOS) return false;
+    try {
+      final res = await Process.run('uname', ['-m']);
+      final arch = res.stdout.toString().trim().toLowerCase();
+      if (arch.contains('arm64') || arch.contains('aarch64')) {
+        return true;
+      }
+    } catch (_) {}
+    return Platform.version.toLowerCase().contains('arm64');
   }
 
   static R2SyncService? getSyncService([AppSettings? settings]) {
@@ -83,8 +108,19 @@ class UpdateService {
     );
   }
 
-  /// 检查是否有新版本（优先读取 release_info.json，回退备选时间戳比对）
+  /// 检查是否有新版本（优先通过 GitHub Releases 官方公开仓库检查，回退至 R2）
   static Future<AppVersionInfo?> checkUpdate([AppSettings? settings]) async {
+    // 1. 优先从 GitHub Public Repository Releases 检查最新版本
+    try {
+      final ghInfo = await _checkGitHubRelease();
+      if (ghInfo != null) {
+        return ghInfo;
+      }
+    } catch (e) {
+      debugPrint('GitHub Release 检查更新异常: $e');
+    }
+
+    // 2. 备选回退：如果配置了私有 R2 存储桶，尝试从 R2 检查
     final syncService = getSyncService(settings);
     if (syncService == null) return null;
     try {
@@ -96,7 +132,7 @@ class UpdateService {
         final bytes = await tempFile.readAsBytes();
         final content = utf8.decode(bytes, allowMalformed: true);
         final json = jsonDecode(content) as Map<String, dynamic>;
-        final latestVersion = json['version'] as String? ?? '1.0.0';
+        final latestVersion = (json['version'] as String? ?? '1.0.0').replaceFirst(RegExp(r'^[vV]'), '');
         final releaseNotes = json['releaseNotes'] as String? ?? '';
         final winUrl = json['windowsUrl'] as String? ?? 'PodQuick_Setup.exe';
         final macUrl = json['macUrl'] as String? ?? 'PodQuick.dmg';
@@ -114,7 +150,6 @@ class UpdateService {
         }
       }
 
-      // 如果未找到 release_info.json，通过 HEAD 请求比对 PodQuick_Setup.exe 编译时间
       final remoteFile = Platform.isWindows ? 'PodQuick_Setup.exe' : 'PodQuick.dmg';
       final remoteInfo = await syncService.getObjectInfo(remoteFile);
 
@@ -138,15 +173,89 @@ class UpdateService {
         }
       }
     } catch (e) {
-      debugPrint('检查更新失败: $e');
+      debugPrint('R2 检查更新失败: $e');
     }
     return null;
   }
 
-  /// 比较版本号大小 (如 1.0.1 > 1.0.0)
+  /// 查询 GitHub Releases Latest API
+  static Future<AppVersionInfo?> _checkGitHubRelease() async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 10);
+    try {
+      final uri = Uri.parse('https://api.github.com/repos/$githubOwner/$githubRepo/releases/latest');
+      final req = await client.getUrl(uri);
+      req.headers.set('Accept', 'application/vnd.github+json');
+      req.headers.set('User-Agent', 'PodQuick-Updater');
+      final res = await req.close();
+      if (res.statusCode != 200) return null;
+
+      final bodyStr = await res.transform(utf8.decoder).join();
+      final data = jsonDecode(bodyStr) as Map<String, dynamic>;
+
+      final rawTag = (data['tag_name'] as String? ?? '').trim();
+      if (rawTag.isEmpty) return null;
+      final latestVersion = rawTag.replaceFirst(RegExp(r'^[vV]'), '');
+
+      if (!_isHigherVersion(latestVersion, currentVersion)) {
+        return null;
+      }
+
+      final releaseNotes = (data['body'] as String? ?? '').trim();
+      final htmlUrl = data['html_url'] as String? ?? 'https://github.com/$githubOwner/$githubRepo/releases';
+      final assets = (data['assets'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+      String winUrl = '';
+      String macArmUrl = '';
+      String macIntelUrl = '';
+      String macFallbackUrl = '';
+
+      for (final asset in assets) {
+        final name = (asset['name'] as String? ?? '').toLowerCase();
+        final downloadUrl = asset['browser_download_url'] as String? ?? '';
+        if (downloadUrl.isEmpty) continue;
+
+        if (name.endsWith('.exe')) {
+          if (name.contains('setup') || winUrl.isEmpty) {
+            winUrl = downloadUrl;
+          }
+        } else if (name.endsWith('.dmg')) {
+          if (name.contains('applesilicon') || name.contains('arm64') || name.contains('aarch64')) {
+            macArmUrl = downloadUrl;
+          } else if (name.contains('intel') || name.contains('x86_64') || name.contains('x64')) {
+            macIntelUrl = downloadUrl;
+          } else {
+            macFallbackUrl = downloadUrl;
+          }
+        }
+      }
+
+      final isArmMac = await _isAppleSiliconMac();
+      final resolvedMacUrl = isArmMac
+          ? (macArmUrl.isNotEmpty ? macArmUrl : (macFallbackUrl.isNotEmpty ? macFallbackUrl : htmlUrl))
+          : (macIntelUrl.isNotEmpty ? macIntelUrl : (macFallbackUrl.isNotEmpty ? macFallbackUrl : htmlUrl));
+
+      return AppVersionInfo(
+        version: latestVersion,
+        buildNumber: 2,
+        releaseNotes: releaseNotes.isNotEmpty ? releaseNotes : '修复已知问题与性能优化。',
+        windowsUrl: winUrl.isNotEmpty ? winUrl : htmlUrl,
+        macUrl: resolvedMacUrl,
+        macArmUrl: macArmUrl.isNotEmpty ? macArmUrl : null,
+        macIntelUrl: macIntelUrl.isNotEmpty ? macIntelUrl : null,
+        htmlUrl: htmlUrl,
+      );
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 比较版本号大小 (如 1.1.1 > 1.1.0)
   static bool _isHigherVersion(String latest, String current) {
-    final lParts = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
-    final cParts = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final lClean = latest.split('-').first.replaceFirst(RegExp(r'^[vV]'), '');
+    final cClean = current.split('-').first.replaceFirst(RegExp(r'^[vV]'), '');
+    final lParts = lClean.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+    final cParts = cClean.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 
     for (int i = 0; i < 3; i++) {
       final l = i < lParts.length ? lParts[i] : 0;
@@ -157,7 +266,43 @@ class UpdateService {
     return false;
   }
 
-  /// 后台持续独立下载任务（市面上成熟安装包静默更新方案）
+  /// HTTP 流式下载文件（支持 GitHub Release 重定向与进度回调）
+  static Future<bool> _downloadFromHttpUrl(
+    String url,
+    File targetFile, {
+    required void Function(int downloaded, int total) onProgress,
+  }) async {
+    final client = HttpClient();
+    client.connectionTimeout = const Duration(seconds: 15);
+    try {
+      final req = await client.getUrl(Uri.parse(url));
+      req.headers.set('User-Agent', 'PodQuick-Updater');
+      final res = await req.close();
+      if (res.statusCode != 200) return false;
+
+      final total = res.contentLength;
+      int downloaded = 0;
+      final sink = targetFile.openWrite();
+      try {
+        await for (final chunk in res) {
+          sink.add(chunk);
+          downloaded += chunk.length;
+          onProgress(downloaded, total);
+        }
+        await sink.flush();
+      } finally {
+        await sink.close();
+      }
+      return true;
+    } catch (e) {
+      debugPrint('HTTP 下载安装包失败: $e');
+      return false;
+    } finally {
+      client.close();
+    }
+  }
+
+  /// 后台持续独立下载任务（支持 GitHub Releases 直连下载与 R2 下载）
   static Future<void> startBackgroundDownload(AppVersionInfo info, [AppSettings? settings]) async {
     if (isDownloading) return;
 
@@ -171,6 +316,47 @@ class UpdateService {
     try {
       if (Platform.isMacOS) {
         final downloadUrl = info.macUrl;
+        if (downloadUrl.startsWith('http') && downloadUrl.toLowerCase().endsWith('.dmg')) {
+          final tempDir = await getTemporaryDirectory();
+          final fileName = downloadUrl.split('/').last;
+          final targetFile = File('${tempDir.path}/$fileName');
+          if (await targetFile.exists()) {
+            try {
+              await targetFile.delete();
+            } catch (_) {}
+          }
+          downloadStatusText = '正在下载 macOS 安装包 ($fileName)...';
+          _notify();
+
+          final ok = await _downloadFromHttpUrl(
+            downloadUrl,
+            targetFile,
+            onProgress: (downloaded, total) {
+              if (total > 0) {
+                downloadProgress = downloaded / total;
+                final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+                final totalMB = (total / (1024 * 1024)).toStringAsFixed(1);
+                final percent = (downloadProgress * 100).toInt();
+                downloadStatusText = '正在下载: $currentMB MB / $totalMB MB ($percent%)';
+              } else {
+                final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+                downloadStatusText = '已下载: $currentMB MB';
+              }
+              _notify();
+            },
+          );
+
+          if (ok && await targetFile.exists()) {
+            downloadProgress = 1.0;
+            downloadStatusText = '下载完成，正在挂载打开 DMG 安装包...';
+            _notify();
+            await Process.run('open', [targetFile.path]);
+            isDownloading = false;
+            _notify();
+            return;
+          }
+        }
+
         final uri = Uri.parse(downloadUrl);
         if (await canLaunchUrl(uri)) {
           await launchUrl(uri, mode: LaunchMode.externalApplication);
@@ -182,39 +368,72 @@ class UpdateService {
         return;
       }
 
-      final syncService = getSyncService(settings);
-      if (syncService == null) {
-        throw Exception('未配置云端存储参数，无法进行安装包下载。');
-      }
-
-      // Windows 静默下载标准安装包 (PodQuick_Setup.exe) 并进行软件主流覆盖升级
+      // Windows 静默下载标准安装包 (PodQuick_Setup.exe) 并进行覆盖升级
       final tempDir = await getTemporaryDirectory();
-      final remoteFileName = (info.windowsUrl.isNotEmpty) ? info.windowsUrl : 'PodQuick_Setup.exe';
+      final remoteUrlOrKey = info.windowsUrl.isNotEmpty ? info.windowsUrl : 'PodQuick_Setup.exe';
       final targetFile = File('${tempDir.path}\\PodQuick_Setup.exe');
       if (await targetFile.exists()) {
-        try { await targetFile.delete(); } catch (_) {}
+        try {
+          await targetFile.delete();
+        } catch (_) {}
       }
 
-      downloadStatusText = '正在从云端下载安装包 ($remoteFileName)...';
-      _notify();
-
-      final ok = await syncService.downloadFile(
-        remoteFileName,
-        targetFile,
-        onProgress: (downloaded, total) {
-          if (total > 0) {
-            downloadProgress = downloaded / total;
-            final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
-            final totalMB = (total / (1024 * 1024)).toStringAsFixed(1);
-            final percent = (downloadProgress * 100).toInt();
-            downloadStatusText = '正在下载安装包: $currentMB MB / $totalMB MB ($percent%)';
-          } else {
-            final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
-            downloadStatusText = '已下载: $currentMB MB';
+      bool ok = false;
+      if (remoteUrlOrKey.startsWith('http')) {
+        if (!remoteUrlOrKey.toLowerCase().endsWith('.exe')) {
+          // 如果指向的是 Release 网页而非直接 .exe，则在浏览器中打开
+          final uri = Uri.parse(remoteUrlOrKey);
+          if (await canLaunchUrl(uri)) {
+            await launchUrl(uri, mode: LaunchMode.externalApplication);
+            isDownloading = false;
+            _notify();
+            return;
           }
-          _notify();
-        },
-      );
+        }
+        downloadStatusText = '正在从 GitHub Release 下载安装包...';
+        _notify();
+        ok = await _downloadFromHttpUrl(
+          remoteUrlOrKey,
+          targetFile,
+          onProgress: (downloaded, total) {
+            if (total > 0) {
+              downloadProgress = downloaded / total;
+              final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+              final totalMB = (total / (1024 * 1024)).toStringAsFixed(1);
+              final percent = (downloadProgress * 100).toInt();
+              downloadStatusText = '正在下载安装包: $currentMB MB / $totalMB MB ($percent%)';
+            } else {
+              final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+              downloadStatusText = '已下载: $currentMB MB';
+            }
+            _notify();
+          },
+        );
+      } else {
+        final syncService = getSyncService(settings);
+        if (syncService == null) {
+          throw Exception('未找到可用的更新下载源');
+        }
+        downloadStatusText = '正在从云端下载安装包 ($remoteUrlOrKey)...';
+        _notify();
+        ok = await syncService.downloadFile(
+          remoteUrlOrKey,
+          targetFile,
+          onProgress: (downloaded, total) {
+            if (total > 0) {
+              downloadProgress = downloaded / total;
+              final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+              final totalMB = (total / (1024 * 1024)).toStringAsFixed(1);
+              final percent = (downloadProgress * 100).toInt();
+              downloadStatusText = '正在下载安装包: $currentMB MB / $totalMB MB ($percent%)';
+            } else {
+              final currentMB = (downloaded / (1024 * 1024)).toStringAsFixed(1);
+              downloadStatusText = '已下载: $currentMB MB';
+            }
+            _notify();
+          },
+        );
+      }
 
       if (!ok || !await targetFile.exists()) {
         throw Exception('安装包下载失败，请检查网络连接');
@@ -224,16 +443,13 @@ class UpdateService {
       downloadStatusText = '安装包下载完成，正在启动升级程序...';
       _notify();
 
-      // 市面上成熟安装包覆盖升级方案 (Inno Setup / Standard Windows Installer)
       if (Platform.isWindows) {
         final cleanPath = targetFile.path.replaceAll('/', '\\');
-        // 拉起安装包 (使用 /SILENT /SP- 参数，静默提取安装并覆盖新版本，安装完成后自动重新拉起应用)
         await Process.start(
           cleanPath,
           ['/SILENT', '/SP-'],
           mode: ProcessStartMode.detached,
         );
-        // 退出当前运行的项目，释放文件独占锁
         exit(0);
       } else {
         await Process.start(targetFile.path, [], mode: ProcessStartMode.detached);

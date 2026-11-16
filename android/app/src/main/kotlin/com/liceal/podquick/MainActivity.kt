@@ -1,5 +1,6 @@
-package com.liceal.unclutter.unclutter
+package com.liceal.podquick
 
 import io.flutter.embedding.android.FlutterActivity
 
 class MainActivity : FlutterActivity()
+

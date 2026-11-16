@@ -1,13 +1,13 @@
 import { Note, ClipboardItem, FileMetadata, SyncResponse } from '../types';
 
-const STORAGE_KEY_WORKER_URL = 'unclutter_worker_url';
-const STORAGE_KEY_PIN_TOKEN = 'unclutter_pin_token';
-const STORAGE_KEY_PIN_VERSION = 'unclutter_pin_version';
-const STORAGE_KEY_AUTHORIZED = 'unclutter_device_authorized';
-const STORAGE_KEY_LAST_SYNC = 'unclutter_last_sync_time';
-const STORAGE_KEY_NOTES = 'unclutter_cached_notes';
-const STORAGE_KEY_CLIPBOARD = 'unclutter_cached_clipboard';
-const STORAGE_KEY_FILES = 'unclutter_cached_files';
+const STORAGE_KEY_WORKER_URL = 'podquick_worker_url';
+const STORAGE_KEY_PIN_TOKEN = 'podquick_pin_token';
+const STORAGE_KEY_PIN_VERSION = 'podquick_pin_version';
+const STORAGE_KEY_AUTHORIZED = 'podquick_device_authorized';
+const STORAGE_KEY_LAST_SYNC = 'podquick_last_sync_time';
+const STORAGE_KEY_NOTES = 'podquick_cached_notes';
+const STORAGE_KEY_CLIPBOARD = 'podquick_cached_clipboard';
+const STORAGE_KEY_FILES = 'podquick_cached_files';
 
 export class ApiClient {
   private static defaultBaseUrl = '';
@@ -75,7 +75,7 @@ export class ApiClient {
   private static handleAuthFailure() {
     this.clearAuthToken();
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('unclutter:pin-expired'));
+      window.dispatchEvent(new CustomEvent('podquick:pin-expired'));
     }
   }
 

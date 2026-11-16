@@ -50,7 +50,7 @@ export default {
       } else if (path === '/api/v1/sync' && method === 'POST') {
         response = await handlePushSync(request, env, ctx);
       } else if ((path === '/api/v1/files/metadata' || path === '/api/v1/file-metadata') && method === 'GET') {
-        response = await handleFilesMetadata(env, url);
+        response = await handleFilesMetadata(env, url, ctx);
       } else if (path === '/api/v1/files/upload' && method === 'POST') {
         response = await handleFileUpload(request, env);
       } else if (path.startsWith('/api/v1/files/') && (method === 'GET' || method === 'HEAD')) {
@@ -185,98 +185,94 @@ async function handlePullSync(request: Request, env: Env, url: URL): Promise<Res
 }
 
 // 剪贴板历史云端淘汰机制 (Eviction Policy)
-// 策略：所有收藏项 (is_favorite = 1) 永久保留；非收藏项仅保留最新的前 keepLimit 条（默认 100 条）
-// 超额的旧数据将从 D1 数据库中物理删除，若关联的 R2 图片已无任何其他记录引用，亦同步从 R2 存储桶中删除。
+// 策略：所有收藏项 (is_favorite = 1 且未删除) 永久保留；非收藏活跃项仅保留最新的前 limit 条（跟随用户设置，默认 50 条）
+// 超额的旧数据及过期墓碑将从 D1 物理清理，R2 中不再被任何活跃剪贴板引用的孤立图片亦在后台自动清理。
 async function evictOldClipboardItems(env: Env, customLimit?: number): Promise<{ evictedCount: number; deletedImagesCount: number }> {
   try {
-    // 1. 获取保留上限 (默认 100 条，若 PC 端在 app_settings 设置了更大值则取较大者)
-    let limit = customLimit ?? 100;
+    // 1. 获取保留上限 (默认 50 条，跟随 PC 端 app_settings.clipboardHistoryLimit)
+    let limit = customLimit ?? 50;
     if (!customLimit) {
       try {
         const settingRow = await env.DB.prepare("SELECT value FROM app_settings WHERE key = 'app_settings'").first<{ value: string }>();
         if (settingRow?.value) {
           const parsed = JSON.parse(settingRow.value);
           if (typeof parsed.clipboardHistoryLimit === 'number' && parsed.clipboardHistoryLimit > 0) {
-            limit = Math.max(100, parsed.clipboardHistoryLimit);
+            limit = parsed.clipboardHistoryLimit;
           }
         }
       } catch {
-        // 使用默认 100
+        // 使用默认 50
       }
     }
 
-    // 2. 查找待淘汰的非收藏候选记录
-    const candidateQuery = `
-      SELECT id, image_path FROM clipboard_items
-      WHERE is_favorite = 0
-        AND id NOT IN (
-          SELECT id FROM clipboard_items
-          WHERE is_favorite = 0
-          ORDER BY timestamp DESC
-          LIMIT ?
-        )
-    `;
+    // 2. 从 D1 物理删除超出上限的陈旧非收藏记录，以及超过 7 天的已删除墓碑记录
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const deleteRes = await env.DB.prepare(`
+      DELETE FROM clipboard_items
+      WHERE (is_deleted = 1 AND updated_at < ?)
+         OR (
+           is_favorite = 0
+           AND is_deleted = 0
+           AND id NOT IN (
+             SELECT id FROM clipboard_items
+             WHERE is_favorite = 0 AND is_deleted = 0
+             ORDER BY timestamp DESC
+             LIMIT ?
+           )
+         )
+    `).bind(sevenDaysAgo, limit).run();
 
-    const candidates = await env.DB.prepare(candidateQuery).bind(limit).all<{ id: string; image_path: string | null }>();
-    const toDelete = candidates.results || [];
+    const evictedCount = deleteRes.meta?.changes ?? 0;
 
-    if (toDelete.length === 0) {
-      return { evictedCount: 0, deletedImagesCount: 0 };
-    }
-
-    // 3. 处理 R2 图片引用释放
+    // 3. 扫描并自动释放 R2 中所有不再被活跃剪贴板记录 (is_deleted = 0) 引用的过期/已删图片
     let deletedImagesCount = 0;
     if (env.FILES_BUCKET) {
-      const candidateImages = toDelete
-        .map(row => row.image_path)
-        .filter((p): p is string => !!p && p.trim().length > 0);
+      const activeClipImages = new Set<string>();
+      const activeRows = await env.DB.prepare(
+        `SELECT image_path FROM clipboard_items
+         WHERE is_deleted = 0
+           AND image_path IS NOT NULL
+           AND (
+             is_favorite = 1
+             OR id IN (
+               SELECT id FROM clipboard_items
+               WHERE is_favorite = 0 AND is_deleted = 0
+               ORDER BY timestamp DESC
+               LIMIT ?
+             )
+           )`
+      ).bind(limit).all<{ image_path: string }>();
 
-      if (candidateImages.length > 0) {
-        const uniqueCandidateImages = Array.from(new Set(candidateImages));
+      for (const row of activeRows.results || []) {
+        if (row.image_path) {
+          const norm = row.image_path.trim().replaceAll('\\', '/');
+          const fileName = norm.includes('clipboard_images/')
+            ? norm.split('clipboard_images/').pop()
+            : norm;
+          if (fileName) {
+            activeClipImages.add(`clipboard_images/${fileName}`);
+          }
+        }
+      }
 
-        for (const imgPath of uniqueCandidateImages) {
-          const cleanKey = imgPath.trim().replaceAll('\\', '/');
-          // 检查该图片是否还被任何保留的记录引用（包括所有收藏项，以及保留在前 limit 条的活跃历史）
-          const refCheck = await env.DB.prepare(
-            `SELECT COUNT(*) as count FROM clipboard_items 
-             WHERE image_path = ? 
-               AND (
-                 is_favorite = 1 
-                 OR id IN (
-                   SELECT id FROM clipboard_items 
-                   WHERE is_favorite = 0 
-                   ORDER BY timestamp DESC 
-                   LIMIT ?
-                 )
-               )`
-          ).bind(imgPath, limit).first<{ count: number }>();
-
-          if (!refCheck || refCheck.count === 0) {
-            try {
-              await env.FILES_BUCKET.delete(cleanKey);
-              deletedImagesCount++;
-            } catch (r2Err) {
-              console.warn(`[Eviction] 释放 R2 废弃剪贴板图片失败: ${cleanKey}`, r2Err);
-            }
+      const listRes = await env.FILES_BUCKET.list({ prefix: 'clipboard_images/', limit: 1000 });
+      for (const obj of listRes.objects) {
+        const normKey = obj.key.replaceAll('\\', '/');
+        if (!activeClipImages.has(normKey)) {
+          try {
+            await env.FILES_BUCKET.delete(obj.key);
+            await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(obj.key).run().catch(() => {});
+            deletedImagesCount++;
+          } catch (r2Err) {
+            console.warn(`[Eviction] 释放 R2 过期剪贴板图片失败: ${obj.key}`, r2Err);
           }
         }
       }
     }
 
-    // 4. 从 D1 物理删除陈旧非收藏记录
-    const deleteRes = await env.DB.prepare(`
-      DELETE FROM clipboard_items
-      WHERE is_favorite = 0
-        AND id NOT IN (
-          SELECT id FROM clipboard_items
-          WHERE is_favorite = 0
-          ORDER BY timestamp DESC
-          LIMIT ?
-        )
-    `).bind(limit).run();
-
-    const evictedCount = deleteRes.meta?.changes ?? toDelete.length;
-    console.log(`[Eviction] 剪贴板历史淘汰完成: 物理移除 ${evictedCount} 条陈旧记录，释放 R2 图片 ${deletedImagesCount} 张 (保留最新 ${limit} 条非收藏项，收藏项全部受保护)`);
+    if (evictedCount > 0 || deletedImagesCount > 0) {
+      console.log(`[Eviction] 剪贴板后台自动清理完成: 物理移除 ${evictedCount} 条超额/过期记录，释放 R2 过期图片 ${deletedImagesCount} 张 (上限 ${limit} 条)`);
+    }
 
     return { evictedCount, deletedImagesCount };
   } catch (error) {
@@ -542,14 +538,36 @@ function getMimeType(fileName: string): string {
   return 'application/octet-stream';
 }
 
-// 获取文件元数据列表 (以 R2 真实文件为准，确保已被销毁的文件不会残留给移动端)
-async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
+// 获取文件元数据列表 (以 R2 真实文件为准，并自动过滤/后台清理已淘汰或已删除的孤立剪贴板图片)
+async function handleFilesMetadata(env: Env, url?: URL, ctx?: ExecutionContext): Promise<Response> {
   try {
     const scope = url?.searchParams?.get('scope');
+
+    // 查询当前 D1 中所有有效（未删除）剪贴板引用的图片路径
+    const activeClipImages = new Set<string>();
+    if (scope !== 'files') {
+      try {
+        const clipRows = await env.DB.prepare(
+          'SELECT image_path FROM clipboard_items WHERE is_deleted = 0 AND image_path IS NOT NULL'
+        ).all<{ image_path: string }>();
+        for (const row of clipRows.results || []) {
+          if (row.image_path) {
+            const norm = row.image_path.trim().replaceAll('\\', '/');
+            const fileName = norm.includes('clipboard_images/')
+              ? norm.split('clipboard_images/').pop()
+              : norm;
+            if (fileName) {
+              activeClipImages.add(`clipboard_images/${fileName}`);
+            }
+          }
+        }
+      } catch (_) {}
+    }
 
     if (env.FILES_BUCKET) {
       const prefix = scope === 'files' ? 'files/' : '';
       const listRes = await env.FILES_BUCKET.list({ prefix });
+      const orphanClipKeys: string[] = [];
 
       const files = listRes.objects
         .filter((obj) => {
@@ -576,6 +594,14 @@ async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
           if (scope === 'files') {
             if (!key.startsWith('files/') || key.startsWith('files/.')) return false;
           }
+          // 若是剪贴板图片，必须仍在有效剪贴板记录中；否则视为已超出上限或已删除的孤立图片，直接过滤并在后台异步清理
+          if (key.startsWith('clipboard_images/')) {
+            const normKey = key.replaceAll('\\', '/');
+            if (!activeClipImages.has(normKey)) {
+              orphanClipKeys.push(key);
+              return false;
+            }
+          }
           return true;
         })
         .map((obj) => {
@@ -588,6 +614,18 @@ async function handleFilesMetadata(env: Env, url?: URL): Promise<Response> {
             updated_at: obj.uploaded ? obj.uploaded.toISOString() : new Date().toISOString(),
           };
         });
+
+      // 发现云端存在过期/已删除的孤立剪贴板图片时，放入后台 waitUntil 异步清理，不阻塞请求响应
+      if (orphanClipKeys.length > 0 && ctx && typeof ctx.waitUntil === 'function') {
+        ctx.waitUntil((async () => {
+          for (const orphanKey of orphanClipKeys) {
+            try {
+              await env.FILES_BUCKET!.delete(orphanKey);
+              await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(orphanKey).run().catch(() => {});
+            } catch (_) {}
+          }
+        })());
+      }
 
       return new Response(JSON.stringify({ success: true, files }), {
         headers: { 'Content-Type': 'application/json' },

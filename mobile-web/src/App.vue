@@ -323,7 +323,7 @@ onMounted(async () => {
   initTheme();
 
   // Listen for 401 pin expired event from any background sync/file request
-  window.addEventListener('unclutter:pin-expired', () => {
+  window.addEventListener('podquick:pin-expired', () => {
     notes.value = [];
     clipboardItems.value = [];
     showPinModal.value = true;

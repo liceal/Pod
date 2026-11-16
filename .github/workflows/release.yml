@@ -1,0 +1,193 @@
+name: Build & Publish Release (Windows & macOS)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号 (例如 1.1.0，留空则从 pubspec.yaml 读取)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  # ==========================================================
+  # 1. Windows 打包 (Inno Setup 安装包 + 免安装便携版 ZIP)
+  # ==========================================================
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (for super_native_extensions)
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Resolve Version & Update release_info.json
+        id: vars
+        shell: pwsh
+        run: |
+          $ver = "${{ github.event.inputs.version }}"
+          if ([string]::IsNullOrWhiteSpace($ver)) {
+            if ("${{ github.ref_name }}".StartsWith("v")) {
+              $ver = "${{ github.ref_name }}".Substring(1)
+            } else {
+              $line = Select-String -Path "pubspec.yaml" -Pattern "^version:\s*([^\+\s]+)"
+              $ver = $line.Matches.Groups[1].Value
+            }
+          }
+          Write-Host "Target Version: $ver"
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          if (Test-Path "release_info.json") {
+            $json = Get-Content "release_info.json" -Raw | ConvertFrom-Json
+            $json.version = $ver
+            $json | ConvertTo-Json -Depth 5 | Set-Content "release_info.json" -Encoding UTF8
+          }
+
+      - name: Install dependencies & build Windows Release
+        shell: pwsh
+        run: |
+          flutter pub get
+          flutter gen-l10n
+          flutter build windows --release
+
+      - name: Package Portable ZIP & Inno Setup Installer
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.vars.outputs.version }}"
+          New-Item -ItemType Directory -Force -Path "dist" | Out-Null
+
+          # 1. Portable ZIP
+          Compress-Archive -Path "build\windows\x64\runner\Release\*" -DestinationPath "dist\PodQuick_Windows_Portable.zip" -Force
+
+          # 2. Inno Setup Installer (PodQuick_Setup.exe)
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+          & $iscc "/DMyAppVersion=$ver" "installer.iss"
+          Copy-Item "build\PodQuick_Setup.exe" "dist\PodQuick_Setup.exe" -Force
+
+      - name: Upload Windows Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: |
+            dist/PodQuick_Setup.exe
+            dist/PodQuick_Windows_Portable.zip
+
+  # ==========================================================
+  # 2. macOS 打包 (Apple Silicon ARM64 DMG + Intel x86_64 DMG)
+  # ==========================================================
+  build-macos:
+    name: Build macOS (ARM64 & Intel DMG)
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain (Universal Apple Darwin targets)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Install create-dmg
+        run: |
+          brew install create-dmg
+
+      - name: Resolve Version & Update release_info.json
+        id: vars
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          if [ -z "$VER" ]; then
+            if [[ "${{ github.ref_name }}" == v* ]]; then
+              VER="${GITHUB_REF_NAME#v}"
+            else
+              VER=$(grep -E '^version:' pubspec.yaml | sed -E 's/version:\s*([^+ ]+).*/\1/' | tr -d '[:space:]')
+            fi
+          fi
+          echo "Target Version: $VER"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+
+          if [ -f "release_info.json" ]; then
+            python3 -c "import json; p='release_info.json'; d=json.load(open(p)); d['version']='$VER'; json.dump(d, open(p,'w'), indent=2, ensure_ascii=False)"
+          fi
+
+      - name: Build macOS Universal & Package ARM64 + Intel DMGs
+        run: |
+          flutter pub get
+          flutter gen-l10n
+          chmod +x build_macos.sh
+          ./build_macos.sh
+
+      - name: Upload macOS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release
+          path: |
+            dist/PodQuick-AppleSilicon.dmg
+            dist/PodQuick-Intel.dmg
+
+  # ==========================================================
+  # 3. 自动创建 GitHub Release 并上传所有平台安装包
+  # ==========================================================
+  publish-release:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Determine Release Tag & Version
+        id: meta
+        run: |
+          VER="${{ github.event.inputs.version }}"
+          if [ -z "$VER" ]; then
+            if [[ "${{ github.ref_name }}" == v* ]]; then
+              VER="${GITHUB_REF_NAME#v}"
+            else
+              VER=$(grep -E '^version:' pubspec.yaml | sed -E 's/version:\s*([^+ ]+).*/\1/' | tr -d '[:space:]')
+            fi
+          fi
+          TAG="v${VER#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "PodQuick ${{ steps.meta.outputs.tag }}"
+          generate_release_notes: true
+          files: |
+            release-assets/PodQuick_Setup.exe
+            release-assets/PodQuick_Windows_Portable.zip
+            release-assets/PodQuick-AppleSilicon.dmg
+            release-assets/PodQuick-Intel.dmg
+            release_info.json
+
