@@ -220,16 +220,12 @@ package_variant() {
 }
 
 # Package Apple Silicon version (arm64)
-package_variant "arm64" "AppleSilicon" "Apple Silicon (M1/M2/M3/M4)"
+package_variant "arm64" "arm" "Apple Silicon (M1/M2/M3/M4)"
 
 # Package Intel version (x86_64)
-package_variant "x86_64" "Intel" "Intel 64-bit Processors"
+package_variant "x86_64" "x86" "Intel 64-bit Processors"
 
-# Also provide standard x86 and arm DMG names
-cp -f "${DIST_DIR}/PodQuick-AppleSilicon.dmg" "${DIST_DIR}/PodQuick-arm.dmg"
-cp -f "${DIST_DIR}/PodQuick-Intel.dmg" "${DIST_DIR}/PodQuick-x86.dmg"
-
-# Also place copies/symlinks for general scripts (like upload_macos.sh)
+# Also place copy for general scripts (like upload_macos.sh)
 mkdir -p build
 cp -f "${DIST_DIR}/PodQuick-arm.dmg" "build/PodQuick.dmg"
 

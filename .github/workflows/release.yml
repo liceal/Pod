@@ -145,8 +145,6 @@ jobs:
           path: |
             dist/PodQuick-arm.dmg
             dist/PodQuick-x86.dmg
-            dist/PodQuick-AppleSilicon.dmg
-            dist/PodQuick-Intel.dmg
 
   # ==========================================================
   # 3. 自动创建 GitHub Release 并上传所有平台安装包
@@ -180,18 +178,47 @@ jobs:
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=${VER#v}" >> "$GITHUB_OUTPUT"
 
+      - name: Extract Release Notes from CHANGELOG.md
+        id: notes
+        run: |
+          python3 -c "
+          import re
+          notes = ''
+          try:
+              content = open('CHANGELOG.md', 'r', encoding='utf-8').read()
+              # 匹配首个版本块内容 (## [x.y.z] ... 到下一个 ## 或结尾)
+              m = re.search(r'##\s*\[.*?\][^\n]*\n([\s\S]*?)(?=\n##|\Z)', content)
+              if m:
+                  notes = m.group(1).strip()
+          except Exception as e:
+              print(f'Error reading CHANGELOG.md: {e}')
+
+          if not notes:
+              try:
+                  import json
+                  info = json.load(open('release_info.json', 'r', encoding='utf-8'))
+                  notes = info.get('releaseNotes', '修复已知问题与性能优化。')
+              except Exception:
+                  notes = '修复已知问题与性能优化。'
+
+          body = notes + '\n\n---\n### 📦 资产下载说明\n'
+          body += '- **Windows**: `PodQuick_Setup.exe` (标准安装包) / `PodQuick_Windows_Portable.zip` (绿色便携版)\n'
+          body += '- **macOS**: `PodQuick-arm.dmg` (Apple Silicon M系列) / `PodQuick-x86.dmg` (Intel 芯片)\n'
+          with open('RELEASE_BODY.md', 'w', encoding='utf-8') as f:
+              f.write(body)
+          "
+
       - name: Create GitHub Release & Upload Assets
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: "PodQuick ${{ steps.meta.outputs.tag }}"
+          body_path: RELEASE_BODY.md
           generate_release_notes: true
           files: |
             release-assets/PodQuick_Setup.exe
             release-assets/PodQuick_Windows_Portable.zip
             release-assets/PodQuick-arm.dmg
             release-assets/PodQuick-x86.dmg
-            release-assets/PodQuick-AppleSilicon.dmg
-            release-assets/PodQuick-Intel.dmg
             release_info.json
 
