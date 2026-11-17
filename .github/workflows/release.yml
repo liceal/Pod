@@ -132,7 +132,10 @@ jobs:
           fi
 
       - name: Build macOS Universal & Package ARM64 + Intel DMGs
+        env:
+          MACOSX_DEPLOYMENT_TARGET: '10.15'
         run: |
+          export MACOSX_DEPLOYMENT_TARGET="10.15"
           flutter pub get
           flutter gen-l10n
           chmod +x build_macos.sh
@@ -203,7 +206,8 @@ jobs:
 
           body = notes + '\n\n---\n### 📦 资产下载说明\n'
           body += '- **Windows**: `PodQuick_Setup.exe` (标准安装包) / `PodQuick_Windows_Portable.zip` (绿色便携版)\n'
-          body += '- **macOS**: `PodQuick-arm.dmg` (Apple Silicon M系列) / `PodQuick-x86.dmg` (Intel 芯片)\n'
+          body += '- **macOS**: `PodQuick-arm.dmg` (Apple Silicon M系列) / `PodQuick-x86.dmg` (Intel 芯片)\n\n'
+          body += '> 💡 **macOS 用户首次运行提示**：若 macOS 11/12+ 提示“无法验证开发者”或“已损坏”，请在【系统设置 -> 安全性与隐私】点击“仍要打开”，或在终端运行：`xattr -rd com.apple.quarantine /Applications/PodQuick.app`\n'
           with open('RELEASE_BODY.md', 'w', encoding='utf-8') as f:
               f.write(body)
           "

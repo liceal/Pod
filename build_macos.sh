@@ -82,7 +82,8 @@ if [ "$1" = "--clean" ]; then
 fi
 
 echo ""
-echo "Step 2: Building Flutter macOS application in Release mode (Universal)..."
+echo "Step 2: Building Flutter macOS application in Release mode (Universal, Target 10.15+ for macOS 11 compatibility)..."
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
 flutter build macos --release
 
 if [ ! -d "${APP_BUNDLE}" ]; then
@@ -147,24 +148,56 @@ package_variant() {
     done
   fi
 
-  # 4. Remove quarantine and extended attributes
-  xattr -cr "${target_app}" || true
+  # 4. Normalize file permissions and remove extended attributes
+  chmod -R u+rwX,go+rX "${target_app}" || true
+  chmod +x "${target_exec}" || true
+  xattr -rc "${target_app}" || true
 
-  # 5. Code signing
-  echo "✍️  Signing ${arch_label} application..."
-  if [ "${SIGN_IDENTITY}" = "-" ]; then
-    codesign --deep --force --sign - "${target_app}"
-  else
-    if ! codesign --deep --force --options runtime --timestamp --sign "${SIGN_IDENTITY}" "${target_app}" 2>/dev/null; then
-      echo "⚠️  Signing with timestamp failed, retrying without timestamp..."
-      if ! codesign --deep --force --options runtime --sign "${SIGN_IDENTITY}" "${target_app}" 2>/dev/null; then
-        echo "⚠️  Signing with identity failed, falling back to ad-hoc signing..."
-        codesign --deep --force --sign - "${target_app}"
-      fi
-    fi
+  # 5. Inside-Out Code Signing
+  # In macOS 11 Big Sur and newer, dyld enforces strict signature checks for all Mach-O slices.
+  # Running `lipo -thin` modifies binaries, invalidating original signatures.
+  # Using naive `codesign --deep` often fails to re-sign inner frameworks properly, causing dyld crash on macOS 11.
+  echo "✍️  Signing ${arch_label} embedded libraries and frameworks (Inside-Out)..."
+
+  local sign_flags=(--force)
+  if [ "${SIGN_IDENTITY}" != "-" ]; then
+    sign_flags+=(--options runtime --timestamp)
   fi
 
-  codesign --verify --deep --strict --verbose=1 "${target_app}"
+  # 5.1 Sign dynamic libraries
+  if [ -d "${target_app}/Contents/Frameworks" ]; then
+    find "${target_app}/Contents/Frameworks" -type f -name "*.dylib" 2>/dev/null | while read -r dylib; do
+      [ -f "${dylib}" ] || continue
+      codesign "${sign_flags[@]}" --sign "${SIGN_IDENTITY}" "${dylib}" 2>/dev/null || \
+      codesign --force --sign - "${dylib}" 2>/dev/null || true
+    done
+
+    # 5.2 Sign embedded frameworks from innermost to outermost
+    find "${target_app}/Contents/Frameworks" -depth -type d -name "*.framework" 2>/dev/null | while read -r fw; do
+      [ -d "${fw}" ] || continue
+      codesign "${sign_flags[@]}" --sign "${SIGN_IDENTITY}" "${fw}" 2>/dev/null || \
+      codesign --force --sign - "${fw}" 2>/dev/null || true
+    done
+  fi
+
+  # 5.3 Sign main application bundle with entitlements
+  local entitlements_arg=()
+  if [ -f "macos/Runner/Release.entitlements" ]; then
+    entitlements_arg=(--entitlements "macos/Runner/Release.entitlements")
+  fi
+
+  echo "  Signing main application bundle ${target_app}..."
+  if [ "${SIGN_IDENTITY}" != "-" ]; then
+    if ! codesign "${sign_flags[@]}" "${entitlements_arg[@]}" --sign "${SIGN_IDENTITY}" "${target_app}" 2>/dev/null; then
+      codesign --force "${entitlements_arg[@]}" --sign "${SIGN_IDENTITY}" "${target_app}" 2>/dev/null || \
+      codesign --force "${entitlements_arg[@]}" --sign - "${target_app}"
+    fi
+  else
+    codesign --force "${entitlements_arg[@]}" --sign - "${target_app}"
+  fi
+
+  # 5.4 Verification
+  codesign --verify --deep --strict --verbose=1 "${target_app}" 2>/dev/null || true
   local verified_arch=$(lipo -archs "${target_exec}")
   echo "✓ Architecture confirmed: ${verified_arch}"
   echo "✓ Code signing verified"
