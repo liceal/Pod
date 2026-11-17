@@ -274,7 +274,7 @@ const handlePinUnlocked = () => {
   performSync(false);
 };
 
-const performSync = async (incremental = false) => {
+const performSync = async (incremental = false, isSilent = false) => {
   if (isSyncing.value) return;
   isSyncing.value = true;
   try {
@@ -289,13 +289,19 @@ const performSync = async (incremental = false) => {
     clipboardItems.value = res.clipboard;
     lastSyncTime.value = ApiClient.getLastSyncTime();
 
-    if (res.error) {
-      triggerToast(`同步完成 (部分提示: ${res.error})`, 'info');
-    } else {
-      triggerToast(`数据同步成功 (已加载 ${res.pulledCount} 条更新)`, 'success');
+    if (!isSilent) {
+      if (res.error) {
+        triggerToast(`同步完成 (部分提示: ${res.error})`, 'info');
+      } else {
+        triggerToast(`数据同步成功 (已加载 ${res.pulledCount} 条更新)`, 'success');
+      }
+    } else if (res.pulledCount > 0) {
+      triggerToast(`已同步最新数据 (${res.pulledCount} 条更新)`, 'success');
     }
   } catch (err: any) {
-    triggerToast(`同步失败: ${err.message || String(err)}`, 'error');
+    if (!isSilent) {
+      triggerToast(`同步失败: ${err.message || String(err)}`, 'error');
+    }
   } finally {
     isSyncing.value = false;
   }
@@ -318,6 +324,37 @@ const checkAndApplyPinProtection = async (): Promise<boolean> => {
   return true;
 };
 
+// Visibility, Focus and Smart Polling Auto-Refresh
+let lastAutoSyncTime = 0;
+let smartPollTimer: any = null;
+
+const triggerAutoFreshSync = () => {
+  const now = Date.now();
+  if (now - lastAutoSyncTime < 5000) return; // Debounce 5s
+  lastAutoSyncTime = now;
+  performSync(true, true);
+};
+
+const handleVisibilityChange = () => {
+  if (document.visibilityState === 'visible') {
+    triggerAutoFreshSync();
+  }
+};
+
+const handleWindowFocus = () => {
+  triggerAutoFreshSync();
+};
+
+const handleOnline = () => {
+  triggerAutoFreshSync();
+};
+
+const handleCustomToast = (e: any) => {
+  if (e.detail?.msg) {
+    triggerToast(e.detail.msg, e.detail.type || 'info');
+  }
+};
+
 onMounted(async () => {
   // Initialize theme engine
   initTheme();
@@ -329,6 +366,21 @@ onMounted(async () => {
     showPinModal.value = true;
     triggerToast('云端密码已在其他设备更新，请重新输入新密码', 'error');
   });
+
+  // Listen for custom toasts
+  window.addEventListener('podquick:toast', handleCustomToast);
+
+  // Auto-fresh on visibility, focus and online
+  document.addEventListener('visibilitychange', handleVisibilityChange);
+  window.addEventListener('focus', handleWindowFocus);
+  window.addEventListener('online', handleOnline);
+
+  // Smart polling: every 30 seconds when visible
+  smartPollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible' && !isSyncing.value) {
+      performSync(true, true);
+    }
+  }, 30000);
 
   // Check PWA Standalone Mode
   checkStandaloneMode();
@@ -346,7 +398,7 @@ onMounted(async () => {
     notes.value = ApiClient.getCachedNotes();
     clipboardItems.value = ApiClient.getCachedClipboard();
     lastSyncTime.value = ApiClient.getLastSyncTime();
-    performSync(true);
+    performSync(true, true);
   }
 
   // Align tabs scroll position on window resize / orientation change
@@ -355,6 +407,14 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   window.removeEventListener('resize', handleResize);
+  window.removeEventListener('podquick:toast', handleCustomToast);
+  document.removeEventListener('visibilitychange', handleVisibilityChange);
+  window.removeEventListener('focus', handleWindowFocus);
+  window.removeEventListener('online', handleOnline);
+  if (smartPollTimer) {
+    clearInterval(smartPollTimer);
+    smartPollTimer = null;
+  }
   clearTimeout(scrollEndTimer);
 });
 </script>

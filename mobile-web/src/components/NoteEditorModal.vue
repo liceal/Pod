@@ -622,6 +622,13 @@ const save = async () => {
   if (res.success) {
     emit('saved', updatedNote);
     emit('close');
+    if (res.queued) {
+      window.dispatchEvent(
+        new CustomEvent('podquick:toast', {
+          detail: { msg: '已在本地安全保存，待网络恢复后自动同步至云端', type: 'info' },
+        })
+      );
+    }
   } else {
     alert(`保存便签失败: ${res.error || '未知错误'}`);
   }

@@ -723,7 +723,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           // 云端为删除墓碑
           if (activeMap.containsKey(rNote.id)) {
             final localNote = activeMap[rNote.id]!;
-            if (!localNote.updatedAt.isAfter(rNote.updatedAt)) {
+            // 规则：若本地在云端删除之后，有实质性的新内容修改，内容绝对优先于删除 -> 坚决复活，保护本地内容！
+            if (localNote.updatedAt.isAfter(rNote.updatedAt) &&
+                localNote.content.trim().isNotEmpty &&
+                localNote.content.trim() != rNote.content.trim()) {
+              onLog(text(
+                '🛡️ 便签 [${localNote.title}] 在云端已删除但本地有更新的内容，已自动保留本地便签！',
+                '🛡️ Preserved note [${localNote.title}] because local has newer substantive edits.',
+              ));
+              // 不删除，保持在 activeMap 中，后续自动补推到云端复活
+            } else {
               activeMap.remove(rNote.id);
               tombstoneMap[rNote.id] = rNote;
               updatedNotesCount++;
@@ -742,6 +751,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             tombstoneMap.remove(rNote.id);
             activeMap[rNote.id] = rNote;
             newNotesCount++;
+            onLog(text(
+              '🛡️ 云端便签 [${rNote.title}] 在本地删除后有新修改，已自动复活保留！',
+              '🛡️ Revived note [${rNote.title}] from cloud because it has newer updates.',
+            ));
           } else {
             // 本地删除时间更新 -> 维持本地删除状态
             continue;
@@ -751,11 +764,58 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           activeMap[rNote.id] = rNote;
           newNotesCount++;
         } else {
-          // 双端均存在 -> 谁的时间最新就直接用谁覆盖 (Last-Write-Wins)
+          // 双端均存在
           final localNote = activeMap[rNote.id]!;
-          if (rNote.updatedAt.isAfter(localNote.updatedAt)) {
-            activeMap[rNote.id] = rNote;
-            updatedNotesCount++;
+          // 1. 内容与标题完全一致（排除纯空格换行抖动）-> 直接取最新时间/版本，完全无感平滑对齐
+          final bool isContentIdentical =
+              localNote.content.trim() == rNote.content.trim() &&
+              localNote.title.trim() == rNote.title.trim();
+
+          if (isContentIdentical) {
+            if (rNote.updatedAt.isAfter(localNote.updatedAt)) {
+              activeMap[rNote.id] = rNote;
+            }
+          } else {
+            // 2. 内容实质不同：判断是“单端正常修改（延迟同步）”还是“双端真实并发冲突”
+            final DateTime baseline = _lastD1SyncTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+            final bool localChangedSinceBaseline = localNote.updatedAt.isAfter(baseline);
+            final bool remoteChangedSinceBaseline = rNote.updatedAt.isAfter(baseline);
+
+            if (localChangedSinceBaseline && remoteChangedSinceBaseline) {
+              // 双方都在上次同步后修改了同一条便签，且内容实质不同 -> 真实冲突！
+              // 规则：最新的一方作为主便签，另一方生成一条冲突备份便签，确保字迹 100% 不丢！
+              final bool remoteIsNewer = rNote.updatedAt.isAfter(localNote.updatedAt);
+              final Note winner = remoteIsNewer ? rNote : localNote;
+              final Note loser = remoteIsNewer ? localNote : rNote;
+
+              activeMap[winner.id] = winner;
+              updatedNotesCount++;
+
+              // 生成冲突备份便签（赋予新 ID，标题加上【冲突备份】，内容完整保留）
+              final conflictCopyId = 'note_conflict_${DateTime.now().millisecondsSinceEpoch}_${loser.id.hashCode.abs().toRadixString(36)}';
+              final timeStr = DateFormat('MM-dd HH:mm').format(loser.updatedAt.toLocal());
+              final conflictNote = Note(
+                id: conflictCopyId,
+                title: '【冲突备份-$timeStr】${loser.title}',
+                content: loser.content,
+                createdAt: loser.createdAt,
+                updatedAt: DateTime.now(),
+                isDeleted: false,
+              );
+              activeMap[conflictCopyId] = conflictNote;
+              newNotesCount++;
+
+              onLog(text(
+                '⚠️ 检测到便签 [${winner.title}] 存在双端实质修改冲突，已自动生成【冲突备份】保留双方数据！',
+                '⚠️ Conflict detected for note [${winner.title}], automatically created backup copy.',
+              ));
+            } else {
+              // 只有一端改了（典型的断网后恢复/单点操作）：直接取时间最新的一方，0 副本，平滑无感对齐！
+              if (rNote.updatedAt.isAfter(localNote.updatedAt)) {
+                activeMap[rNote.id] = rNote;
+                updatedNotesCount++;
+              }
+            }
           }
         }
       }

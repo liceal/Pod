@@ -8,6 +8,7 @@ const STORAGE_KEY_LAST_SYNC = 'podquick_last_sync_time';
 const STORAGE_KEY_NOTES = 'podquick_cached_notes';
 const STORAGE_KEY_CLIPBOARD = 'podquick_cached_clipboard';
 const STORAGE_KEY_FILES = 'podquick_cached_files';
+const STORAGE_KEY_PENDING_NOTES = 'podquick_pending_notes';
 
 export class ApiClient {
   private static defaultBaseUrl = '';
@@ -239,7 +240,69 @@ export class ApiClient {
       localStorage.removeItem(STORAGE_KEY_CLIPBOARD);
       localStorage.removeItem(STORAGE_KEY_FILES);
       localStorage.removeItem(STORAGE_KEY_LAST_SYNC);
+      localStorage.removeItem(STORAGE_KEY_PENDING_NOTES);
     } catch {}
+  }
+
+  // Pending Notes Queue (for weak network / offline resilience)
+  public static getPendingNotes(): Note[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEY_PENDING_NOTES);
+      return data ? JSON.parse(data) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  public static enqueuePendingNote(note: Note) {
+    try {
+      const pending = this.getPendingNotes();
+      const idx = pending.findIndex((n) => n.id === note.id);
+      if (idx !== -1) {
+        pending[idx] = note;
+      } else {
+        pending.push(note);
+      }
+      localStorage.setItem(STORAGE_KEY_PENDING_NOTES, JSON.stringify(pending));
+    } catch (e) {
+      console.warn('Failed to enqueue pending note', e);
+    }
+  }
+
+  public static clearPendingNote(noteId: string) {
+    try {
+      const pending = this.getPendingNotes().filter((n) => n.id !== noteId);
+      localStorage.setItem(STORAGE_KEY_PENDING_NOTES, JSON.stringify(pending));
+    } catch {}
+  }
+
+  public static async flushPendingNotes(): Promise<number> {
+    const pending = this.getPendingNotes();
+    if (pending.length === 0) return 0;
+    const base = this.getBaseUrl();
+    const payload = {
+      notes: pending,
+      clipboardItems: [],
+    };
+    try {
+      const res = await fetch(`${base}/api/v1/sync`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-requested-with-web': 'true',
+          'x-pin-token': this.getPinToken(),
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(8000),
+      });
+      if (res.ok) {
+        localStorage.removeItem(STORAGE_KEY_PENDING_NOTES);
+        return pending.length;
+      }
+    } catch (e) {
+      console.warn('Failed to flush pending notes', e);
+    }
+    return 0;
   }
 
   // Full Pull Sync
@@ -249,6 +312,9 @@ export class ApiClient {
     pulledCount: number;
     error?: string;
   }> {
+    // 1. Flush any pending unsynced notes first to avoid overwriting offline edits
+    await this.flushPendingNotes().catch(() => {});
+
     const base = this.getBaseUrl();
     const since = incremental ? this.getLastSyncTime() : '1970-01-01T00:00:00.000Z';
     try {
@@ -371,7 +437,7 @@ export class ApiClient {
   }
 
   // Push Note to D1
-  public static async saveNote(note: Note): Promise<{ success: boolean; error?: string }> {
+  public static async saveNote(note: Note): Promise<{ success: boolean; queued?: boolean; error?: string }> {
     const base = this.getBaseUrl();
     const payload = {
       notes: [note],
@@ -398,7 +464,7 @@ export class ApiClient {
           'x-pin-token': this.getPinToken(),
         },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(8000),
       });
 
       if (res.status === 401) {
@@ -408,9 +474,16 @@ export class ApiClient {
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
+      // Successfully pushed to D1, remove from offline queue if present
+      this.clearPendingNote(note.id);
       return { success: !!json.success };
     } catch (e: any) {
-      return { success: false, error: e.message || String(e) };
+      if (e.message === 'PIN_EXPIRED') {
+        return { success: false, error: 'PIN_EXPIRED' };
+      }
+      // Weak network / VPN disconnected / timeout: queue locally so data is 100% safe
+      this.enqueuePendingNote(note);
+      return { success: true, queued: true, error: e.message || String(e) };
     }
   }
 
