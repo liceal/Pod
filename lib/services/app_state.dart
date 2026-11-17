@@ -493,6 +493,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _scanStoredFiles(),
     ]);
 
+    // 启动时自动拾遗与静默清理本地离线/外部副本
+    await autoIngestAndCleanupRedundantFiles();
+
     // Setup tray, hotkeys and directory watchers in parallel
     await Future.wait([
       _setupTray(),
@@ -757,6 +760,19 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         }
       }
 
+      // 熔断保护：如果本地原有便签大于等于 3 条，合并后条数缩减超过 50%，触发安全熔断，优先保护本地数据
+      if (notes.length >= 3 && activeMap.length < (notes.length / 2)) {
+        onLog(text(
+          '⚠️ [安全熔断保护] 检测到云端便签数据异常缩减 (本地 ${notes.length} 条 -> 云端拟合并 ${activeMap.length} 条)，已自动拦截异常删除，全量保留本地便签！',
+          '⚠️ [Safety Guard] Cloud notes delta abnormally reduced (${notes.length} -> ${activeMap.length}), prevented mass deletion.',
+        ));
+        for (final n in notes) {
+          if (!activeMap.containsKey(n.id)) {
+            activeMap[n.id] = n;
+          }
+        }
+      }
+
       final cutoffTombstone = DateTime.now().subtract(const Duration(days: 7));
       deletedNotes = tombstoneMap.values
           .where((n) => n.updatedAt.isAfter(cutoffTombstone))
@@ -779,6 +795,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
         }
 
         await _saveNotes();
+        await _createNotesBackup('cloud_merged');
         onLog(text(
           '🎉 云端便签同步完成：新增 $newNotesCount 条，更新 $updatedNotesCount 条',
           'Fetched notes: added $newNotesCount, updated $updatedNotesCount',
@@ -1044,23 +1061,31 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
 
     try {
+      // 0. 同步前自动自愈吸收本地外部副本，打扫干净后再创建安全快照
+      await autoIngestAndCleanupRedundantFiles();
+      await _createNotesBackup('pre_sync');
+
       addD1Log(text('🚀 开始全量一键同步 (Cloudflare D1 数据库 + R2 文件存储)...', 'Starting full sync (D1 DB + R2 Storage)...'));
 
       // 1. 同步 D1 数据库数据 (便签 + 剪贴板 + 设置)
       final d1Result = await _pushLocalDataToD1Internal(isManual: isManual);
 
       // 2. 独立同步 Section A 的 R2 存储桶 (本地图片、剪贴板快照与文件附件)
+      // 若已配置 Worker URL，Worker 内部已经绑定 FILES_BUCKET，无需用户在客户端单独填写 bucketName
+      final hasWorker = settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty;
       final bucketName = (settings.cfR2BucketName?.trim().isNotEmpty == true)
           ? settings.cfR2BucketName!.trim()
-          : settings.r2BucketName?.trim();
+          : (settings.r2BucketName?.trim().isNotEmpty == true
+              ? settings.r2BucketName!.trim()
+              : (hasWorker ? 'pod-quick-files' : null));
 
       int skippedIdenticalCount = 0;
       int newlyUploadedCount = 0;
       int newlyDownloadedCount = 0;
       int deletedRemoteCount = 0;
 
-      if (bucketName != null && bucketName.isNotEmpty) {
-        addD1Log(text('📁 正在准备双向同步文件与图片 (Cloudflare R2 存储桶: $bucketName)...', 'Syncing files & images (R2 bucket: $bucketName)...'));
+      if (hasWorker || (bucketName != null && bucketName.isNotEmpty)) {
+        addD1Log(text('📁 正在准备双向同步文件与图片...', 'Syncing files & images...'));
 
         try {
           // 同步文件前，先确保本地超出条数上限的剪贴板及孤立图片已清理
@@ -1226,10 +1251,16 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           // 2. 差异比对：
           // A. 找出云端需要物理删除的文件 (toDeleteRemote)
           // 包含：1) 本地已删除的文件(isKeyDeleted)；2) 云端剪贴板图片(clipboard_images/)中已超出历史上限或已被删除、不再被任何活跃剪贴板引用的过期图片
+          // 安全守则：若当前为全新/空工作区（无本地同步快照 hasSnapshot == false 且本地有效文件较少），严禁对云端 files/ 执行任何删除！
+          final isCleanWorkspace = !hasSnapshot && allLocalFiles.where((f) => computeRelativeKey(f).startsWith('files/')).isEmpty;
           final toDeleteRemote = <String>[];
           for (final entry in cloudMetadata.entries) {
             final remoteKey = entry.key;
             if (isKeyDeleted(remoteKey)) {
+              if (remoteKey.startsWith('files/') && isCleanWorkspace) {
+                // 空目录初始化恢复模式：保护云端 files/ 绝不误删
+                continue;
+              }
               toDeleteRemote.add(remoteKey);
             } else if (remoteKey.startsWith('clipboard_images/') &&
                 !activeClipImageKeys.contains(remoteKey)) {
@@ -1532,12 +1563,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             '✅ Sync completed: + $newlyUploadedCount uploaded | ↓ $newlyDownloadedCount downloaded | = $skippedIdenticalCount unchanged',
           ));
         } catch (e) {
-          addD1Log(text('⚠️ R2 文件同步异常: $e', '⚠️ R2 Sync error: $e'));
+          addD1Log(text('⚠️ 文件同步异常: $e', '⚠️ File sync error: $e'));
         }
       } else {
         addD1Log(text(
-          'ℹ️ 提示: 未填写「4. R2 存储桶名称（可选）」，本次已成功完成 D1 数据库记录同步。如需同步本地图片及大文件，请在上方填入存储桶名称。',
-          'Note: R2 Bucket Name is blank. D1 database sync completed.',
+          'ℹ️ 提示: 未配置 Worker 节点或存储桶，本次已完成本地便签与记录同步。',
+          'Note: Worker/Bucket not configured. Local data sync completed.',
         ));
       }
 
@@ -3095,6 +3126,15 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   }
 
   Future<void> reloadAllData() async {
+    // 切换到新目录后，清空内存中的待删墓碑，避免将旧目录的删除指令带入新环境
+    deletedNotes.clear();
+    deletedClipboards.clear();
+    notes.clear();
+    activeNote = null;
+    clipboardHistory.clear();
+    clipboardFavorites.clear();
+    storedFiles.clear();
+
     await _loadNotes();
     await _loadClipboardHistory();
     await _scanStoredFiles();
@@ -4661,6 +4701,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastNotesJsonCache = null;
     }
 
+    // 智能防风险：通用本地容灾拾遗，自动扫描并合并因多设备离线同步或外部拷贝产生的同类衍生副本，校验后在后台静默清理
+    await autoIngestAndCleanupRedundantFiles();
+
     // Add default note if empty
     if (notes.isEmpty) {
       final defaultNote = Note(
@@ -4675,10 +4718,315 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       );
       notes.add(defaultNote);
       await _saveNotes();
+    } else {
+      // 启动时自动为已有便签创建一份本地快照，确保万无一失
+      unawaited(_createNotesBackup('app_launch'));
     }
 
     // Select first note
     activeNote = notes.isNotEmpty ? notes.first : null;
+  }
+
+  /// 通用本地容灾拾遗与冗余副本静默清理 (通用规则，不针对任何特定网盘)
+  /// 1. 扫描当前数据目录下因多设备离线同步或外部拷贝产生的同类衍生副本
+  /// 2. 内存无损并集合并（按 ID + updatedAt 最新规则），校验条数只增不减
+  /// 3. 原子落盘写入主库文件，并校验磁盘主文件有效性
+  /// 4. 门禁校验全部通过后，在后台静默清理冗余副本文件
+  Future<void> autoIngestAndCleanupRedundantFiles() async {
+    try {
+      final dataDirPath = getDataDirectoryPathSync();
+      final dataDir = Directory(dataDirPath);
+      if (!dataDir.existsSync()) return;
+
+      final allEntities = dataDir.listSync();
+      final allFiles = allEntities.whereType<File>().toList();
+
+      // 1. 处理便签衍生副本 (notes-*.json / notes (*).json)
+      final noteConflictFiles = allFiles.where((f) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        if (name == 'notes.json' || name.startsWith('deleted_notes') || name.startsWith('notes_backup')) {
+          return false;
+        }
+        return (name.startsWith('notes-') || name.startsWith('notes (')) && name.endsWith('.json');
+      }).toList();
+
+      if (noteConflictFiles.isNotEmpty) {
+        final Map<String, Note> mergedNotes = {for (final n in notes) n.id: n};
+        bool hasChanges = false;
+        final List<File> filesVerifiedToClean = [];
+
+        for (final cFile in noteConflictFiles) {
+          try {
+            if (cFile.lengthSync() == 0) {
+              filesVerifiedToClean.add(cFile);
+              continue;
+            }
+            final content = cFile.readAsStringSync();
+            final decoded = jsonDecode(content) as List;
+            bool fileAllPresent = true;
+            for (final item in decoded) {
+              if (item is Map<String, dynamic> && item['id'] != null) {
+                final parsed = Note.fromJson(item);
+                if (!mergedNotes.containsKey(parsed.id) || parsed.updatedAt.isAfter(mergedNotes[parsed.id]!.updatedAt)) {
+                  mergedNotes[parsed.id] = parsed;
+                  hasChanges = true;
+                }
+              } else {
+                fileAllPresent = false;
+              }
+            }
+            if (fileAllPresent) {
+              filesVerifiedToClean.add(cFile);
+            }
+          } catch (e) {
+            debugPrint('Failed to ingest note conflict file ${cFile.path}: $e');
+          }
+        }
+
+        if (hasChanges) {
+          notes = mergedNotes.values.toList()..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          await _saveNotes();
+          await _createNotesBackup('auto_ingested');
+          notifyListeners();
+        }
+
+        // 门禁校验：主 notes.json 存在且大小正常，方可静默删除副本
+        final mainNotesFile = File('$dataDirPath/notes.json');
+        if (mainNotesFile.existsSync() && mainNotesFile.lengthSync() > 10) {
+          for (final f in filesVerifiedToClean) {
+            try {
+              f.deleteSync();
+              debugPrint('🧹 静默清理已吸收的便签副本: ${f.path}');
+            } catch (_) {}
+          }
+        }
+      }
+
+      // 2. 处理剪贴板历史衍生副本 (例如 clipboard_history-设备名-电脑名-序号.json)
+      final clipConflictFiles = allFiles.where((f) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        if (!name.startsWith('clipboard_history-') || !name.endsWith('.json')) return false;
+        // 排除当前机器的标准设备命名文件
+        final currentDevFilename = _getClipboardHistoryFilename();
+        if (name == currentDevFilename) return false;
+        // 衍生文件特征：包含次级连字符、括号或 -数字.json
+        final afterPrefix = name.substring('clipboard_history-'.length);
+        return afterPrefix.contains('-') || name.contains('(') || RegExp(r'-\d+\.json$').hasMatch(name);
+      }).toList();
+
+      if (clipConflictFiles.isNotEmpty) {
+        final Map<String, ClipboardItem> mergedClips = {for (final c in clipboardHistory) c.id: c};
+        final List<File> clipFilesVerifiedToClean = [];
+        bool hasClipChanges = false;
+
+        for (final cFile in clipConflictFiles) {
+          try {
+            if (cFile.lengthSync() == 0) {
+              clipFilesVerifiedToClean.add(cFile);
+              continue;
+            }
+            final content = cFile.readAsStringSync();
+            final decoded = jsonDecode(content) as List;
+            for (final item in decoded) {
+              if (item is Map<String, dynamic> && item['id'] != null) {
+                final parsed = ClipboardItem.fromJson(item);
+                if (!mergedClips.containsKey(parsed.id) || parsed.updatedAt.isAfter(mergedClips[parsed.id]!.updatedAt)) {
+                  mergedClips[parsed.id] = parsed;
+                  hasClipChanges = true;
+                }
+              }
+            }
+            clipFilesVerifiedToClean.add(cFile);
+          } catch (e) {
+            debugPrint('Failed to ingest clipboard conflict file ${cFile.path}: $e');
+          }
+        }
+
+        if (hasClipChanges) {
+          clipboardHistory = mergedClips.values.toList()
+            ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+          await _saveClipboardHistory();
+          notifyListeners();
+        }
+
+        for (final f in clipFilesVerifiedToClean) {
+          try {
+            f.deleteSync();
+            debugPrint('🧹 静默清理已吸收的剪贴板副本: ${f.path}');
+          } catch (_) {}
+        }
+      }
+
+      // 3. 处理已删除便签与文件墓碑衍生副本 (deleted_notes-*.json, deleted_files-*.json)
+      final tombstoneConflictFiles = allFiles.where((f) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        return (name.startsWith('deleted_notes-') || name.startsWith('deleted_files-')) && name.endsWith('.json');
+      }).toList();
+
+      if (tombstoneConflictFiles.isNotEmpty) {
+        for (final f in tombstoneConflictFiles) {
+          try {
+            final name = f.path.split(Platform.pathSeparator).last;
+            final content = f.readAsStringSync();
+            final decoded = jsonDecode(content) as List;
+            if (name.startsWith('deleted_notes-')) {
+              for (final item in decoded) {
+                if (item is Map<String, dynamic> && item['id'] != null) {
+                  final parsed = Note.fromJson(item);
+                  if (!deletedNotes.any((dn) => dn.id == parsed.id)) {
+                    deletedNotes.add(parsed);
+                  }
+                }
+              }
+              await _saveDeletedNotes();
+            } else if (name.startsWith('deleted_files-')) {
+              for (final item in decoded) {
+                if (item is String) {
+                  recordDeletedFile(item);
+                }
+              }
+            }
+            f.deleteSync();
+            debugPrint('🧹 静默清理已合并的墓碑副本: ${f.path}');
+          } catch (_) {}
+        }
+      }
+
+      // 4. 处理衍生快照副本 (last_sync_snapshot-*.json)
+      final snapshotConflictFiles = allFiles.where((f) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        return name.startsWith('last_sync_snapshot-') && name.endsWith('.json');
+      }).toList();
+
+      if (snapshotConflictFiles.isNotEmpty) {
+        for (final f in snapshotConflictFiles) {
+          try {
+            f.deleteSync();
+            debugPrint('🧹 静默清理多余的快照副本: ${f.path}');
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('autoIngestAndCleanupRedundantFiles error: $e');
+    }
+  }
+
+  DateTime? _lastNotesBackupTime;
+
+  /// 为便签生成本地安全滚动快照备份 (保留最近 30 份)
+  Future<void> _createNotesBackup(String reason) async {
+    if (notes.isEmpty) return;
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final backupDir = Directory('$dataDir/backups/notes');
+      if (!backupDir.existsSync()) {
+        backupDir.createSync(recursive: true);
+      }
+
+      final now = DateTime.now();
+      if (_lastNotesBackupTime != null &&
+          now.difference(_lastNotesBackupTime!).inMinutes < 15 &&
+          reason == 'auto_save') {
+        return;
+      }
+      _lastNotesBackupTime = now;
+
+      final ts = DateFormat('yyyyMMdd_HHmmss').format(now);
+      final count = notes.length;
+      final fileName = 'notes_${ts}_count${count}_$reason.json';
+      final file = File('${backupDir.path}/$fileName');
+
+      final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
+      await file.writeAsString(encoded);
+
+      // 仅保留最近 30 份历史快照
+      final allBackups = backupDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.json'))
+          .toList()
+        ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+      if (allBackups.length > 30) {
+        for (int i = 30; i < allBackups.length; i++) {
+          try {
+            allBackups[i].deleteSync();
+          } catch (_) {}
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to create notes backup: $e');
+    }
+  }
+
+  /// 获取当前所有便签本地快照备份文件列表 (用于 UI 预览和一键恢复)
+  List<Map<String, dynamic>> getNotesBackups() {
+    try {
+      final dataDir = getDataDirectoryPathSync();
+      final backupDir = Directory('$dataDir/backups/notes');
+      if (!backupDir.existsSync()) return [];
+
+      final files = backupDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.json'))
+          .toList()
+        ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
+
+      final list = <Map<String, dynamic>>[];
+      for (final f in files) {
+        final name = f.path.split(Platform.pathSeparator).last;
+        final size = f.lengthSync();
+        final mTime = f.lastModifiedSync();
+        int noteCount = 0;
+        try {
+          final content = f.readAsStringSync();
+          final arr = jsonDecode(content) as List;
+          noteCount = arr.length;
+        } catch (_) {}
+
+        list.add({
+          'path': f.path,
+          'fileName': name,
+          'size': size,
+          'modified': mTime,
+          'count': noteCount,
+        });
+      }
+      return list;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// 从指定的历史快照文件恢复便签
+  Future<bool> restoreNotesFromBackup(String backupFilePath) async {
+    try {
+      final file = File(backupFilePath);
+      if (!file.existsSync()) return false;
+
+      final content = await file.readAsString();
+      final decoded = jsonDecode(content) as List;
+      final restored = decoded
+          .map((item) => Note.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+
+      if (restored.isEmpty) return false;
+
+      // 恢复前先给当前状态做一份保险快照
+      await _createNotesBackup('before_restore');
+
+      notes = restored;
+      activeNote = notes.isNotEmpty ? notes.first : null;
+      await _saveNotes();
+      notifyListeners();
+      _triggerD1LiveAutoSync();
+      return true;
+    } catch (e) {
+      debugPrint('Failed to restore notes: $e');
+      return false;
+    }
   }
 
   Future<void> _saveNotes() async {
@@ -4691,6 +5039,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
       _lastNotesJsonCache = encoded; // Populate cache on save
       await notesFile.writeAsString(encoded);
+      unawaited(_createNotesBackup('auto_save'));
     } catch (e) {
       debugPrint('Failed to save notes: $e');
     }

@@ -1,4 +1,7 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:intl/intl.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -447,6 +450,221 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
+  Future<void> _showNotesBackupDialog() async {
+    widget.state.setDialogOpen(true);
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final backups = widget.state.getNotesBackups();
+            return AlertDialog(
+              backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+              title: Row(
+                children: [
+                  const Icon(Icons.history_rounded, size: 20, color: Color(0xFF007AFF)),
+                  const SizedBox(width: 8),
+                  Text(
+                    _text('便签本地历史快照与安全恢复', 'Notes Snapshots & Disaster Recovery'),
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: _isDarkTheme ? Colors.white : Colors.black87,
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 520,
+                height: 380,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _text(
+                        '系统在应用启动、每次同步前以及合并冲突时均会自动为便签生成本地快照备份（保留最新 30 份）。若发生误删或网盘覆盖，可在此一键恢复到任意历史快照。',
+                        'Local snapshots are auto-created at launch, pre-sync, and conflict merge (up to 30 copies). You can restore any historical version.',
+                      ),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _isDarkTheme ? Colors.white60 : Colors.black54,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Text(
+                          _text('当前有效便签: ${widget.state.notes.length} 条', 'Active Notes: ${widget.state.notes.length}'),
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            color: _isDarkTheme ? Colors.white : Colors.black87,
+                          ),
+                        ),
+                        const Spacer(),
+                        InkWell(
+                          onTap: () async {
+                            final backupDir = Directory('${widget.state.getDataDirectoryPathSync()}/backups/notes');
+                            if (!backupDir.existsSync()) backupDir.createSync(recursive: true);
+                            await widget.state.openDirectoryPath(backupDir.path);
+                          },
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.folder_open_rounded, size: 14, color: Color(0xFF007AFF)),
+                                const SizedBox(width: 3),
+                                Text(
+                                  _text('打开快照文件夹', 'Open Backups Folder'),
+                                  style: const TextStyle(fontSize: 11, color: Color(0xFF007AFF), fontWeight: FontWeight.bold),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Divider(height: 1),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: backups.isEmpty
+                          ? Center(
+                              child: Text(
+                                _text('暂无历史快照', 'No snapshots found'),
+                                style: TextStyle(fontSize: 12, color: _isDarkTheme ? Colors.white38 : Colors.black38),
+                              ),
+                            )
+                          : ListView.separated(
+                              itemCount: backups.length,
+                              separatorBuilder: (_, __) => const Divider(height: 1),
+                              itemBuilder: (itemCtx, index) {
+                                final b = backups[index];
+                                final name = b['fileName'] as String? ?? '';
+                                final count = b['count'] as int? ?? 0;
+                                final modified = b['modified'] as DateTime? ?? DateTime.now();
+                                final path = b['path'] as String? ?? '';
+                                final sizeKb = ((b['size'] as int? ?? 0) / 1024).toStringAsFixed(1);
+                                final timeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(modified);
+
+                                String reasonTag = '';
+                                if (name.contains('conflict_merged')) {
+                                  reasonTag = _text('网盘冲突合并', 'Conflict Merged');
+                                } else if (name.contains('pre_sync')) {
+                                  reasonTag = _text('同步前置备份', 'Pre-Sync');
+                                } else if (name.contains('cloud_merged')) {
+                                  reasonTag = _text('云端同步后', 'Cloud Merged');
+                                } else if (name.contains('app_launch')) {
+                                  reasonTag = _text('应用启动快照', 'Launch');
+                                } else if (name.contains('before_restore')) {
+                                  reasonTag = _text('恢复前保护', 'Pre-Restore');
+                                } else if (name.contains('recovered')) {
+                                  reasonTag = _text('灾备自愈恢复', 'Disaster Recovered');
+                                } else {
+                                  reasonTag = _text('自动定时快照', 'Auto-Save');
+                                }
+
+                                return ListTile(
+                                  dense: true,
+                                  contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                                  leading: const Icon(Icons.description_outlined, size: 18, color: Color(0xFF007AFF)),
+                                  title: Row(
+                                    children: [
+                                      Text(
+                                        '$count ${_text("条便签", "notes")}',
+                                        style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.bold,
+                                          color: _isDarkTheme ? Colors.white : Colors.black87,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF007AFF).withValues(alpha: 0.12),
+                                          borderRadius: BorderRadius.circular(4),
+                                        ),
+                                        child: Text(
+                                          reasonTag,
+                                          style: const TextStyle(fontSize: 9.5, color: Color(0xFF007AFF), fontWeight: FontWeight.bold),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  subtitle: Text(
+                                    '$timeStr (${sizeKb}KB)',
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      color: _isDarkTheme ? Colors.white54 : Colors.black45,
+                                    ),
+                                  ),
+                                  trailing: ElevatedButton(
+                                    onPressed: () async {
+                                      final ok = await showDialog<bool>(
+                                        context: context,
+                                        builder: (c) => AlertDialog(
+                                          backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                                          title: Text(_text('确认恢复此快照？', 'Restore Snapshot?')),
+                                          content: Text(_text(
+                                            '即将恢复包含 $count 条便签的快照（时间: $timeStr）。\n系统在恢复前会自动为当前便签再备份一份，确保安全。',
+                                            'Restore snapshot with $count notes ($timeStr)? Current state will be backed up.',
+                                          )),
+                                          actions: [
+                                            TextButton(
+                                              onPressed: () => Navigator.of(c).pop(false),
+                                              child: Text(_text('取消', 'Cancel')),
+                                            ),
+                                            TextButton(
+                                              onPressed: () => Navigator.of(c).pop(true),
+                                              child: Text(_text('确认恢复', 'Restore')),
+                                            ),
+                                          ],
+                                        ),
+                                      );
+                                      if (ok == true) {
+                                        final res = await widget.state.restoreNotesFromBackup(path);
+                                        if (res && mounted) {
+                                          setDialogState(() {});
+                                          setState(() {});
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            SnackBar(
+                                              content: Text(_text('🎉 成功恢复 $count 条便签！', 'Successfully restored $count notes!')),
+                                              backgroundColor: Colors.green,
+                                            ),
+                                          );
+                                        }
+                                      }
+                                    },
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: const Color(0xFF007AFF),
+                                      foregroundColor: Colors.white,
+                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                      minimumSize: const Size(0, 26),
+                                    ),
+                                    child: Text(_text('恢复', 'Restore'), style: const TextStyle(fontSize: 11)),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text(_text('关闭', 'Close')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    widget.state.setDialogOpen(false);
+  }
+
   Future<void> _save({bool closeAfterSave = true}) async {
     final oldDir = widget.state.getDataDirectoryPathSync();
     final isDirChanged = _dataDirectory.toLowerCase() != oldDir.toLowerCase();
@@ -607,8 +825,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
           return;
         }
       } else {
-        // Only path change
-        final updatedSettings = updated.copyWith(dataDirectory: _dataDirectory);
+        // 仅更改路径 (不迁移数据)：自动切断并关闭云端同步，防止新空目录误操作触发同步
+        final updatedSettings = updated.copyWith(
+          dataDirectory: _dataDirectory,
+          cfD1AutoSync: false,
+        );
+        setState(() {
+          _cfD1AutoSync = false;
+        });
         await widget.state.updateSettings(updatedSettings);
         await widget.state.reloadAllData();
       }
@@ -1170,7 +1394,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ),
                 InkWell(
-                  onTap: () => setState(() => _fourthColumnType = null),
+                  onTap: () => setState(() {
+                    _fourthColumnType = null;
+                    _isEditingWorker = false;
+                  }),
                   borderRadius: BorderRadius.circular(4),
                   child: Padding(
                     padding: const EdgeInsets.all(3),
@@ -2119,10 +2346,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         ),
                         const SizedBox(width: 6),
                         Expanded(
-                          child: Text(
+                          child: SelectableText(
                             workerUrl,
                             maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11,
                               fontFamily: 'monospace',
@@ -2130,7 +2356,32 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ),
                           ),
                         ),
-                        const SizedBox(width: 6),
+                        const SizedBox(width: 4),
+                        Tooltip(
+                          message: _text('复制地址', 'Copy URL'),
+                          child: InkWell(
+                            borderRadius: BorderRadius.circular(4),
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(text: workerUrl));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(_text('已复制 Worker 地址到剪贴板', 'Worker URL copied to clipboard')),
+                                  duration: const Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                            },
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+                              child: Icon(
+                                Icons.copy_rounded,
+                                size: 13,
+                                color: subColor,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
                         TextButton(
                           onPressed: () {
                             setState(() {
@@ -2197,51 +2448,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 ),
               ),
             ] else ...[
-              // 未连接 或 用户点击了「更改」：展示 > Worker 地址 与 > CF 自动部署
-              if (workerUrl.isNotEmpty && _isEditingWorker) ...[
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _text('请选择更改方式：', 'Choose setup method:'),
-                          style: TextStyle(fontSize: 10.5, color: subColor),
-                        ),
-                      ),
-                      InkWell(
-                        onTap: () => setState(() {
-                          _isEditingWorker = false;
-                          _fourthColumnType = null;
-                        }),
-                        borderRadius: BorderRadius.circular(4),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          child: Text(
-                            _text('取消更改', 'Cancel'),
-                            style: TextStyle(fontSize: 10.5, color: accentColor),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+              // 未连接 或 用户点击了「更改」：左侧保持单一入口，点击右侧直接弹出填写 Worker 地址
               _buildExtendableOptionRow(
                 typeKey: 'worker_url',
                 icon: Icons.link_rounded,
                 title: _text('Worker 地址', 'Worker Address'),
-                subtitle: _text('直接输入或修改现有 Worker 地址', 'Enter or edit existing Worker URL'),
-                accentColor: accentColor,
-                textColor: textColor,
-                subColor: subColor,
-              ),
-              const SizedBox(height: 6),
-              _buildExtendableOptionRow(
-                typeKey: 'cf_auto_deploy',
-                icon: Icons.rocket_launch_outlined,
-                title: _text('CF 自动部署', 'CF Auto Deploy'),
-                subtitle: _text('填写 Cloudflare 信息一键自动创建部署', 'Fill Cloudflare info to auto-deploy'),
+                subtitle: _text('填写 Worker 地址并连接云端', 'Enter Worker URL and connect'),
                 accentColor: accentColor,
                 textColor: textColor,
                 subColor: subColor,
@@ -2817,6 +3029,52 @@ class _SettingsDialogState extends State<SettingsDialog> {
           accentColor: accentColor,
         ),
         const SizedBox(height: 10),
+
+        // 引导：没有 Worker 地址？引导点击自动部署并自动回填
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: BoxDecoration(
+            color: _isDarkTheme
+                ? Colors.white.withValues(alpha: 0.03)
+                : Colors.black.withValues(alpha: 0.025),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: _isDarkTheme ? Colors.white10 : Colors.black12,
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(Icons.lightbulb_outline_rounded, size: 14, color: accentColor),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  _text('还没有 Worker 地址？可使用「CF 自动部署」一键创建并自动回填：', 'No Worker URL yet? 1-Click Auto Deploy and fill in:'),
+                  style: TextStyle(fontSize: 10.5, color: subColor),
+                ),
+              ),
+              const SizedBox(width: 6),
+              OutlinedButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _fourthColumnType = 'cf_auto_deploy';
+                  });
+                },
+                icon: const Icon(Icons.rocket_launch_rounded, size: 12),
+                label: Text(
+                  _text('去自动部署', 'Auto Deploy'),
+                  style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: accentColor,
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 26),
+                  side: BorderSide(color: accentColor.withValues(alpha: 0.5)),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
         Row(
           mainAxisAlignment: MainAxisAlignment.end,
           children: [
@@ -2856,6 +3114,30 @@ class _SettingsDialogState extends State<SettingsDialog> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // 顶部返回上一步：切换回输入 Worker 地址
+        InkWell(
+          onTap: () {
+            setState(() {
+              _fourthColumnType = 'worker_url';
+            });
+          },
+          borderRadius: BorderRadius.circular(4),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.arrow_back_rounded, size: 13, color: accentColor),
+                const SizedBox(width: 4),
+                Text(
+                  _text('返回直接填写 Worker 地址', 'Back to Worker URL'),
+                  style: TextStyle(fontSize: 10.5, color: accentColor, fontWeight: FontWeight.bold),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
         Text(
           _text(
             '填写 Cloudflare 信息并确认，系统将自动部署并生成 Worker 地址：',
@@ -2867,7 +3149,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
         _buildParamFieldWithLink(
           label: _text('1. Cloudflare 账户 ID (Account ID)', '1. Account ID'),
           controller: _cfAccountIdController,
-          hint: _text('CF 首页右侧或 URL 中获取', 'Copy from CF Overview'),
+          hint: _text('32位纯字母数字，如 2a6d469...', '32-char hex, e.g. 2a6d469...'),
+          tooltip: _text(
+            '获取技巧：登录 Cloudflare 后，看浏览器上方 URL 地址栏，dash.cloudflare.com/ 后面的 32 位字符就是账户 ID；或者进入任意网站页面右下角直接点击复制。',
+            'Tip: Log in to CF, look at your browser address bar: the 32-character string right after dash.cloudflare.com/ is your Account ID.',
+          ),
           linkText: _text('🔗 获取 ID', '🔗 Get ID'),
           linkUrl: 'https://dash.cloudflare.com/',
           textColor: textColor,
@@ -2878,7 +3164,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
         _buildParamFieldWithLink(
           label: _text('2. API 令牌 (API Token)', '2. API Token'),
           controller: _cfApiTokenController,
-          hint: _text('需具备 Workers 脚本(编辑) 与 D1(编辑) 权限', 'Token with Workers & D1 Edit permissions'),
+          hint: _text('必须包含【D1】与【Workers 脚本】编辑权限', 'Requires D1 & Workers Scripts Edit permissions'),
+          tooltip: _text(
+            '⚠️ 关键权限要求（创建自定义令牌）：\n1. 【账户 -> D1】-> 编辑 (Edit)（注意：D1 是单独项，不叫 Workers D1！）\n2. 【账户 -> Workers 脚本】-> 编辑 (Edit)\n3. 【账户 -> Workers R2 存储】-> 编辑 (Edit)（用于大文件/图片同步）\n4. 【账户 -> 账户设置】-> 读取 (Read)\n\n📌 提示：如果使用 R2 文件存储，需在 Cloudflare 控制台左侧点击「R2」开通激活一次（每月 10GB 免费）。',
+            'Required Permissions:\n1. Account -> D1 -> Edit (Independent entry, not under Workers)\n2. Account -> Workers Scripts -> Edit\n3. Account -> Workers R2 Storage -> Edit\n4. Account -> Account Settings -> Read\n\nNote: R2 must be activated in Cloudflare dashboard (10GB free/mo).',
+          ),
           linkText: _text('🔗 创建令牌', '🔗 Create Token'),
           linkUrl: 'https://dash.cloudflare.com/profile/api-tokens',
           textColor: textColor,
@@ -2920,10 +3210,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
             accentColor: accentColor,
           ),
           const SizedBox(height: 6),
-          _buildCustomTextField(
+          _buildParamFieldWithLink(
             label: _text('R2 存储桶名称', 'R2 Bucket Name'),
             controller: _cfR2BucketNameController,
             hint: '默认: pod-quick-files-apac',
+            linkText: _text('🔗 开通/查看 R2', '🔗 Activate R2'),
+            linkUrl: 'https://dash.cloudflare.com/?to=/:account/r2/overview',
+            tooltip: _text(
+              'Cloudflare R2 每月提供 10GB 永久免费存储空间。新账号请先点击链接在控制台开通激活一次 R2 服务；若未开通，系统会自动跳过 R2 并部署便签与剪贴板同步。',
+              'R2 provides 10GB free storage. Please activate R2 in Cloudflare dashboard first.',
+            ),
             textColor: textColor,
             subColor: subColor,
             accentColor: accentColor,
@@ -4295,6 +4591,66 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ],
           ),
         ),
+
+        const SizedBox(height: 16),
+        _sectionTitle(_text('便签本地历史快照 (防误删/防覆盖/网盘冲突自愈)', 'Notes Local Snapshots & Disaster Recovery'), subColor),
+        const SizedBox(height: 6),
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: _isDarkTheme ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.03),
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: _isDarkTheme ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '系统在应用启动、每次同步前以及内容变更时会自动生成本地快照（保留最新 30 份）。无论发生网盘冲突还是意外改动，随时可一键撤回恢复。',
+                  'Local snapshots are auto-created at launch, pre-sync, and changes. You can restore any historical version anytime.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _showNotesBackupDialog,
+                    icon: const Icon(Icons.history_rounded, size: 14),
+                    label: Text(
+                      _text('查看快照与一键恢复', 'Snapshots & Recovery'),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final backupDir = Directory('${widget.state.getDataDirectoryPathSync()}/backups/notes');
+                      if (!backupDir.existsSync()) backupDir.createSync(recursive: true);
+                      await widget.state.openDirectoryPath(backupDir.path);
+                    },
+                    icon: const Icon(Icons.folder_open_rounded, size: 14),
+                    label: Text(
+                      _text('打开快照文件夹', 'Open Backups Folder'),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: accentColor,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -4403,13 +4759,40 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               if (_cfD1WorkerUrlController.text.trim().isNotEmpty) ...[
                 const SizedBox(height: 6),
-                SelectableText(
-                  _cfD1WorkerUrlController.text.trim(),
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontFamily: 'monospace',
-                    color: subColor,
-                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: SelectableText(
+                        _cfD1WorkerUrlController.text.trim(),
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontFamily: 'monospace',
+                          color: subColor,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Tooltip(
+                      message: _text('复制地址', 'Copy URL'),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(4),
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: _cfD1WorkerUrlController.text.trim()));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(
+                              content: Text(_text('已复制 Worker 地址到剪贴板', 'Worker URL copied to clipboard')),
+                              duration: const Duration(seconds: 2),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.all(4),
+                          child: Icon(Icons.copy_rounded, size: 13, color: subColor),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ],
               const Divider(height: 16),
@@ -4590,7 +4973,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         child: _buildParamFieldWithLink(
                           label: _text('Cloudflare 账户 ID (Account ID)', 'Account ID'),
                           controller: _cfAccountIdController,
-                          hint: _text('CF 首页右侧或 URL 中获取', 'Copy from CF Overview'),
+                          hint: _text('32位纯字母数字，如 2a6d469...', '32-char hex, e.g. 2a6d469...'),
+                          tooltip: _text(
+                            '获取技巧：登录 Cloudflare 后，看浏览器上方 URL 地址栏，dash.cloudflare.com/ 后面的 32 位字符就是账户 ID；或者进入任意网站页面右下角直接点击复制。',
+                            'Tip: Log in to CF, look at your browser address bar: the 32-character string right after dash.cloudflare.com/ is your Account ID.',
+                          ),
                           linkText: _text('🔗 获取 ID', '🔗 Get ID'),
                           linkUrl: 'https://dash.cloudflare.com/',
                           textColor: textColor,
@@ -4603,7 +4990,11 @@ class _SettingsDialogState extends State<SettingsDialog> {
                         child: _buildParamFieldWithLink(
                           label: _text('API 令牌 (API Token)', 'API Token'),
                           controller: _cfApiTokenController,
-                          hint: _text('需具备 Workers 脚本(编辑) 与 D1(编辑) 权限', 'Token with Workers & D1 Edit permissions'),
+                          hint: _text('需具备 Workers 与 D1 权限的 API Token', 'API Token with Workers & D1 permissions'),
+                          tooltip: _text(
+                            '⚠️ 关键权限要求（创建自定义令牌）：\n1. 【账户 -> D1】-> 编辑 (Edit)（注意：D1 是单独项，不叫 Workers D1！）\n2. 【账户 -> Workers 脚本】-> 编辑 (Edit)\n3. 【账户 -> Workers R2 存储】-> 编辑 (Edit)（用于大文件/图片同步）\n4. 【账户 -> 账户设置】-> 读取 (Read)\n\n📌 提示：如果使用 R2 文件存储，需在 Cloudflare 控制台左侧点击「R2」开通激活一次（每月 10GB 免费）。',
+                            'Required Permissions:\n1. Account -> D1 -> Edit (Independent entry, not under Workers)\n2. Account -> Workers Scripts -> Edit\n3. Account -> Workers R2 Storage -> Edit\n4. Account -> Account Settings -> Read\n\nNote: R2 must be activated in Cloudflare dashboard (10GB free/mo).',
+                          ),
                           linkText: _text('🔗 创建令牌', '🔗 Create Token'),
                           linkUrl: 'https://dash.cloudflare.com/profile/api-tokens',
                           textColor: textColor,
@@ -4621,6 +5012,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     hint: _text('CF 首页右侧或 URL 中获取', 'Copy from CF Overview'),
                     linkText: _text('🔗 获取 ID', '🔗 Get ID'),
                     linkUrl: 'https://dash.cloudflare.com/',
+                    tooltip: _text(
+                      '登录 dash.cloudflare.com 后，地址栏 dash.cloudflare.com/{32位字符} 即为 Account ID，或在首页右侧栏直接复制。',
+                      'Account ID can be found in dash.cloudflare.com/{32-char-id} URL or right sidebar.',
+                    ),
                     textColor: textColor,
                     subColor: subColor,
                     accentColor: accentColor,
@@ -4629,9 +5024,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   _buildParamFieldWithLink(
                     label: _text('API 令牌 (API Token)', 'API Token'),
                     controller: _cfApiTokenController,
-                    hint: _text('需具备 Workers 脚本(编辑) 与 D1(编辑) 权限', 'Token with Workers & D1 Edit permissions'),
+                    hint: _text('必须包含【D1(编辑)】与【Workers 脚本(编辑)】', 'Requires D1:Edit & Workers Scripts:Edit'),
                     linkText: _text('🔗 创建令牌', '🔗 Create Token'),
                     linkUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+                    tooltip: _text(
+                      '⚠️ 关键权限提醒（缺少会导致数据库创建失败）：\n1. 【D1】-> 编辑 (Edit)（注意：D1 是单独项，不在 Workers 分类下！）\n2. 【Workers 脚本 (Workers Scripts)】-> 编辑 (Edit)\n3. 【Workers R2 存储】-> 编辑 (Edit)（可选，用于文件存储）\n4. 【账户设置 (Account Settings)】-> 读取 (Read)',
+                      'Required Token Permissions:\n1. D1 -> Edit (Independent entry, not under Workers)\n2. Workers Scripts -> Edit\n3. Workers R2 Storage -> Edit (Optional)\n4. Account Settings -> Read',
+                    ),
                     textColor: textColor,
                     subColor: subColor,
                     accentColor: accentColor,
@@ -4686,10 +5085,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
                             ),
                             const SizedBox(width: 8),
                             Expanded(
-                              child: _buildCustomTextField(
+                              child: _buildParamFieldWithLink(
                                 label: _text('R2 存储桶名称', 'R2 Bucket Name'),
                                 controller: _cfR2BucketNameController,
                                 hint: '默认: pod-quick-files-apac',
+                                linkText: _text('🔗 开通/查看 R2', '🔗 Activate R2'),
+                                linkUrl: 'https://dash.cloudflare.com/?to=/:account/r2/overview',
+                                tooltip: _text(
+                                  'Cloudflare R2 每月提供 10GB 永久免费存储空间。新账号请先点击链接在控制台开通激活一次 R2 服务；若未开通，系统会自动跳过 R2 并部署便签与剪贴板同步。',
+                                  'R2 provides 10GB free storage. Please activate R2 in Cloudflare dashboard first.',
+                                ),
                                 textColor: textColor,
                                 subColor: subColor,
                                 accentColor: accentColor,
@@ -5009,7 +5414,23 @@ class _SettingsDialogState extends State<SettingsDialog> {
                 overflow: TextOverflow.ellipsis,
               ),
             ),
-            const SizedBox(width: 4),
+            if (tooltip.isNotEmpty) ...[
+              Tooltip(
+                message: tooltip,
+                preferBelow: false,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                textStyle: const TextStyle(fontSize: 11, color: Colors.white),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Icon(Icons.help_outline_rounded, size: 13.5, color: subColor),
+                ),
+              ),
+              const SizedBox(width: 4),
+            ],
             InkWell(
               onTap: () async {
                 final uri = Uri.parse(linkUrl);
@@ -5020,16 +5441,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
               borderRadius: BorderRadius.circular(4),
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                child: Tooltip(
-                  message: tooltip,
-                  child: Text(
-                    linkText,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      color: accentColor,
-                      fontWeight: FontWeight.bold,
-                      decoration: TextDecoration.underline,
-                    ),
+                child: Text(
+                  linkText,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    color: accentColor,
+                    fontWeight: FontWeight.bold,
+                    decoration: TextDecoration.underline,
                   ),
                 ),
               ),

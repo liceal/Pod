@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
 import '../models/note.dart';
 import '../models/clipboard_item.dart';
 
@@ -41,10 +42,7 @@ class CfD1SyncService {
   final http.Client _client = http.Client();
   DateTime _lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0);
 
-  CfD1SyncService({
-    required this.workerUrl,
-    this.isDevMode = kDebugMode,
-  });
+  CfD1SyncService({required this.workerUrl, this.isDevMode = kDebugMode});
 
   String get _cleanBaseUrl {
     var url = workerUrl.trim();
@@ -64,7 +62,9 @@ class CfD1SyncService {
     }
 
     try {
-      final response = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 10));
       stopwatch.stop();
 
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
@@ -73,7 +73,9 @@ class CfD1SyncService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (isDevMode) {
-          debugPrint('✅ [CF D1 Health] 节点正常! 客户端网络往返: ${rttMs.toStringAsFixed(1)}ms, Worker处理耗时: ${serverTimeHeader ?? "N/A"}ms, D1数据库延迟: ${data['dbPingLatencyMs']}ms');
+          debugPrint(
+            '✅ [CF D1 Health] 节点正常! 客户端网络往返: ${rttMs.toStringAsFixed(1)}ms, Worker处理耗时: ${serverTimeHeader ?? "N/A"}ms, D1数据库延迟: ${data['dbPingLatencyMs']}ms',
+          );
         }
         return {
           'success': true,
@@ -82,12 +84,16 @@ class CfD1SyncService {
           'serverData': data,
         };
       } else {
-        debugPrint('⚠️ [CF D1 Health] 响应异常 HTTP ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '⚠️ [CF D1 Health] 响应异常 HTTP ${response.statusCode}: ${response.body}',
+        );
         return {'success': false, 'status': response.statusCode};
       }
     } catch (e) {
       stopwatch.stop();
-      debugPrint('❌ [CF D1 Health] 连接失败 (${stopwatch.elapsedMilliseconds}ms): $e');
+      debugPrint(
+        '❌ [CF D1 Health] 连接失败 (${stopwatch.elapsedMilliseconds}ms): $e',
+      );
       return {'success': false, 'error': e.toString()};
     }
   }
@@ -95,7 +101,9 @@ class CfD1SyncService {
   /// 2. 增量拉取 Cloudflare D1 数据库中的最新更新 (Pull)
   Future<Map<String, dynamic>> pullFromCloudflare({DateTime? since}) async {
     final querySince = (since ?? _lastSyncTime).toUtc().toIso8601String();
-    final uri = Uri.parse('$_cleanBaseUrl/api/v1/sync?since=${Uri.encodeComponent(querySince)}');
+    final uri = Uri.parse(
+      '$_cleanBaseUrl/api/v1/sync?since=${Uri.encodeComponent(querySince)}',
+    );
 
     final stopwatch = Stopwatch()..start();
 
@@ -104,11 +112,15 @@ class CfD1SyncService {
     }
 
     try {
-      final response = await _client.get(uri).timeout(const Duration(seconds: 10));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 10));
       stopwatch.stop();
 
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
-      final serverTimeMs = double.tryParse(response.headers['x-processing-time-ms'] ?? '');
+      final serverTimeMs = double.tryParse(
+        response.headers['x-processing-time-ms'] ?? '',
+      );
 
       if (response.statusCode == 200) {
         final resJson = jsonDecode(response.body);
@@ -137,12 +149,16 @@ class CfD1SyncService {
         return {
           'success': true,
           'notes': notesRaw.map((e) => Note.fromJson(e)).toList(),
-          'clipboardItems': clipboardsRaw.map((e) => ClipboardItem.fromJson(e)).toList(),
+          'clipboardItems': clipboardsRaw
+              .map((e) => ClipboardItem.fromJson(e))
+              .toList(),
           'settings': settingsRaw,
           'metrics': metrics,
         };
       } else {
-        debugPrint('❌ [CF D1 Sync] 拉取失败 HTTP ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '❌ [CF D1 Sync] 拉取失败 HTTP ${response.statusCode}: ${response.body}',
+        );
         return {'success': false, 'status': response.statusCode};
       }
     } catch (e) {
@@ -172,7 +188,9 @@ class CfD1SyncService {
     final stopwatch = Stopwatch()..start();
 
     if (isDevMode) {
-      debugPrint('⬆️ [CF D1 Sync] 开始推送到 D1 (数据包大小: ${(payloadBytes / 1024).toStringAsFixed(2)} KB)...');
+      debugPrint(
+        '⬆️ [CF D1 Sync] 开始推送到 D1 (数据包大小: ${(payloadBytes / 1024).toStringAsFixed(2)} KB)...',
+      );
     }
 
     try {
@@ -187,7 +205,9 @@ class CfD1SyncService {
       stopwatch.stop();
 
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
-      final serverTimeMs = double.tryParse(response.headers['x-processing-time-ms'] ?? '');
+      final serverTimeMs = double.tryParse(
+        response.headers['x-processing-time-ms'] ?? '',
+      );
 
       if (response.statusCode == 200) {
         final resJson = jsonDecode(response.body);
@@ -208,7 +228,9 @@ class CfD1SyncService {
 
         return metrics;
       } else {
-        debugPrint('❌ [CF D1 Push Fail] HTTP ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '❌ [CF D1 Push Fail] HTTP ${response.statusCode}: ${response.body}',
+        );
         return null;
       }
     } catch (e) {
@@ -225,14 +247,16 @@ class CfD1SyncService {
     String? mimeType,
   }) async {
     final fileName = file.path.split(Platform.pathSeparator).last;
-    final uri = Uri.parse('$_cleanBaseUrl/api/v1/files/upload').replace(
-      queryParameters: {'fileKey': fileKey},
-    );
+    final uri = Uri.parse(
+      '$_cleanBaseUrl/api/v1/files/upload',
+    ).replace(queryParameters: {'fileKey': fileKey});
     final bytes = await file.readAsBytes();
     final stopwatch = Stopwatch()..start();
 
     if (isDevMode) {
-      debugPrint('🚀 [CF R2 Upload] 开始上传文件: $fileKey (${(bytes.length / 1024).toStringAsFixed(1)} KB)');
+      debugPrint(
+        '🚀 [CF R2 Upload] 开始上传文件: $fileKey (${(bytes.length / 1024).toStringAsFixed(1)} KB)',
+      );
     }
 
     try {
@@ -252,9 +276,15 @@ class CfD1SyncService {
       if (response.statusCode == 200) {
         final resJson = jsonDecode(response.body);
         if (isDevMode) {
-          debugPrint('🎉 [CF R2 Upload Success] 上传耗时: ${rttMs.toStringAsFixed(1)}ms | 返回: $resJson');
+          debugPrint(
+            '🎉 [CF R2 Upload Success] 上传耗时: ${rttMs.toStringAsFixed(1)}ms | 返回: $resJson',
+          );
         }
-        return {'success': true, 'fileUrl': '$_cleanBaseUrl${resJson['fileUrl']}', 'rttMs': rttMs};
+        return {
+          'success': true,
+          'fileUrl': '$_cleanBaseUrl${resJson['fileUrl']}',
+          'rttMs': rttMs,
+        };
       } else {
         return {
           'success': false,
@@ -274,7 +304,9 @@ class CfD1SyncService {
     required String fileKey,
     required File targetFile,
   }) async {
-    final uri = Uri.parse('$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}');
+    final uri = Uri.parse(
+      '$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}',
+    );
     final stopwatch = Stopwatch()..start();
 
     if (isDevMode) {
@@ -282,7 +314,9 @@ class CfD1SyncService {
     }
 
     try {
-      final response = await _client.get(uri).timeout(const Duration(seconds: 45));
+      final response = await _client
+          .get(uri)
+          .timeout(const Duration(seconds: 45));
       stopwatch.stop();
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
 
@@ -292,11 +326,15 @@ class CfD1SyncService {
         }
         await targetFile.writeAsBytes(response.bodyBytes);
         if (isDevMode) {
-          debugPrint('🎉 [CF R2 Download Success] 下载完成: $fileKey (${(response.bodyBytes.length / 1024).toStringAsFixed(1)} KB, 耗时 ${rttMs.toStringAsFixed(1)}ms)');
+          debugPrint(
+            '🎉 [CF R2 Download Success] 下载完成: $fileKey (${(response.bodyBytes.length / 1024).toStringAsFixed(1)} KB, 耗时 ${rttMs.toStringAsFixed(1)}ms)',
+          );
         }
         return true;
       } else {
-        debugPrint('⚠️ [CF R2 Download Fail] HTTP ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '⚠️ [CF R2 Download Fail] HTTP ${response.statusCode}: ${response.body}',
+        );
         return false;
       }
     } catch (e) {
@@ -308,7 +346,9 @@ class CfD1SyncService {
 
   /// 4.2 从 Cloudflare Worker/R2 彻底删除文件及元数据
   Future<bool> deleteFileFromR2(String fileKey) async {
-    final uri = Uri.parse('$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}');
+    final uri = Uri.parse(
+      '$_cleanBaseUrl/api/v1/files/${Uri.encodeComponent(fileKey)}',
+    );
     final stopwatch = Stopwatch()..start();
 
     if (isDevMode) {
@@ -316,7 +356,9 @@ class CfD1SyncService {
     }
 
     try {
-      final response = await _client.delete(uri).timeout(const Duration(seconds: 15));
+      final response = await _client
+          .delete(uri)
+          .timeout(const Duration(seconds: 15));
       stopwatch.stop();
       if (response.statusCode == 200) {
         final resJson = jsonDecode(response.body);
@@ -338,9 +380,9 @@ class CfD1SyncService {
     for (final ep in endpoints) {
       try {
         final uri = Uri.parse(ep);
-        final response = await http.get(uri, headers: {
-          'Content-Type': 'application/json',
-        }).timeout(const Duration(seconds: 8));
+        final response = await http
+            .get(uri, headers: {'Content-Type': 'application/json'})
+            .timeout(const Duration(seconds: 8));
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -348,7 +390,9 @@ class CfD1SyncService {
             final map = <String, Map<String, dynamic>>{};
             for (final item in data['files']) {
               if (item is Map && item['file_key'] != null) {
-                map[item['file_key'].toString()] = Map<String, dynamic>.from(item);
+                map[item['file_key'].toString()] = Map<String, dynamic>.from(
+                  item,
+                );
               }
             }
             return map;
@@ -372,23 +416,28 @@ class CfD1SyncService {
     final cleanDbId = d1DatabaseId.trim();
 
     if (cleanAccountId.isEmpty || cleanToken.isEmpty || cleanDbId.isEmpty) {
-      return {'success': false, 'error': '请先完整填写 Account ID、API Token 和 D1 Database ID'};
+      return {
+        'success': false,
+        'error': '请先完整填写 Account ID、API Token 和 D1 Database ID',
+      };
     }
 
     final stopwatch = Stopwatch()..start();
-    final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
+    final uri = Uri.parse(
+      'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query',
+    );
 
     try {
-      final response = await http.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'sql': 'SELECT 1 as ping;',
-        }),
-      ).timeout(const Duration(seconds: 8));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'sql': 'SELECT 1 as ping;'}),
+          )
+          .timeout(const Duration(seconds: 8));
 
       stopwatch.stop();
       final rttMs = stopwatch.elapsedMicroseconds / 1000.0;
@@ -399,14 +448,20 @@ class CfD1SyncService {
           return {
             'success': true,
             'rttMs': rttMs,
-            'message': 'Cloudflare REST API 连接成功！RTT: ${rttMs.toStringAsFixed(1)}ms',
+            'message':
+                'Cloudflare REST API 连接成功！RTT: ${rttMs.toStringAsFixed(1)}ms',
           };
         } else {
-          final errors = (resJson['errors'] as List?)?.map((e) => e['message']).join(', ');
+          final errors = (resJson['errors'] as List?)
+              ?.map((e) => e['message'])
+              .join(', ');
           return {'success': false, 'error': errors ?? '查询错误'};
         }
       } else {
-        return {'success': false, 'error': 'HTTP ${response.statusCode}: ${response.body}'};
+        return {
+          'success': false,
+          'error': 'HTTP ${response.statusCode}: ${response.body}',
+        };
       }
     } catch (e) {
       stopwatch.stop();
@@ -429,15 +484,22 @@ class CfD1SyncService {
     final cleanDbId = d1DatabaseId.trim();
 
     if (cleanAccountId.isEmpty || cleanToken.isEmpty || cleanDbId.isEmpty) {
-      return {'success': false, 'error': '请先完整填写 Account ID、API Token 和 D1 Database ID'};
+      return {
+        'success': false,
+        'error': '请先完整填写 Account ID、API Token 和 D1 Database ID',
+      };
     }
 
     final stopwatch = Stopwatch()..start();
-    final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
+    final uri = Uri.parse(
+      'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query',
+    );
 
     try {
       // 步骤 1：初始化建表结构（如果不存在）
-      onLog?.call('正在检查并初始化 D1 数据库表结构 (notes, clipboard_items, app_settings)...');
+      onLog?.call(
+        '正在检查并初始化 D1 数据库表结构 (notes, clipboard_items, app_settings)...',
+      );
 
       final initTablesStatement = {
         'sql': '''
@@ -482,20 +544,27 @@ CREATE INDEX IF NOT EXISTS idx_files_updated_at ON file_metadata(updated_at);
 ''',
       };
 
-      final initRes = await http.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(initTablesStatement),
-      ).timeout(const Duration(seconds: 10));
+      final initRes = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(initTablesStatement),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (initRes.statusCode != 200) {
         final errJson = jsonDecode(initRes.body);
-        final errList = (errJson['errors'] as List?)?.map((e) => e['message']).join(', ');
+        final errList = (errJson['errors'] as List?)
+            ?.map((e) => e['message'])
+            .join(', ');
         onLog?.call('❌ 建表失败: ${errList ?? initRes.body}');
-        return {'success': false, 'error': '初始化数据库结构失败: ${errList ?? initRes.body}'};
+        return {
+          'success': false,
+          'error': '初始化数据库结构失败: ${errList ?? initRes.body}',
+        };
       }
 
       onLog?.call('✅ D1 表结构建表/校验完成');
@@ -610,18 +679,22 @@ WHERE excluded.updated_at >= app_settings.updated_at;
         );
 
         final futures = chunk.map((stmtObj) async {
-          final response = await http.post(
-            uri,
-            headers: {
-              'Authorization': 'Bearer $cleanToken',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode(stmtObj),
-          ).timeout(const Duration(seconds: 12));
+          final response = await http
+              .post(
+                uri,
+                headers: {
+                  'Authorization': 'Bearer $cleanToken',
+                  'Content-Type': 'application/json',
+                },
+                body: jsonEncode(stmtObj),
+              )
+              .timeout(const Duration(seconds: 12));
 
           if (response.statusCode != 200) {
             final errJson = jsonDecode(response.body);
-            final errList = (errJson['errors'] as List?)?.map((e) => e['message']).join(', ');
+            final errList = (errJson['errors'] as List?)
+                ?.map((e) => e['message'])
+                .join(', ');
             throw Exception(errList ?? response.body);
           }
         });
@@ -645,14 +718,16 @@ WHERE excluded.updated_at >= app_settings.updated_at;
         'clipboardCount': clipboardItems.length,
         'settingsCount': settings?.length ?? 0,
         'rttMs': totalMs,
-        'message': '云端差异化同步完成！(便签:${notes.length}条, 剪贴板:${clipboardItems.length}条, 耗时:${totalMs.toStringAsFixed(1)}ms)',
+        'message':
+            '云端差异化同步完成！(便签:${notes.length}条, 剪贴板:${clipboardItems.length}条, 耗时:${totalMs.toStringAsFixed(1)}ms)',
       };
     } catch (e) {
       stopwatch.stop();
       final errStr = e.toString();
       String errorMsg = errStr;
       if (errStr.contains('You do not have permission')) {
-        errorMsg = 'D1 权限不足：您的 API Token 缺乏写入/编辑权限。请前往 Cloudflare 网页控制台 ➔ API 令牌，将该 Token 权限升级为「D1: Edit (编辑权限)」。';
+        errorMsg =
+            'D1 权限不足：您的 API Token 缺乏写入/编辑权限。请前往 Cloudflare 网页控制台 ➔ API 令牌，将该 Token 权限升级为「D1: Edit (编辑权限)」。';
         onLog?.call('❌ $errorMsg');
       } else {
         onLog?.call('❌ 推送发生异常: $e');
@@ -684,19 +759,24 @@ WHERE excluded.updated_at >= app_settings.updated_at;
 
     try {
       final bytes = await file.readAsBytes();
-      final response = await http.put(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': mimeType ?? 'application/octet-stream',
-        },
-        body: bytes,
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .put(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': mimeType ?? 'application/octet-stream',
+            },
+            body: bytes,
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return {'success': true, 'fileKey': fileKey};
       } else {
-        return {'success': false, 'error': 'HTTP ${response.statusCode}: ${response.body}'};
+        return {
+          'success': false,
+          'error': 'HTTP ${response.statusCode}: ${response.body}',
+        };
       }
     } catch (e) {
       return {'success': false, 'error': e.toString()};
@@ -704,7 +784,8 @@ WHERE excluded.updated_at >= app_settings.updated_at;
   }
 
   /// 通过 D1 REST API 获取云端文件元数据记录 (用于差异性对比)
-  static Future<Map<String, Map<String, dynamic>>> fetchRemoteFilesMetadataRestApi({
+  static Future<Map<String, Map<String, dynamic>>>
+  fetchRemoteFilesMetadataRestApi({
     required String accountId,
     required String apiToken,
     required String d1DatabaseId,
@@ -713,20 +794,25 @@ WHERE excluded.updated_at >= app_settings.updated_at;
       final cleanAccountId = accountId.trim();
       final cleanToken = apiToken.trim();
       final cleanDbId = d1DatabaseId.trim();
-      final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
+      final uri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query',
+      );
 
       final body = {
-        'sql': 'SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata;'
+        'sql':
+            'SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata;',
       };
 
-      final response = await http.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 8));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body);
@@ -735,7 +821,9 @@ WHERE excluded.updated_at >= app_settings.updated_at;
           final map = <String, Map<String, dynamic>>{};
           for (final item in results) {
             if (item is Map && item['file_key'] != null) {
-              map[item['file_key'].toString()] = Map<String, dynamic>.from(item);
+              map[item['file_key'].toString()] = Map<String, dynamic>.from(
+                item,
+              );
             }
           }
           return map;
@@ -759,11 +847,18 @@ WHERE excluded.updated_at >= app_settings.updated_at;
     final cleanDbId = d1DatabaseId.trim();
 
     if (cleanAccountId.isEmpty || cleanToken.isEmpty || cleanDbId.isEmpty) {
-      return {'success': false, 'error': '请先完整填写 Account ID、API Token 和 D1 Database ID'};
+      return {
+        'success': false,
+        'error': '请先完整填写 Account ID、API Token 和 D1 Database ID',
+      };
     }
 
-    final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
-    final sinceIso = (since ?? DateTime.fromMillisecondsSinceEpoch(0)).toUtc().toIso8601String();
+    final uri = Uri.parse(
+      'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query',
+    );
+    final sinceIso = (since ?? DateTime.fromMillisecondsSinceEpoch(0))
+        .toUtc()
+        .toIso8601String();
 
     try {
       final body = {
@@ -774,24 +869,32 @@ SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT
         'params': [sinceIso, sinceIso],
       };
 
-      final response = await http.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 10));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final resJson = jsonDecode(response.body);
         final resultsList = resJson['result'] as List?;
         if (resultsList != null && resultsList.isNotEmpty) {
           final notesRaw = (resultsList[0]['results'] as List?) ?? [];
-          final clipboardsRaw = resultsList.length > 1 ? ((resultsList[1]['results'] as List?) ?? []) : [];
+          final clipboardsRaw = resultsList.length > 1
+              ? ((resultsList[1]['results'] as List?) ?? [])
+              : [];
 
-          final notes = notesRaw.map((e) => Note.fromJson(e as Map<String, dynamic>)).toList();
-          final clipboardItems = clipboardsRaw.map((e) => ClipboardItem.fromJson(e as Map<String, dynamic>)).toList();
+          final notes = notesRaw
+              .map((e) => Note.fromJson(e as Map<String, dynamic>))
+              .toList();
+          final clipboardItems = clipboardsRaw
+              .map((e) => ClipboardItem.fromJson(e as Map<String, dynamic>))
+              .toList();
 
           return {
             'success': true,
@@ -800,7 +903,10 @@ SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT
           };
         }
       }
-      return {'success': false, 'error': 'HTTP ${response.statusCode}: ${response.body}'};
+      return {
+        'success': false,
+        'error': 'HTTP ${response.statusCode}: ${response.body}',
+      };
     } catch (e) {
       return {'success': false, 'error': e.toString()};
     }
@@ -820,7 +926,9 @@ SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT
       final cleanAccountId = accountId.trim();
       final cleanToken = apiToken.trim();
       final cleanDbId = d1DatabaseId.trim();
-      final uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query');
+      final uri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanDbId/query',
+      );
 
       final nowIso = DateTime.now().toIso8601String();
       final sql = '''
@@ -835,17 +943,27 @@ ON CONFLICT(file_key) DO UPDATE SET
 
       final body = {
         'sql': sql,
-        'params': [fileKey, fileName, fileSize, mimeType, fileKey, nowIso, nowIso],
+        'params': [
+          fileKey,
+          fileName,
+          fileSize,
+          mimeType,
+          fileKey,
+          nowIso,
+          nowIso,
+        ],
       };
 
-      final response = await http.post(
-        uri,
-        headers: {
-          'Authorization': 'Bearer $cleanToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      ).timeout(const Duration(seconds: 5));
+      final response = await http
+          .post(
+            uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(const Duration(seconds: 5));
 
       return response.statusCode == 200;
     } catch (e) {
@@ -866,11 +984,18 @@ ON CONFLICT(file_key) DO UPDATE SET
     final cleanAccountId = accountId.trim();
     final cleanToken = apiToken.trim();
     final cleanD1Name = d1Name.trim().isEmpty ? 'pod-quick-d1' : d1Name.trim();
-    final cleanBucket = r2BucketName.trim().isEmpty ? 'pod-quick-files-apac' : r2BucketName.trim();
-    final cleanWorker = workerName.trim().isEmpty ? 'pod-quick-backend' : workerName.trim();
+    final cleanBucket = r2BucketName.trim().isEmpty
+        ? 'pod-quick-files-apac'
+        : r2BucketName.trim();
+    final cleanWorker = workerName.trim().isEmpty
+        ? 'pod-quick-backend'
+        : workerName.trim();
 
     if (cleanAccountId.isEmpty || cleanToken.isEmpty) {
-      return {'success': false, 'error': '进行自动化部署前，请先提供 Account ID 和 API Token'};
+      return {
+        'success': false,
+        'error': '进行自动化部署前，请先提供 Account ID 和 API Token',
+      };
     }
 
     onLog?.call('🚀 开始自动化部署 Worker ($cleanWorker) 到 Cloudflare...');
@@ -881,11 +1006,18 @@ ON CONFLICT(file_key) DO UPDATE SET
       String? d1Uuid;
       String? matchedDbName;
 
-      final listD1Uri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database');
-      final listD1Res = await http.get(
-        listD1Uri,
-        headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 10));
+      final listD1Uri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database',
+      );
+      final listD1Res = await http
+          .get(
+            listD1Uri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 10));
 
       if (listD1Res.statusCode == 200) {
         final d1ListJson = jsonDecode(listD1Res.body);
@@ -903,13 +1035,22 @@ ON CONFLICT(file_key) DO UPDATE SET
         }
       }
 
-      if (d1Uuid == null && cleanD1Name.contains('-') && cleanD1Name.length >= 32) {
+      if (d1Uuid == null &&
+          cleanD1Name.contains('-') &&
+          cleanD1Name.length >= 32) {
         try {
-          final directUri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanD1Name');
-          final directRes = await http.get(
-            directUri,
-            headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 8));
+          final directUri = Uri.parse(
+            'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/d1/database/$cleanD1Name',
+          );
+          final directRes = await http
+              .get(
+                directUri,
+                headers: {
+                  'Authorization': 'Bearer $cleanToken',
+                  'Content-Type': 'application/json',
+                },
+              )
+              .timeout(const Duration(seconds: 8));
           if (directRes.statusCode == 200) {
             final json = jsonDecode(directRes.body);
             d1Uuid = json['result']?['uuid'] ?? cleanD1Name;
@@ -921,11 +1062,16 @@ ON CONFLICT(file_key) DO UPDATE SET
 
       if (d1Uuid == null) {
         onLog?.call('➕ 未发现同名 D1 数据库，正在自动创建 $cleanD1Name...');
-        final createD1Res = await http.post(
-          listD1Uri,
-          headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-          body: jsonEncode({'name': cleanD1Name}),
-        ).timeout(const Duration(seconds: 12));
+        final createD1Res = await http
+            .post(
+              listD1Uri,
+              headers: {
+                'Authorization': 'Bearer $cleanToken',
+                'Content-Type': 'application/json',
+              },
+              body: jsonEncode({'name': cleanD1Name}),
+            )
+            .timeout(const Duration(seconds: 12));
 
         if (createD1Res.statusCode == 200 || createD1Res.statusCode == 201) {
           final createJson = jsonDecode(createD1Res.body);
@@ -933,45 +1079,133 @@ ON CONFLICT(file_key) DO UPDATE SET
           matchedDbName = cleanD1Name;
           onLog?.call('🎉 D1 数据库创建成功！(ID: $d1Uuid)');
         } else {
-          return {'success': false, 'error': '创建 D1 数据库失败: ${createD1Res.body}'};
+          String errorMsg = createD1Res.body;
+          try {
+            final errObj = jsonDecode(createD1Res.body);
+            if (errObj['errors'] is List &&
+                (errObj['errors'] as List).isNotEmpty) {
+              final firstErr = errObj['errors'][0];
+              final code = firstErr['code'];
+              final message = firstErr['message'] ?? '';
+              if (code == 10000 ||
+                  message.toString().toLowerCase().contains('authentication')) {
+                errorMsg =
+                    'API 令牌权限不足！请检查令牌权限：必须勾选【D1】（或【Cloudflare D1】）的【编辑/Edit】权限！（D1 是单独项，不叫 Workers D1）';
+              } else if (code == 7003) {
+                errorMsg =
+                    'Account ID 错误或令牌未分配给该账户，请检查 Cloudflare 首页右侧的 Account ID！';
+              } else {
+                errorMsg = '[$code] $message';
+              }
+            }
+          } catch (_) {}
+          onLog?.call('❌ 创建 D1 数据库失败: $errorMsg');
+          return {'success': false, 'error': '创建 D1 数据库失败: $errorMsg'};
         }
       }
 
       // 1.5 确保 Cloudflare R2 存储桶存在并就绪
       bool hasR2Bucket = false;
+      String? r2ErrorMessage;
       if (cleanBucket.isNotEmpty) {
         onLog?.call('📁 检查 Cloudflare R2 存储桶 ($cleanBucket)...');
         try {
-          final createBucketUri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/r2/buckets');
-          final bucketRes = await http.post(
-            createBucketUri,
-            headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-            body: jsonEncode({'name': cleanBucket, 'locationHint': 'apac'}),
-          ).timeout(const Duration(seconds: 10));
+          // 先尝试 GET 查询该存储桶是否已存在
+          final checkBucketUri = Uri.parse(
+            'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/r2/buckets/$cleanBucket',
+          );
+          final checkRes = await http
+              .get(
+                checkBucketUri,
+                headers: {
+                  'Authorization': 'Bearer $cleanToken',
+                  'Content-Type': 'application/json',
+                },
+              )
+              .timeout(const Duration(seconds: 8));
 
-          if (bucketRes.statusCode == 200 || bucketRes.statusCode == 201) {
-            hasR2Bucket = true;
-            onLog?.call('🎉 R2 存储桶已就绪: $cleanBucket');
-          } else if (bucketRes.statusCode == 409 || bucketRes.body.contains('already exists') || bucketRes.body.contains('10014')) {
+          if (checkRes.statusCode == 200) {
             hasR2Bucket = true;
             onLog?.call('✅ 发现已有同名 R2 存储桶: $cleanBucket');
           } else {
-            hasR2Bucket = true;
-            onLog?.call('ℹ️ R2 存储桶已关联: $cleanBucket');
+            // 存储桶不存在，尝试自动创建
+            final createBucketUri = Uri.parse(
+              'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/r2/buckets',
+            );
+            final bucketRes = await http
+                .post(
+                  createBucketUri,
+                  headers: {
+                    'Authorization': 'Bearer $cleanToken',
+                    'Content-Type': 'application/json',
+                  },
+                  body: jsonEncode({
+                    'name': cleanBucket,
+                    'locationHint': 'apac',
+                  }),
+                )
+                .timeout(const Duration(seconds: 10));
+
+            if (bucketRes.statusCode == 200 || bucketRes.statusCode == 201) {
+              hasR2Bucket = true;
+              onLog?.call('🎉 R2 存储桶自动创建成功: $cleanBucket');
+            } else if (bucketRes.statusCode == 409 ||
+                bucketRes.body.contains('already exists') ||
+                bucketRes.body.contains('10014')) {
+              hasR2Bucket = true;
+              onLog?.call('✅ 发现已有同名 R2 存储桶: $cleanBucket');
+            } else {
+              hasR2Bucket = false;
+              String msg = bucketRes.body;
+              try {
+                final errJson = jsonDecode(bucketRes.body);
+                if (errJson['errors'] is List &&
+                    (errJson['errors'] as List).isNotEmpty) {
+                  final err = errJson['errors'][0];
+                  final code = err['code'];
+                  final m = err['message'] ?? '';
+                  if (code == 10042 ||
+                      m.toString().toLowerCase().contains('not enabled') ||
+                      m.toString().toLowerCase().contains('subscription')) {
+                    msg =
+                        'Cloudflare 账户尚未开通激活 R2 对象存储（每月 10GB 免费）。请在 CF 控制台左侧点击「R2」开通！';
+                  } else if (code == 10000 ||
+                      m.toString().toLowerCase().contains('authentication')) {
+                    msg = 'API 令牌缺少【Workers R2 存储 -> 编辑】权限。';
+                  } else {
+                    msg = '[$code] $m';
+                  }
+                }
+              } catch (_) {}
+              r2ErrorMessage = msg;
+              onLog?.call('⚠️ R2 存储桶创建跳过: $msg');
+              onLog?.call(
+                '💡 提示：将先为您完成 Worker 与 D1 数据库上线（便签、剪贴板与设置同步不受任何影响）。如需文件同步，请在 Cloudflare 仪表盘激活 R2 后再次部署。',
+              );
+            }
           }
-        } catch (_) {
-          hasR2Bucket = true;
+        } catch (e) {
+          hasR2Bucket = false;
+          r2ErrorMessage = e.toString();
+          onLog?.call('⚠️ R2 检查异常，跳过 R2 绑定: $e');
         }
       }
 
       // 2. 获取账号的 workers.dev 子域名
       onLog?.call('[2/4] 获取 Cloudflare Workers 账号子域名...');
       String? subdomain;
-      final subUri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/subdomain');
-      final subRes = await http.get(
-        subUri,
-        headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-      ).timeout(const Duration(seconds: 8));
+      final subUri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/subdomain',
+      );
+      final subRes = await http
+          .get(
+            subUri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(const Duration(seconds: 8));
 
       if (subRes.statusCode == 200) {
         final subJson = jsonDecode(subRes.body);
@@ -983,7 +1217,9 @@ ON CONFLICT(file_key) DO UPDATE SET
 
       // 3. 发布 / 上传 Worker 脚本与 D1 绑定
       onLog?.call('[3/4] 正在编译并发布 Worker 边缘节点代码 ($cleanWorker) 到 Cloudflare...');
-      final uploadScriptUri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/scripts/$cleanWorker');
+      final uploadScriptUri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/scripts/$cleanWorker',
+      );
 
       const workerJsCode = '''
 export default {
@@ -1097,18 +1333,26 @@ export default {
 
       final request = http.MultipartRequest('PUT', uploadScriptUri)
         ..headers['Authorization'] = 'Bearer $cleanToken'
-        ..files.add(http.MultipartFile.fromString(
-          'metadata',
-          jsonEncode(metadata),
-          filename: 'metadata.json',
-        ))
-        ..files.add(http.MultipartFile.fromString(
-          'index.js',
-          workerJsCode,
-          filename: 'index.js',
-        ));
+        ..files.add(
+          http.MultipartFile.fromString(
+            'metadata',
+            jsonEncode(metadata),
+            filename: 'metadata.json',
+            contentType: MediaType('application', 'json'),
+          ),
+        )
+        ..files.add(
+          http.MultipartFile.fromString(
+            'index.js',
+            workerJsCode,
+            filename: 'index.js',
+            contentType: MediaType('application', 'javascript+module'),
+          ),
+        );
 
-      final streamedResponse = await request.send().timeout(const Duration(seconds: 20));
+      final streamedResponse = await request.send().timeout(
+        const Duration(seconds: 20),
+      );
       final uploadRes = await http.Response.fromStream(streamedResponse);
 
       if (uploadRes.statusCode != 200 && uploadRes.statusCode != 201) {
@@ -1119,16 +1363,24 @@ export default {
           final errorList = errJson['errors'] as List?;
           if (errorList != null && errorList.isNotEmpty) {
             final firstErr = errorList.first;
+            final rawMsg = (firstErr['message'] ?? '').toString();
             if (firstErr['code'] == 10000 || uploadRes.statusCode == 403) {
               isAuthError = true;
-              errorDetail = 'API 令牌权限不足 (HTTP 403)：当前 API Token 缺少【Workers 脚本: 编辑 (Workers Scripts: Edit)】权限！\n解决办法：请前往 Cloudflare 仪表盘 -> 用户个人资料 -> API 令牌，编辑此令牌并添加「Workers 脚本: 编辑」与「D1: 编辑」权限。';
+              errorDetail =
+                  'API 令牌权限不足 (HTTP 403)：当前 API Token 缺少【Workers 脚本: 编辑 (Workers Scripts: Edit)】权限！\n解决办法：请前往 Cloudflare 仪表盘 -> 用户个人资料 -> API 令牌，编辑此令牌并添加「Workers 脚本: 编辑」与「D1: 编辑」权限。';
+            } else if (rawMsg.contains('R2 bucket') &&
+                rawMsg.contains('not found')) {
+              errorDetail =
+                  '绑定的 R2 存储桶不存在！\n原因：您的 Cloudflare 账户尚未在控制台开通激活「R2 对象存储」服务（每月提供 10GB 永久免费空间）。\n解决办法：\n1. 请登录 dash.cloudflare.com，在左侧菜单点击「R2」开通激活；\n2. 确保 API 令牌包含【Workers R2 存储 -> 编辑】权限。';
             } else {
-              errorDetail = firstErr['message'] ?? uploadRes.body;
+              errorDetail = rawMsg.isNotEmpty ? rawMsg : uploadRes.body;
             }
           }
         } catch (_) {}
 
-        onLog?.call('❌ Worker 部署失败 (HTTP ${uploadRes.statusCode}): $errorDetail');
+        onLog?.call(
+          '❌ Worker 部署失败 (HTTP ${uploadRes.statusCode}): $errorDetail',
+        );
         return {
           'success': false,
           'error': errorDetail,
@@ -1141,24 +1393,38 @@ export default {
 
       // 4. 激活 workers.dev 域名子路由
       onLog?.call('[4/4] 启用 Workers.dev 域名与路由生效 ($cleanWorker)...');
-      final enableSubUri = Uri.parse('https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/scripts/$cleanWorker/subdomain');
-      await http.post(
-        enableSubUri,
-        headers: {'Authorization': 'Bearer $cleanToken', 'Content-Type': 'application/json'},
-        body: jsonEncode({'enabled': true}),
-      ).timeout(const Duration(seconds: 8));
+      final enableSubUri = Uri.parse(
+        'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/scripts/$cleanWorker/subdomain',
+      );
+      await http
+          .post(
+            enableSubUri,
+            headers: {
+              'Authorization': 'Bearer $cleanToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'enabled': true}),
+          )
+          .timeout(const Duration(seconds: 8));
 
       final deployedUrl = 'https://$cleanWorker.$subdomain.workers.dev';
-      onLog?.call('🎉 恭喜！Worker 代理节点成功部署就绪！\n部署节点域名: $deployedUrl\n已绑定 D1: ${matchedDbName ?? cleanD1Name} | R2: $cleanBucket');
+      final bindSummary = hasR2Bucket
+          ? '已绑定 D1: ${matchedDbName ?? cleanD1Name} | R2: $cleanBucket'
+          : '已绑定 D1: ${matchedDbName ?? cleanD1Name} (未绑定 R2 文件桶)';
+      onLog?.call(
+        '🎉 恭喜！Worker 代理节点成功部署就绪！\n部署节点域名: $deployedUrl\n$bindSummary',
+      );
 
       return {
         'success': true,
         'workerUrl': deployedUrl,
         'd1DatabaseId': d1Uuid,
         'd1Name': matchedDbName ?? cleanD1Name,
-        'r2BucketName': cleanBucket,
+        'r2BucketName': hasR2Bucket ? cleanBucket : null,
+        'hasR2Bucket': hasR2Bucket,
+        'r2ErrorMessage': r2ErrorMessage,
         'workerName': cleanWorker,
-        'message': 'Worker 节点部署成功！已绑定 D1: ${matchedDbName ?? cleanD1Name} 与 R2: $cleanBucket',
+        'message': 'Worker 节点部署成功！$bindSummary',
       };
     } catch (e) {
       onLog?.call('❌ 自动部署发生异常: $e');
@@ -1166,4 +1432,3 @@ export default {
     }
   }
 }
-

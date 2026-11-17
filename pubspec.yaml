@@ -76,6 +76,7 @@ dependencies:
 
   # Cloudflare R2 S3 HTTP Client & Cryptography
   http: ^1.2.1
+  http_parser: ^4.1.2
   crypto: ^3.0.3
 
 dev_dependencies:
