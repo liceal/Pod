@@ -82,8 +82,8 @@ if [ "$1" = "--clean" ]; then
 fi
 
 echo ""
-echo "Step 2: Building Flutter macOS application in Release mode (Universal, Target 10.15+ for macOS 11 compatibility)..."
-export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-10.15}"
+echo "Step 2: Building Flutter macOS application in Release mode (Universal, Target 12.0+ for macOS Monterey and newer)..."
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
 flutter build macos --release
 
 if [ ! -d "${APP_BUNDLE}" ]; then

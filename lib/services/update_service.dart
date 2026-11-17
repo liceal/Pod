@@ -48,7 +48,7 @@ class UpdateService {
   static const String githubOwner = 'liceal';
   static const String githubRepo = 'Pod';
 
-  static String _currentVersion = '1.1.2';
+  static String _currentVersion = '1.1.3';
   static String get currentVersion => _currentVersion;
   static const int currentBuildNumber = 1;
 
