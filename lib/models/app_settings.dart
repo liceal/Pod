@@ -4,6 +4,8 @@ enum TriggerMode { both, hotkeyOnly, hoverOnly, scrollOnly }
 
 enum PanelPane { clipboard, files, notes }
 
+const Object _sentinel = Object();
+
 class AppSettings {
   static const int defaultClipboardHistoryLimit = 50;
   static const int minClipboardHistoryLimit = 10;
@@ -66,6 +68,10 @@ class AppSettings {
   final bool cfD1AutoSync;
   final int cfD1SyncIntervalMinutes;
 
+  // Workspace & Vault ID
+  final String? activeWorkspaceId;
+  final String? vaultId;
+
   String get themeColorName => _themeColorName ?? 'blue';
   bool get closeOnBlur => _closeOnBlur ?? false;
   Locale? get locale {
@@ -114,6 +120,8 @@ class AppSettings {
     this.cfR2BucketName,
     this.cfD1AutoSync = true,
     this.cfD1SyncIntervalMinutes = 5,
+    this.activeWorkspaceId,
+    this.vaultId,
   }) : _themeColorName = themeColorName,
        _closeOnBlur = closeOnBlur,
        clipboardHistoryLimit = normalizeClipboardHistoryLimit(
@@ -215,12 +223,14 @@ class AppSettings {
     int? r2LastSyncTime,
     String? cfWorkerUrl,
     int? cfD1Mode,
-    String? cfAccountId,
-    String? cfApiToken,
-    String? cfD1DatabaseId,
-    String? cfR2BucketName,
+    Object? cfAccountId = _sentinel,
+    Object? cfApiToken = _sentinel,
+    Object? cfD1DatabaseId = _sentinel,
+    Object? cfR2BucketName = _sentinel,
     bool? cfD1AutoSync,
     int? cfD1SyncIntervalMinutes,
+    String? activeWorkspaceId,
+    Object? vaultId = _sentinel,
   }) {
     return AppSettings(
       triggerMode: triggerMode ?? this.triggerMode,
@@ -256,12 +266,25 @@ class AppSettings {
       r2LastSyncTime: r2LastSyncTime ?? this.r2LastSyncTime,
       cfWorkerUrl: cfWorkerUrl ?? this.cfWorkerUrl,
       cfD1Mode: cfD1Mode ?? this.cfD1Mode,
-      cfAccountId: cfAccountId ?? this.cfAccountId,
-      cfApiToken: cfApiToken ?? this.cfApiToken,
-      cfD1DatabaseId: cfD1DatabaseId ?? this.cfD1DatabaseId,
-      cfR2BucketName: cfR2BucketName ?? this.cfR2BucketName,
+      cfAccountId: identical(cfAccountId, _sentinel)
+          ? this.cfAccountId
+          : cfAccountId as String?,
+      cfApiToken: identical(cfApiToken, _sentinel)
+          ? this.cfApiToken
+          : cfApiToken as String?,
+      cfD1DatabaseId: identical(cfD1DatabaseId, _sentinel)
+          ? this.cfD1DatabaseId
+          : cfD1DatabaseId as String?,
+      cfR2BucketName: identical(cfR2BucketName, _sentinel)
+          ? this.cfR2BucketName
+          : cfR2BucketName as String?,
       cfD1AutoSync: cfD1AutoSync ?? this.cfD1AutoSync,
-      cfD1SyncIntervalMinutes: cfD1SyncIntervalMinutes ?? this.cfD1SyncIntervalMinutes,
+      cfD1SyncIntervalMinutes:
+          cfD1SyncIntervalMinutes ?? this.cfD1SyncIntervalMinutes,
+      activeWorkspaceId: activeWorkspaceId ?? this.activeWorkspaceId,
+      vaultId: identical(vaultId, _sentinel)
+          ? this.vaultId
+          : vaultId as String?,
     );
   }
 
@@ -304,6 +327,8 @@ class AppSettings {
       'cfR2BucketName': cfR2BucketName,
       'cfD1AutoSync': cfD1AutoSync,
       'cfD1SyncIntervalMinutes': cfD1SyncIntervalMinutes,
+      'activeWorkspaceId': activeWorkspaceId,
+      'vaultId': vaultId,
     };
   }
 
@@ -398,6 +423,8 @@ class AppSettings {
       cfR2BucketName: json['cfR2BucketName'] as String?,
       cfD1AutoSync: json['cfD1AutoSync'] as bool? ?? true,
       cfD1SyncIntervalMinutes: (json['cfD1SyncIntervalMinutes'] as num?)?.toInt() ?? 5,
+      activeWorkspaceId: json['activeWorkspaceId'] as String?,
+      vaultId: json['vaultId'] as String?,
     );
   }
 }

@@ -143,6 +143,8 @@ jobs:
         with:
           name: macos-release
           path: |
+            dist/PodQuick-arm.dmg
+            dist/PodQuick-x86.dmg
             dist/PodQuick-AppleSilicon.dmg
             dist/PodQuick-Intel.dmg
 
@@ -187,6 +189,8 @@ jobs:
           files: |
             release-assets/PodQuick_Setup.exe
             release-assets/PodQuick_Windows_Portable.zip
+            release-assets/PodQuick-arm.dmg
+            release-assets/PodQuick-x86.dmg
             release-assets/PodQuick-AppleSilicon.dmg
             release-assets/PodQuick-Intel.dmg
             release_info.json

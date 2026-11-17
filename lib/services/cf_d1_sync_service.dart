@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
+import 'embedded_web_html.dart';
 import '../models/note.dart';
 import '../models/clipboard_item.dart';
 
@@ -1221,7 +1222,68 @@ ON CONFLICT(file_key) DO UPDATE SET
         'https://api.cloudflare.com/client/v4/accounts/$cleanAccountId/workers/scripts/$cleanWorker',
       );
 
-      const workerJsCode = '''
+      final workerJsCode = '''
+const BASE64_WEB_HTML = '${EmbeddedWebHtml.base64Html}';
+let _cachedHtml = null;
+function getWebHtml() {
+  if (_cachedHtml) return _cachedHtml;
+  const bin = atob(BASE64_WEB_HTML);
+  const u8 = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  _cachedHtml = new TextDecoder('utf-8').decode(u8);
+  return _cachedHtml;
+}
+
+let _tablesEnsured = false;
+async function ensureD1Tables(db) {
+  if (_tablesEnsured || !db) return;
+  try {
+    await db.batch([
+      db.prepare(`CREATE TABLE IF NOT EXISTS notes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS clipboard_items (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        is_favorite INTEGER NOT NULL DEFAULT 0,
+        app_name TEXT,
+        app_icon_path TEXT,
+        image_path TEXT,
+        image_signature TEXT,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS file_metadata (
+        file_key TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        mime_type TEXT,
+        r2_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`),
+      db.prepare(`CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);`),
+      db.prepare(`CREATE INDEX IF NOT EXISTS idx_clipboard_updated_at ON clipboard_items(updated_at);`)
+    ]);
+    _tablesEnsured = true;
+  } catch (err) {
+    console.error('ensureD1Tables error:', err);
+  }
+}
+
 export default {
   async fetch(request, env, ctx) {
     const startTime = performance.now();
@@ -1236,12 +1298,31 @@ export default {
     };
     if (method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
     try {
+      if (env.DB) {
+        await ensureD1Tables(env.DB);
+      }
       let response;
       if (path === '/health') {
         const t0 = performance.now();
         const dbCheck = await env.DB.prepare('SELECT 1 as alive').first();
         const t1 = performance.now();
-        response = new Response(JSON.stringify({ status: 'ok', database: dbCheck ? 'connected' : 'error', dbPingLatencyMs: (t1 - t0).toFixed(2) }), { headers: { 'Content-Type': 'application/json' } });
+        response = new Response(JSON.stringify({ status: 'ok', version: '1.1.1', database: dbCheck ? 'connected' : 'error', dbPingLatencyMs: (t1 - t0).toFixed(2) }), { headers: { 'Content-Type': 'application/json' } });
+      } else if (path === '/api/v1/vault/info' || path === '/api/v1/vault') {
+        try {
+          await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);').run();
+          let row = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('vault_id').first();
+          let vaultId = row ? row.value : null;
+          if (!vaultId && method === 'POST') {
+            const body = await request.json().catch(() => ({}));
+            if (body && body.vaultId) {
+              vaultId = body.vaultId;
+              await env.DB.prepare('INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at').bind('vault_id', vaultId, new Date().toISOString()).run();
+            }
+          }
+          response = new Response(JSON.stringify({ success: true, vaultId }), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e) {
+          response = new Response(JSON.stringify({ success: false, error: e.message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+        }
       } else if (path === '/api/v1/sync' && method === 'GET') {
         const since = url.searchParams.get('since') || '1970-01-01T00:00:00.000Z';
         const notesStmt = env.DB.prepare('SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since);
@@ -1281,6 +1362,25 @@ export default {
           await env.DB.prepare(`INSERT INTO file_metadata (file_key, file_name, file_size, mime_type, r2_key, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(file_key) DO UPDATE SET file_name=excluded.file_name, file_size=excluded.file_size, mime_type=excluded.mime_type, updated_at=excluded.updated_at`).bind(fileKey, fileName, arrayBuffer.byteLength, contentType, fileKey, nowStr, nowStr).run();
         } catch (_) {}
         response = new Response(JSON.stringify({ success: true, fileKey, fileUrl: `/api/v1/files/\${encodeURIComponent(fileKey)}` }), { headers: { 'Content-Type': 'application/json' } });
+      } else if (path === '/api/v1/files/folder' && method === 'POST') {
+        if (!env.FILES_BUCKET) return new Response(JSON.stringify({ error: 'R2 Bucket not configured' }), { status: 500 });
+        try {
+          const body = await request.json();
+          let folderPath = String(body.folderPath || body.path || '').trim();
+          folderPath = folderPath.split('\\\\').join('/').replace(/^\/+/, '').replace(/\/+\$/, '');
+          if (!folderPath.startsWith('files/')) folderPath = `files/\${folderPath}`;
+          const markerKey = `\${folderPath}/.keep`;
+          const folderName = folderPath.split('/').pop() || folderPath;
+          const nowStr = new Date().toISOString();
+          await env.FILES_BUCKET.put(markerKey, new ArrayBuffer(0), { httpMetadata: { contentType: 'application/x-directory' } });
+          try {
+            await env.DB.prepare(`CREATE TABLE IF NOT EXISTS file_metadata (file_key TEXT PRIMARY KEY, file_name TEXT NOT NULL, file_size INTEGER NOT NULL, mime_type TEXT, r2_key TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`).run();
+            await env.DB.prepare(`INSERT INTO file_metadata (file_key, file_name, file_size, mime_type, r2_key, created_at, updated_at) VALUES (?, ?, 0, 'inode/directory', ?, ?, ?) ON CONFLICT(file_key) DO UPDATE SET updated_at=excluded.updated_at`).bind(markerKey, folderName, markerKey, nowStr, nowStr).run();
+          } catch (_) {}
+          response = new Response(JSON.stringify({ success: true, folder: { file_key: markerKey, file_name: folderName, file_size: 0, mime_type: 'inode/directory', is_directory: true, updated_at: nowStr } }), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e) {
+          response = new Response(JSON.stringify({ error: String(e) }), { status: 500 });
+        }
       } else if ((path === '/api/v1/files/metadata' || path === '/api/v1/file-metadata') && method === 'GET') {
         try {
           await env.DB.prepare(`CREATE TABLE IF NOT EXISTS file_metadata (file_key TEXT PRIMARY KEY, file_name TEXT NOT NULL, file_size INTEGER NOT NULL, mime_type TEXT, r2_key TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`).run();
@@ -1299,6 +1399,36 @@ export default {
         headers.set('etag', object.httpEtag);
         headers.set('Cache-Control', 'public, max-age=31536000');
         response = new Response(object.body, { headers });
+      } else if (path.startsWith('/api/v1/files/') && method === 'DELETE') {
+        if (!env.FILES_BUCKET) return new Response(JSON.stringify({ error: 'R2 Bucket not configured' }), { status: 500 });
+        const fileKey = decodeURIComponent(path.replace('/api/v1/files/', ''));
+        try {
+          await env.FILES_BUCKET.delete(fileKey);
+          if (fileKey.endsWith('/.keep')) await env.FILES_BUCKET.delete(fileKey.slice(0, -5)).catch(() => {});
+          else if (fileKey.endsWith('/')) await env.FILES_BUCKET.delete(`\${fileKey}.keep`).catch(() => {});
+        } catch (_) {}
+        try {
+          await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(fileKey).run();
+          if (fileKey.endsWith('/.keep')) await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(fileKey.slice(0, -5)).run().catch(() => {});
+        } catch (_) {}
+        response = new Response(JSON.stringify({ success: true, fileKey }), { headers: { 'Content-Type': 'application/json' } });
+      } else if (path === '/api/v1/pin/get' && method === 'GET') {
+        try {
+          await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);').run();
+          const row = await env.DB.prepare('SELECT value FROM app_settings WHERE key = ?').bind('web_pin_hash').first();
+          response = new Response(JSON.stringify({ success: true, hasPin: !!row }), { headers: { 'Content-Type': 'application/json' } });
+        } catch (e) {
+          response = new Response(JSON.stringify({ success: true, hasPin: false }), { headers: { 'Content-Type': 'application/json' } });
+        }
+      } else if (!path.startsWith('/api/')) {
+        return new Response(getWebHtml(), {
+          headers: {
+            'Content-Type': 'text/html; charset=utf-8',
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+            'Pragma': 'no-cache',
+            'Expires': '0',
+          },
+        });
       } else {
         response = new Response(JSON.stringify({ error: 'Endpoint Not Found', path }), { status: 404, headers: { 'Content-Type': 'application/json' } });
       }

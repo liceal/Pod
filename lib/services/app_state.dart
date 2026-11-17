@@ -19,6 +19,7 @@ import 'package:intl/intl.dart';
 import '../models/clipboard_item.dart';
 import '../models/note.dart';
 import '../models/app_settings.dart';
+import '../models/workspace_profile.dart';
 import 'r2_sync_service.dart';
 import 'cf_d1_sync_service.dart';
 import 'update_service.dart';
@@ -477,6 +478,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
     // Load Local Data
     _loadSettings();
+    _loadWorkspaces();
     _clearTrashDir();
     final lastSyncMs = _prefs.getInt('last_d1_sync_time');
     if (lastSyncMs != null) {
@@ -679,7 +681,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     onLog(text('📥 开始从 Cloudflare D1 拉取增量变更...', 'Pulling deltas from Cloudflare D1...'));
 
     Map<String, dynamic>? pullRes;
-    final sinceTime = _lastD1SyncTime ?? DateTime.fromMillisecondsSinceEpoch(0);
+    // 若本地便签为空或尚未同步，全量从云端拉取 (since = epoch 0)，避免漏掉云端已有数据
+    final sinceTime = notes.isEmpty
+        ? DateTime.fromMillisecondsSinceEpoch(0)
+        : (_lastD1SyncTime ?? DateTime.fromMillisecondsSinceEpoch(0));
 
     if (settings.cfD1Mode == 0) {
       final url = settings.cfWorkerUrl.trim();
@@ -912,10 +917,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             historyMap[rClip.id] = rClip;
           }
           newClipCount++;
-        } else if (rClip.updatedAt.isAfter(existing.updatedAt) ||
-                   rClip.isFavorite != (existingFav != null)) {
+        } else if (rClip.updatedAt.isAfter(existing.updatedAt)) {
+          // 仅当云端的时间严格晚于本地记录时，才采纳云端的收藏状态！
+          // 绝对不能让云端陈旧的收藏状态反向覆盖本地刚做出的取消收藏操作。
           if (rClip.isFavorite) {
             favMap[rClip.id] = rClip;
+            historyMap.remove(rClip.id);
           } else {
             favMap.remove(rClip.id);
             historyMap[rClip.id] = rClip;
@@ -1091,6 +1098,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       if (isSuccess) {
         _lastD1SyncTime = DateTime.now();
         await _prefs.setInt('last_d1_sync_time', _lastD1SyncTime!.millisecondsSinceEpoch);
+        setWorkspaceCloudOnline(currentWorkspace.id, true);
       }
       _d1SyncStatusMessage = _lastD1SyncMessage;
       return res;
@@ -1650,6 +1658,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       _lastD1SyncMessage = message;
       _lastD1SyncTime = DateTime.now();
       _d1SyncStatusMessage = message;
+      if (isSuccess) {
+        setWorkspaceCloudOnline(currentWorkspace.id, true);
+      }
 
       return {
         'success': isSuccess,
@@ -2351,6 +2362,386 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     notifyListeners();
   }
 
+  // --- Workspace & Vault Management ---
+  final List<WorkspaceProfile> _workspaces = [];
+  WorkspaceProfile? _currentWorkspace;
+
+  List<WorkspaceProfile> get workspaces => List.unmodifiable(_workspaces);
+
+  WorkspaceProfile get currentWorkspace {
+    if (_currentWorkspace != null) return _currentWorkspace!;
+    return _ensureDefaultWorkspace();
+  }
+
+  WorkspaceProfile _ensureDefaultWorkspace() {
+    final curDir = getDataDirectoryPathSync();
+    final profile = WorkspaceProfile(
+      id: 'default',
+      name: '默认工作区',
+      directoryPath: curDir,
+      cfWorkerUrl: settings.cfWorkerUrl,
+      cfAccountId: settings.cfAccountId,
+      cfApiToken: settings.cfApiToken,
+      cfD1DatabaseId: settings.cfD1DatabaseId,
+      cfR2BucketName: settings.cfR2BucketName,
+      cfD1AutoSync: settings.cfD1AutoSync,
+      cfD1SyncIntervalMinutes: settings.cfD1SyncIntervalMinutes,
+      vaultId: settings.vaultId ?? 'vlt_default_${DateTime.now().millisecondsSinceEpoch}',
+    );
+    _currentWorkspace = profile;
+    if (!_workspaces.any((w) => w.id == profile.id)) {
+      _workspaces.add(profile);
+    }
+    return profile;
+  }
+
+  void _loadWorkspaces() {
+    _workspaces.clear();
+    final workspacesJson = _prefs.getString('workspaces');
+    if (workspacesJson != null && workspacesJson.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(workspacesJson) as List;
+        for (final item in decoded) {
+          if (item is Map<String, dynamic>) {
+            _workspaces.add(WorkspaceProfile.fromJson(item));
+          }
+        }
+      } catch (e) {
+        debugPrint('Failed to parse workspaces from prefs: $e');
+      }
+    }
+
+    final curDir = getDataDirectoryPathSync();
+    final wsFile = File('$curDir/workspace.json');
+    WorkspaceProfile? localProfile;
+    if (wsFile.existsSync()) {
+      try {
+        final content = wsFile.readAsStringSync();
+        localProfile = WorkspaceProfile.fromJson(jsonDecode(content));
+      } catch (e) {
+        debugPrint('Failed to read workspace.json from $curDir: $e');
+      }
+    }
+
+    if (localProfile != null) {
+      final existingIdx = _workspaces.indexWhere((w) => w.id == localProfile!.id);
+      if (existingIdx >= 0) {
+        _workspaces[existingIdx] = localProfile;
+      } else {
+        _workspaces.add(localProfile);
+      }
+    }
+
+    if (_workspaces.isEmpty) {
+      _ensureDefaultWorkspace();
+      unawaited(_saveWorkspaceMetadataFile());
+      unawaited(_saveWorkspacesList());
+    }
+
+    final activeId = settings.activeWorkspaceId ?? localProfile?.id;
+    _currentWorkspace = _workspaces.firstWhere(
+      (w) => w.id == activeId,
+      orElse: () => _workspaces.first,
+    );
+
+    if (!wsFile.existsSync()) {
+      unawaited(_saveWorkspaceMetadataFile());
+    }
+  }
+
+  Future<void> _saveWorkspacesList() async {
+    final list = _workspaces.map((w) => w.toJson()).toList();
+    await _prefs.setString('workspaces', jsonEncode(list));
+  }
+
+  // --- Workspace Cloud Health & Connectivity Cache ---
+  final Map<String, bool> _workspaceCloudOnlineMap = {};
+  final Map<String, double> _workspacePingRttMap = {};
+  final Map<String, DateTime> _workspaceLastHealthCheckMap = {};
+
+  bool? getWorkspaceCloudOnline(String wsId) {
+    if (_workspaceCloudOnlineMap.containsKey(wsId)) {
+      return _workspaceCloudOnlineMap[wsId];
+    }
+    if (wsId == currentWorkspace.id && _lastD1SyncSuccess == true) {
+      _workspaceCloudOnlineMap[wsId] = true;
+      return true;
+    }
+    final everConnected = _prefs.getBool('ws_cloud_online_$wsId');
+    if (everConnected == true) {
+      _workspaceCloudOnlineMap[wsId] = true;
+      return true;
+    }
+    return null;
+  }
+
+  double? getWorkspacePingRtt(String wsId) {
+    if (_workspacePingRttMap.containsKey(wsId)) {
+      return _workspacePingRttMap[wsId];
+    }
+    final savedRtt = _prefs.getDouble('ws_cloud_rtt_$wsId');
+    if (savedRtt != null) {
+      _workspacePingRttMap[wsId] = savedRtt;
+      return savedRtt;
+    }
+    return null;
+  }
+
+  void setWorkspaceCloudOnline(String wsId, bool isOnline, {double? rttMs}) {
+    _workspaceCloudOnlineMap[wsId] = isOnline;
+    unawaited(_prefs.setBool('ws_cloud_online_$wsId', isOnline));
+    if (rttMs != null) {
+      _workspacePingRttMap[wsId] = rttMs;
+      unawaited(_prefs.setDouble('ws_cloud_rtt_$wsId', rttMs));
+    }
+    _workspaceLastHealthCheckMap[wsId] = DateTime.now();
+    notifyListeners();
+  }
+
+  /// 后台静默检测工作区云端连通性 (保留上次结果，不阻塞 UI，成功则维持/刷新绿色与延迟)
+  Future<void> silentCheckWorkspaceHealth(WorkspaceProfile ws) async {
+    final url = ws.cfWorkerUrl?.trim() ?? '';
+    if (url.isEmpty) return;
+
+    final lastCheck = _workspaceLastHealthCheckMap[ws.id];
+    if (lastCheck != null &&
+        DateTime.now().difference(lastCheck).inMinutes < 5 &&
+        _workspaceCloudOnlineMap[ws.id] == true) {
+      return;
+    }
+
+    try {
+      final service = CfD1SyncService(workerUrl: url, isDevMode: kDebugMode);
+      final res = await service.checkHealth();
+      if (res['success'] == true) {
+        final rtt = res['rttMs'] as double?;
+        setWorkspaceCloudOnline(ws.id, true, rttMs: rtt);
+      } else {
+        if (_workspaceCloudOnlineMap[ws.id] != true) {
+          setWorkspaceCloudOnline(ws.id, false);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _saveWorkspaceMetadataFile() async {
+    try {
+      final cur = currentWorkspace;
+      final dir = Directory(cur.directoryPath);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      final file = File('${cur.directoryPath}/workspace.json');
+      await file.writeAsString(jsonEncode(cur.toJson()));
+    } catch (e) {
+      debugPrint('Failed to save workspace.json: $e');
+    }
+  }
+
+  Future<bool> switchWorkspace(String workspaceId) async {
+    final target = _workspaces.firstWhere(
+      (w) => w.id == workspaceId,
+      orElse: () => _workspaces.first,
+    );
+    if (target.id == _currentWorkspace?.id &&
+        target.directoryPath.toLowerCase() == getDataDirectoryPathSync().toLowerCase()) {
+      return true;
+    }
+
+    // 1. 保存当前工作区
+    await _saveWorkspaceMetadataFile();
+    await _saveNotes();
+    await _saveClipboardHistory();
+
+    // 2. 切换当前激活的工作区档案并同步全局配置
+    _currentWorkspace = target;
+    _lastD1SyncTime = null; // 重置增量同步基准时间，确保新工作区能完整感知其云端数据
+    final updatedSettings = settings.copyWith(
+      activeWorkspaceId: target.id,
+      dataDirectory: target.directoryPath,
+      cfWorkerUrl: target.cfWorkerUrl ?? '',
+      cfAccountId: target.cfAccountId,
+      cfApiToken: target.cfApiToken,
+      cfD1DatabaseId: target.cfD1DatabaseId,
+      cfR2BucketName: target.cfR2BucketName,
+      cfD1AutoSync: target.cfD1AutoSync,
+      cfD1SyncIntervalMinutes: target.cfD1SyncIntervalMinutes,
+      vaultId: target.vaultId,
+    );
+    await updateSettings(updatedSettings);
+
+    // 3. 确保存储目录存在
+    final targetDir = Directory(target.directoryPath);
+    if (!targetDir.existsSync()) {
+      targetDir.createSync(recursive: true);
+    }
+    await _saveWorkspaceMetadataFile();
+
+    // 4. 重置并重新加载目标目录的数据
+    notes = [];
+    activeNote = null;
+    clipboardHistory = [];
+    await Future.wait([
+      _loadNotes(),
+      _loadClipboardHistory(),
+      _scanStoredFiles(),
+    ]);
+
+    // 5. 重新配置目录监听器
+    await Future.wait([
+      _startWatchingImagesDirectory(),
+      _startWatchingDataDirectory(),
+    ]);
+
+    // 6. 安全判定：如果是空目录且配置了云端，自动全量从云端拉取恢复数据！
+    if (notes.isEmpty && clipboardHistory.isEmpty && target.hasCloudConfig) {
+      debugPrint('Target workspace is empty, triggering auto-restore from cloud...');
+      addD1Log(text('检测到当前工作区为空，正在自动从云端全量拉取数据恢复...', 'Empty workspace detected. Restoring all data from cloud...'));
+      unawaited(syncLocalDataToD1(isManual: true));
+    }
+
+    notifyListeners();
+    return true;
+  }
+
+  Future<WorkspaceProfile> createWorkspace({
+    required String name,
+    String? customPath,
+    WorkspaceInitType initType = WorkspaceInitType.blank,
+    bool inheritCloudConfig = false,
+  }) async {
+    final cleanName = name.trim().isEmpty ? '新建工作区' : name.trim();
+    final id = 'ws_${DateTime.now().millisecondsSinceEpoch}_${const Uuid().v4().substring(0, 6)}';
+
+    String dirPath;
+    if (customPath != null && customPath.trim().isNotEmpty) {
+      dirPath = customPath.trim().replaceAll('\\', '/');
+    } else {
+      final baseAppSupport = await getApplicationSupportDirectory();
+      dirPath = '${baseAppSupport.path}/workspaces/$cleanName'.replaceAll('\\', '/');
+    }
+
+    final targetDir = Directory(dirPath);
+    if (!targetDir.existsSync()) {
+      targetDir.createSync(recursive: true);
+    }
+
+    // 依据初始化类型复制或迁移数据
+    final currentDir = Directory(getDataDirectoryPathSync());
+    if (initType == WorkspaceInitType.copy) {
+      for (final f in ['notes.json', 'clipboard_favorites.json']) {
+        final src = File('${currentDir.path}/$f');
+        if (src.existsSync()) src.copySync('${targetDir.path}/$f');
+      }
+      // Copy clipboard history files
+      if (currentDir.existsSync()) {
+        for (final entity in currentDir.listSync()) {
+          if (entity is File) {
+            final name = entity.path.replaceAll('\\', '/').split('/').last;
+            if (name == 'clipboard_history.json' ||
+                (name.startsWith('clipboard_history-') && name.endsWith('.json'))) {
+              entity.copySync('${targetDir.path}/$name');
+            }
+          }
+        }
+      }
+      final srcImages = Directory('${currentDir.path}/clipboard_images');
+      if (srcImages.existsSync()) {
+        final dstImages = Directory('${targetDir.path}/clipboard_images');
+        if (!dstImages.existsSync()) dstImages.createSync(recursive: true);
+        for (final entity in srcImages.listSync()) {
+          if (entity is File) {
+            final filename = entity.path.replaceAll('\\', '/').split('/').last;
+            entity.copySync('${dstImages.path}/$filename');
+          }
+        }
+      }
+      final srcFiles = Directory('${currentDir.path}/files');
+      if (srcFiles.existsSync()) {
+        final dstFiles = Directory('${targetDir.path}/files');
+        if (!dstFiles.existsSync()) dstFiles.createSync(recursive: true);
+        await _copyDirectory(srcFiles, dstFiles);
+      }
+    } else if (initType == WorkspaceInitType.migrate) {
+      await changeDataDirectory(dirPath);
+    }
+
+    final vaultId = 'vlt_${DateTime.now().millisecondsSinceEpoch}_${const Uuid().v4().substring(0, 8)}';
+    final profile = WorkspaceProfile(
+      id: id,
+      name: cleanName,
+      directoryPath: dirPath,
+      cfWorkerUrl: inheritCloudConfig ? settings.cfWorkerUrl : null,
+      cfAccountId: inheritCloudConfig ? settings.cfAccountId : null,
+      cfApiToken: inheritCloudConfig ? settings.cfApiToken : null,
+      cfD1DatabaseId: inheritCloudConfig ? settings.cfD1DatabaseId : null,
+      cfR2BucketName: inheritCloudConfig ? settings.cfR2BucketName : null,
+      cfD1AutoSync: inheritCloudConfig ? settings.cfD1AutoSync : false,
+      cfD1SyncIntervalMinutes: inheritCloudConfig ? settings.cfD1SyncIntervalMinutes : 5,
+      vaultId: vaultId,
+    );
+
+    _workspaces.add(profile);
+    await _saveWorkspacesList();
+    await switchWorkspace(id);
+    return profile;
+  }
+
+  Future<void> saveWorkspaceProfile(WorkspaceProfile updated) async {
+    final idx = _workspaces.indexWhere((w) => w.id == updated.id);
+    if (idx >= 0) {
+      _workspaces[idx] = updated;
+    } else {
+      _workspaces.add(updated);
+    }
+    if (_currentWorkspace?.id == updated.id) {
+      _currentWorkspace = updated;
+    }
+    try {
+      final dir = Directory(updated.directoryPath);
+      if (!dir.existsSync()) {
+        dir.createSync(recursive: true);
+      }
+      final file = File('${updated.directoryPath}/workspace.json');
+      await file.writeAsString(jsonEncode(updated.toJson()));
+    } catch (e) {
+      debugPrint('Failed to save workspace.json for ${updated.name}: $e');
+    }
+    await _saveWorkspacesList();
+    notifyListeners();
+  }
+
+  Future<void> updateCurrentWorkspaceProfile(WorkspaceProfile updated) async {
+    await saveWorkspaceProfile(updated);
+  }
+
+  Future<bool> renameWorkspace(String workspaceId, String newName) async {
+    final clean = newName.trim();
+    if (clean.isEmpty) return false;
+    final idx = _workspaces.indexWhere((w) => w.id == workspaceId);
+    if (idx < 0) return false;
+    final updated = _workspaces[idx].copyWith(name: clean);
+    await saveWorkspaceProfile(updated);
+    notifyListeners();
+    return true;
+  }
+
+  Future<bool> deleteWorkspace(String workspaceId) async {
+    if (_workspaces.length <= 1) return false;
+    final idx = _workspaces.indexWhere((w) => w.id == workspaceId);
+    if (idx < 0) return false;
+
+    if (_currentWorkspace?.id == workspaceId) {
+      final fallback = _workspaces.firstWhere((w) => w.id != workspaceId);
+      await switchWorkspace(fallback.id);
+    }
+
+    _workspaces.removeWhere((w) => w.id == workspaceId);
+    await _saveWorkspacesList();
+    notifyListeners();
+    return true;
+  }
+
   Set<String> _getActiveClipboardImageKeys() {
     final keys = <String>{};
     void addFromItem(ClipboardItem item) {
@@ -2969,9 +3360,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       return false;
     }
 
-    // 4. Update AppSettings
+    // 4. Update AppSettings and WorkspaceProfile
     final updatedSettings = settings.copyWith(dataDirectory: cleanNewPath);
     await updateSettings(updatedSettings);
+    if (_currentWorkspace != null) {
+      _currentWorkspace = _currentWorkspace!.copyWith(directoryPath: cleanNewPath);
+      await saveWorkspaceProfile(_currentWorkspace!);
+    }
 
     // 5. Cleanup old files (non-critical)
     try {
@@ -3626,7 +4021,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
              (x.imageSignature != null && item.imageSignature != null && x.imageSignature == item.imageSignature) ||
              (x.imageSignature == null && item.imageSignature == null && getImagePath(x) == getImagePath(item))));
       } else {
-        clipboardFavorites.removeWhere((x) => x.content == item.content);
+        clipboardFavorites.removeWhere((x) => x.id == item.id || x.content == item.content);
       }
       final histIdx = clipboardHistory.indexWhere((x) => x.id == item.id);
       if (histIdx != -1) {
@@ -3634,12 +4029,26 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           isFavorite: false,
           updatedAt: now,
         );
+      } else {
+        // 关键：若不在历史列表中（例如较早前收藏的项），必须将其以 isFavorite: false 插入到历史中
+        // 确保它带有最新的 updatedAt，并且在本地和推送同步时明确以非收藏状态向云端 D1 覆盖！
+        clipboardHistory.insert(
+          0,
+          item.copyWith(isFavorite: false, updatedAt: now),
+        );
       }
     } else {
       clipboardFavorites.insert(
         0,
         item.copyWith(isFavorite: true, timestamp: now, updatedAt: now),
       );
+      final histIdx = clipboardHistory.indexWhere((x) => x.id == item.id);
+      if (histIdx != -1) {
+        clipboardHistory[histIdx] = clipboardHistory[histIdx].copyWith(
+          isFavorite: true,
+          updatedAt: now,
+        );
+      }
     }
     Future.delayed(Duration.zero, () {
       _saveClipboardFavorites();
@@ -4764,22 +5173,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     // 智能防风险：通用本地容灾拾遗，自动扫描并合并因多设备离线同步或外部拷贝产生的同类衍生副本，校验后在后台静默清理
     await autoIngestAndCleanupRedundantFiles();
 
-    // Add default note if empty
-    if (notes.isEmpty) {
-      final defaultNote = Note(
-        id: _uuid.v4(),
-        title: text('我的便签', 'My Notes'),
-        content: text(
-          '欢迎使用快捷便签！在这里您可以随手记录任何内容，它会自动帮您保存...',
-          'Welcome to Quick Notes! Write anything here, it will be saved automatically...',
-        ),
-        createdAt: DateTime.now(),
-        updatedAt: DateTime.now(),
-      );
-      notes.add(defaultNote);
-      await _saveNotes();
-    } else {
-      // 启动时自动为已有便签创建一份本地快照，确保万无一失
+    // 启动时若已有便签，自动创建一份本地快照，确保万无一失
+    if (notes.isNotEmpty) {
       unawaited(_createNotesBackup('app_launch'));
     }
 
@@ -4973,7 +5368,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
   DateTime? _lastNotesBackupTime;
 
-  /// 为便签生成本地安全滚动快照备份 (保留最近 30 份)
+  /// 为便签生成本地安全滚动快照备份 (保留最近 5 份)
+  Future<void> createNotesBackup(String reason) => _createNotesBackup(reason);
+
   Future<void> _createNotesBackup(String reason) async {
     if (notes.isEmpty) return;
     try {
@@ -4999,7 +5396,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final encoded = jsonEncode(notes.map((item) => item.toJson()).toList());
       await file.writeAsString(encoded);
 
-      // 仅保留最近 30 份历史快照
+      // 仅保留最近 5 份历史快照，防止磁盘空间过度占用
+      const int maxSnapshots = 5;
       final allBackups = backupDir
           .listSync()
           .whereType<File>()
@@ -5007,8 +5405,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           .toList()
         ..sort((a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()));
 
-      if (allBackups.length > 30) {
-        for (int i = 30; i < allBackups.length; i++) {
+      if (allBackups.length > maxSnapshots) {
+        for (int i = maxSnapshots; i < allBackups.length; i++) {
           try {
             allBackups[i].deleteSync();
           } catch (_) {}
@@ -5019,10 +5417,28 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  /// 获取当前所有便签本地快照备份文件列表 (用于 UI 预览和一键恢复)
-  List<Map<String, dynamic>> getNotesBackups() {
+  static final Map<String, int> _noteBackupCountCache = {};
+
+  /// 高速获取快照文件总数 (仅读取目录项，不读取文件内容，耗时 < 1ms)
+  int getNotesBackupsCount({String? customDir}) {
     try {
-      final dataDir = getDataDirectoryPathSync();
+      final dataDir = customDir ?? getDataDirectoryPathSync();
+      final backupDir = Directory('$dataDir/backups/notes');
+      if (!backupDir.existsSync()) return 0;
+      return backupDir
+          .listSync()
+          .whereType<File>()
+          .where((f) => f.path.endsWith('.json') && f.lengthSync() > 0)
+          .length;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  /// 获取便签本地快照备份文件列表 (毫秒级零阻塞响应，通过文件名提取与内存缓存消除卡顿)
+  List<Map<String, dynamic>> getNotesBackups({String? customDir}) {
+    try {
+      final dataDir = customDir ?? getDataDirectoryPathSync();
       final backupDir = Directory('$dataDir/backups/notes');
       if (!backupDir.existsSync()) return [];
 
@@ -5037,13 +5453,31 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       for (final f in files) {
         final name = f.path.split(Platform.pathSeparator).last;
         final size = f.lengthSync();
+        if (size == 0) continue; // 过滤损坏的 0 字节文件
+
         final mTime = f.lastModifiedSync();
         int noteCount = 0;
-        try {
-          final content = f.readAsStringSync();
-          final arr = jsonDecode(content) as List;
-          noteCount = arr.length;
-        } catch (_) {}
+
+        // 1. 优先从文件名正则直接提取便签条数 (耗时仅 0.001ms，完全无需读取磁盘)
+        final match = RegExp(r'count(\d+)').firstMatch(name);
+        if (match != null) {
+          noteCount = int.tryParse(match.group(1)!) ?? 0;
+        } else {
+          // 2. 外部或非标命名的文件，使用带大小与时间戳的静态内存缓存，只在首次读取一次
+          final cacheKey = '${f.path}:$size:${mTime.millisecondsSinceEpoch}';
+          if (_noteBackupCountCache.containsKey(cacheKey)) {
+            noteCount = _noteBackupCountCache[cacheKey]!;
+          } else {
+            try {
+              final content = f.readAsStringSync();
+              final arr = jsonDecode(content) as List;
+              noteCount = arr.length;
+              _noteBackupCountCache[cacheKey] = noteCount;
+            } catch (_) {
+              _noteBackupCountCache[cacheKey] = 0;
+            }
+          }
+        }
 
         list.add({
           'path': f.path,
@@ -5059,8 +5493,25 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     }
   }
 
-  /// 从指定的历史快照文件恢复便签
-  Future<bool> restoreNotesFromBackup(String backupFilePath) async {
+  /// 预览指定快照备份文件中的便签列表
+  List<Note> previewNotesBackup(String backupFilePath) {
+    try {
+      final file = File(backupFilePath);
+      if (!file.existsSync()) return [];
+      final content = file.readAsStringSync();
+      final decoded = jsonDecode(content) as List;
+      return decoded
+          .map((item) => Note.fromJson(item as Map<String, dynamic>))
+          .toList()
+        ..sort((a, b) => b.updatedAt.compareTo(a.updatedAt));
+    } catch (e) {
+      debugPrint('Failed to preview notes backup: $e');
+      return [];
+    }
+  }
+
+  /// 从指定的历史快照文件恢复便签 (支持指定目标工作区目录)
+  Future<bool> restoreNotesFromBackup(String backupFilePath, {String? targetDir}) async {
     try {
       final file = File(backupFilePath);
       if (!file.existsSync()) return false;
@@ -5074,14 +5525,27 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
       if (restored.isEmpty) return false;
 
-      // 恢复前先给当前状态做一份保险快照
-      await _createNotesBackup('before_restore');
+      final currentDir = getDataDirectoryPathSync().replaceAll('\\', '/');
+      final isCurrent = targetDir == null ||
+          targetDir.replaceAll('\\', '/').toLowerCase() == currentDir.toLowerCase();
 
-      notes = restored;
-      activeNote = notes.isNotEmpty ? notes.first : null;
-      await _saveNotes();
-      notifyListeners();
-      _triggerD1LiveAutoSync();
+      if (isCurrent) {
+        // 恢复前先给当前状态做一份保险快照
+        await _createNotesBackup('before_restore');
+
+        notes = restored;
+        activeNote = notes.isNotEmpty ? notes.first : null;
+        await _saveNotes();
+        notifyListeners();
+        _triggerD1LiveAutoSync();
+      } else {
+        // 目标是非当前激活工作区，写入其 targetDir/notes.json
+        final targetNotesFile = File('$targetDir/notes.json');
+        if (!targetNotesFile.parent.existsSync()) {
+          targetNotesFile.parent.createSync(recursive: true);
+        }
+        await targetNotesFile.writeAsString(jsonEncode(restored.map((n) => n.toJson()).toList()));
+      }
       return true;
     } catch (e) {
       debugPrint('Failed to restore notes: $e');

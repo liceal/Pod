@@ -29,6 +29,7 @@ export interface FileMetadata {
   mime_type?: string;
   updated_at: string;
   r2_key?: string;
+  is_directory?: boolean;
 }
 
 export interface SyncData {

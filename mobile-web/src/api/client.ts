@@ -356,7 +356,12 @@ export class ApiClient {
       const existingClip = this.getCachedClipboard();
       const clipMap = new Map<string, ClipboardItem>();
       existingClip.forEach((c) => clipMap.set(c.id, c));
-      (json.data.clipboardItems || []).forEach((c) => clipMap.set(c.id, c));
+      (json.data.clipboardItems || []).forEach((c) => {
+        const existing = clipMap.get(c.id);
+        if (!existing || new Date(c.updated_at).getTime() >= new Date(existing.updated_at).getTime()) {
+          clipMap.set(c.id, c);
+        }
+      });
 
       const isFavItem = (c: ClipboardItem) =>
         Boolean(c.is_favorite === 1 || c.is_favorite === true || (c as any).isFavorite === true || (c as any).isPinned === true);
@@ -512,6 +517,34 @@ export class ApiClient {
       this.setCachedFiles(files);
       
       return { success: !!json.success };
+    } catch (e: any) {
+      return { success: false, error: e.message || String(e) };
+    }
+  }
+
+  // Create Folder (R2 + D1)
+  public static async createFolder(folderPath: string): Promise<{ success: boolean; folder?: FileMetadata; error?: string }> {
+    const base = this.getBaseUrl();
+    try {
+      const res = await fetch(`${base}/api/v1/files/folder`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-requested-with-web': 'true',
+          'x-pin-token': this.getPinToken(),
+        },
+        body: JSON.stringify({ folderPath }),
+        signal: AbortSignal.timeout(10000),
+      });
+
+      if (res.status === 401) {
+        this.handleAuthFailure();
+        throw new Error('PIN_EXPIRED');
+      }
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      return { success: !!json.success, folder: json.folder };
     } catch (e: any) {
       return { success: false, error: e.message || String(e) };
     }

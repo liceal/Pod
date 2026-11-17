@@ -536,6 +536,7 @@ class R2SyncService {
       onProgress?.call('正在扫描本地数据文件...', 0, 0);
       final localEntities = await dir.list(recursive: true).toList();
       final localFiles = localEntities.whereType<File>().toList();
+      final localDirs = localEntities.whereType<Directory>().toList();
 
       final normalizedBase = dataDirectoryPath.replaceAll('\\', '/');
       final localMap = <String, File>{};
@@ -547,6 +548,31 @@ class R2SyncService {
         final cleanRel = relPath.startsWith('/') ? relPath.substring(1) : relPath;
         if (cleanRel.isEmpty || cleanRel.startsWith('.') || cleanRel.contains('/.')) continue;
         localMap[cleanRel] = f;
+      }
+
+      // 支持本地空目录同步：检查 files/ 下的空子目录，自动同步 .keep 占位标记至 R2 云端
+      for (final d in localDirs) {
+        final normPath = d.path.replaceAll('\\', '/');
+        final relPath = normPath.startsWith(normalizedBase)
+            ? normPath.substring(normalizedBase.length)
+            : normPath;
+        final cleanRel = relPath.startsWith('/') ? relPath.substring(1) : relPath;
+        if (!cleanRel.startsWith('files/')) continue;
+        final dirName = cleanRel.split('/').last;
+        if (dirName.startsWith('.')) continue;
+
+        final hasChildFile = localFiles.any((f) {
+          final fNorm = f.path.replaceAll('\\', '/');
+          return fNorm.startsWith('$normPath/');
+        });
+        if (!hasChildFile) {
+          final keepKey = '$cleanRel/.keep';
+          final keepFile = File('${d.path}/.keep');
+          if (!await keepFile.exists()) {
+            await keepFile.writeAsBytes([]);
+          }
+          localMap[keepKey] = keepFile;
+        }
       }
 
       // OneDrive 式自动检测：若存在上次同步快照，自动比对找出在 OS/资源管理器中被删除的文件/文件夹 (仅限用户文件 files/)
@@ -662,6 +688,16 @@ class R2SyncService {
       for (final remoteObj in toDownload) {
         processed++;
         onProgress?.call('正在下载 ($processed/$totalTasks): ${remoteObj.key}', processed, totalTasks);
+        if (remoteObj.key.endsWith('/.keep') || remoteObj.key.endsWith('/')) {
+          // 云端目录占位标记：在本地建立对应目录即可
+          final cleanRel = remoteObj.key.replaceAll('/.keep', '').replaceAll(RegExp(r'/+$'), '');
+          final targetDir = Directory('$dataDirectoryPath/$cleanRel');
+          if (!await targetDir.exists()) {
+            await targetDir.create(recursive: true);
+          }
+          syncCount++;
+          continue;
+        }
         final localTarget = localMap[remoteObj.key] ?? File('$dataDirectoryPath/${remoteObj.key}');
         try {
           final ok = await downloadFile(remoteObj.key, localTarget);

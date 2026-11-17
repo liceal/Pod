@@ -8,6 +8,56 @@ export interface Env {
   ASSETS?: Fetcher;
 }
 
+let _tablesEnsured = false;
+async function ensureD1Tables(db: D1Database): Promise<void> {
+  if (_tablesEnsured || !db) return;
+  try {
+    await db.batch([
+      db.prepare(`CREATE TABLE IF NOT EXISTS notes (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS clipboard_items (
+        id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        is_favorite INTEGER NOT NULL DEFAULT 0,
+        app_name TEXT,
+        app_icon_path TEXT,
+        image_path TEXT,
+        image_signature TEXT,
+        updated_at TEXT NOT NULL,
+        version INTEGER NOT NULL DEFAULT 1,
+        is_deleted INTEGER NOT NULL DEFAULT 0
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`),
+      db.prepare(`CREATE TABLE IF NOT EXISTS file_metadata (
+        file_key TEXT PRIMARY KEY,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        mime_type TEXT,
+        r2_key TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );`),
+      db.prepare(`CREATE INDEX IF NOT EXISTS idx_notes_updated_at ON notes(updated_at);`),
+      db.prepare(`CREATE INDEX IF NOT EXISTS idx_clipboard_updated_at ON clipboard_items(updated_at);`)
+    ]);
+    _tablesEnsured = true;
+  } catch (err) {
+    console.error('ensureD1Tables error:', err);
+  }
+}
+
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const startTime = performance.now();
@@ -28,6 +78,10 @@ export default {
     }
 
     try {
+      if (env.DB) {
+        await ensureD1Tables(env.DB);
+      }
+
       let response: Response;
 
       // API Auth Guard for Web App requests
@@ -53,6 +107,8 @@ export default {
         response = await handleFilesMetadata(env, url, ctx);
       } else if (path === '/api/v1/files/upload' && method === 'POST') {
         response = await handleFileUpload(request, env);
+      } else if (path === '/api/v1/files/folder' && method === 'POST') {
+        response = await handleCreateFolder(request, env);
       } else if (path.startsWith('/api/v1/files/') && (method === 'GET' || method === 'HEAD')) {
         const queryKey = url.searchParams.get('fileKey') || url.searchParams.get('key');
         const fileKey = queryKey || decodeURIComponent(path.replace('/api/v1/files/', ''));
@@ -156,10 +212,8 @@ async function handlePullSync(request: Request, env: Env, url: URL): Promise<Res
 
   // 查笔记
   const notesStmt = env.DB.prepare('SELECT * FROM notes WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since);
-  // 查剪贴板: 增量拉取时同时确保所有有效收藏 (is_favorite = 1 且未删除) 均能返回，防止客户端丢失收藏
-  const clipboardsStmt = since === '1970-01-01T00:00:00.000Z'
-    ? env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since)
-    : env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? OR (is_favorite = 1 AND is_deleted = 0) ORDER BY updated_at ASC LIMIT 500').bind(since);
+  // 查剪贴板: 按更新时间增量拉取（全量拉取时 since 为 1970，自然返回所有收藏与记录）
+  const clipboardsStmt = env.DB.prepare('SELECT * FROM clipboard_items WHERE updated_at > ? ORDER BY updated_at ASC LIMIT 500').bind(since);
   // 查设置
   const settingsStmt = env.DB.prepare('SELECT * FROM app_settings WHERE updated_at > ?').bind(since);
 
@@ -492,6 +546,13 @@ async function handleFileDelete(fileKey: string, env: Env): Promise<Response> {
   // 1. 从 R2 真正删除文件
   try {
     await env.FILES_BUCKET.delete(fileKey);
+    // 如果是删除文件夹或其 .keep 占位，也一并清理对应标记
+    if (fileKey.endsWith('/.keep')) {
+      const dirPrefix = fileKey.slice(0, -5);
+      await env.FILES_BUCKET.delete(dirPrefix).catch(() => {});
+    } else if (fileKey.endsWith('/')) {
+      await env.FILES_BUCKET.delete(`${fileKey}.keep`).catch(() => {});
+    }
   } catch (err) {
     console.error(`Failed to delete fileKey "${fileKey}" from R2:`, err);
   }
@@ -511,6 +572,9 @@ async function handleFileDelete(fileKey: string, env: Env): Promise<Response> {
     ).run();
 
     await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(fileKey).run();
+    if (fileKey.endsWith('/.keep')) {
+      await env.DB.prepare('DELETE FROM file_metadata WHERE file_key = ?').bind(fileKey.slice(0, -5)).run().catch(() => {});
+    }
   } catch (dbErr) {
     console.error(`Failed to delete fileKey "${fileKey}" from D1:`, dbErr);
   }
@@ -525,6 +589,56 @@ async function handleFileDelete(fileKey: string, env: Env): Promise<Response> {
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
+}
+
+// 创建文件夹 (在 R2 中写入 .keep 占位对象，并在 D1 记录元数据)
+async function handleCreateFolder(request: Request, env: Env): Promise<Response> {
+  if (!env.FILES_BUCKET) {
+    return new Response(JSON.stringify({ error: 'R2 Bucket is not configured' }), { status: 500 });
+  }
+  try {
+    const body: any = await request.json();
+    let folderPath = String(body.folderPath || body.path || '').trim();
+    if (!folderPath) {
+      return new Response(JSON.stringify({ error: 'Folder path cannot be empty' }), { status: 400 });
+    }
+    folderPath = folderPath.replaceAll('\\', '/').replace(/^\/+/, '').replace(/\/+$/, '');
+    if (!folderPath.startsWith('files/')) {
+      folderPath = `files/${folderPath}`;
+    }
+    const markerKey = `${folderPath}/.keep`;
+    const folderName = folderPath.split('/').pop() || folderPath;
+    const nowStr = new Date().toISOString();
+
+    await env.FILES_BUCKET.put(markerKey, new ArrayBuffer(0), {
+      httpMetadata: { contentType: 'application/x-directory' },
+    });
+
+    try {
+      await env.DB.prepare(
+        `INSERT INTO file_metadata (file_key, file_name, file_size, mime_type, r2_key, created_at, updated_at)
+         VALUES (?, ?, 0, 'inode/directory', ?, ?, ?)
+         ON CONFLICT(file_key) DO UPDATE SET updated_at = excluded.updated_at`
+      ).bind(markerKey, folderName, markerKey, nowStr, nowStr).run();
+    } catch (_) {}
+
+    return new Response(
+      JSON.stringify({
+        success: true,
+        folder: {
+          file_key: markerKey,
+          file_name: folderName,
+          file_size: 0,
+          mime_type: 'inode/directory',
+          is_directory: true,
+          updated_at: nowStr,
+        },
+      }),
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+  } catch (err: any) {
+    return new Response(JSON.stringify({ error: err.message || String(err) }), { status: 500 });
+  }
 }
 
 function getMimeType(fileName: string): string {
@@ -574,7 +688,7 @@ async function handleFilesMetadata(env: Env, url?: URL, ctx?: ExecutionContext):
         .filter((obj) => {
           const key = obj.key;
           const lowerKey = key.toLowerCase();
-          // 绝对排除系统安装包、执行文件与更新信息
+          // 排除系统安装包、执行文件与更新信息
           if (
             lowerKey.endsWith('.exe') ||
             lowerKey.endsWith('.dmg') ||
@@ -586,14 +700,17 @@ async function handleFilesMetadata(env: Env, url?: URL, ctx?: ExecutionContext):
           ) {
             return false;
           }
+          // 允许目录占位标记（以 /.keep 或 / 结尾）
+          const isDirMarker = key.endsWith('/.keep') || key.endsWith('/');
           // 排除隐藏文件
-          if (key.includes('/.') || key.startsWith('.')) return false;
+          if (!isDirMarker && (key.includes('/.') || key.startsWith('.'))) return false;
           // 仅允许 files/ 目录与 clipboard_images/ 目录下的有效业务文件
           if (!key.startsWith('files/') && !key.startsWith('clipboard_images/')) {
             return false;
           }
           if (scope === 'files') {
-            if (!key.startsWith('files/') || key.startsWith('files/.')) return false;
+            if (!key.startsWith('files/')) return false;
+            if (!isDirMarker && key.startsWith('files/.')) return false;
           }
           // 若是剪贴板图片，必须仍在有效剪贴板记录中；否则视为已超出上限或已删除的孤立图片，直接过滤并在后台异步清理
           if (key.startsWith('clipboard_images/')) {
@@ -606,12 +723,23 @@ async function handleFilesMetadata(env: Env, url?: URL, ctx?: ExecutionContext):
           return true;
         })
         .map((obj) => {
-          const fileName = obj.key.split('/').pop() || obj.key;
+          const isDir = obj.key.endsWith('/') || obj.key.endsWith('/.keep');
+          let fileName = '';
+          if (obj.key.endsWith('/.keep')) {
+            const trimmed = obj.key.slice(0, -6);
+            fileName = trimmed.split('/').pop() || trimmed;
+          } else if (obj.key.endsWith('/')) {
+            const trimmed = obj.key.slice(0, -1);
+            fileName = trimmed.split('/').pop() || trimmed;
+          } else {
+            fileName = obj.key.split('/').pop() || obj.key;
+          }
           return {
             file_key: obj.key,
             file_name: fileName,
             file_size: obj.size,
-            mime_type: getMimeType(fileName),
+            mime_type: isDir ? 'inode/directory' : getMimeType(fileName),
+            is_directory: isDir,
             updated_at: obj.uploaded ? obj.uploaded.toISOString() : new Date().toISOString(),
           };
         });
@@ -648,7 +776,7 @@ async function handleFilesMetadata(env: Env, url?: URL, ctx?: ExecutionContext):
 
     let query = 'SELECT file_key, file_name, file_size, mime_type, updated_at FROM file_metadata';
     if (scope === 'files') {
-      query += " WHERE file_key LIKE 'files/%' AND file_key NOT LIKE 'files/.%' AND file_key NOT LIKE '%/.%'";
+      query += " WHERE file_key LIKE 'files/%' AND (file_key LIKE '%.keep' OR (file_key NOT LIKE 'files/.%' AND file_key NOT LIKE '%/.%'))";
     }
     const metaRes = await env.DB.prepare(query).all();
     return new Response(JSON.stringify({ success: true, files: metaRes.results || [] }), {

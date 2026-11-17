@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +7,8 @@ import 'package:file_picker/file_picker.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/app_settings.dart';
+import '../models/note.dart';
+import '../models/workspace_profile.dart';
 import '../services/app_state.dart';
 import '../services/update_service.dart';
 import '../services/cf_d1_sync_service.dart';
@@ -86,6 +89,19 @@ class _SettingsDialogState extends State<SettingsDialog> {
   double? _workerPingRtt;
   bool _showWorkerAdvanced = false;
   bool _isEditingWorker = false;
+  late String _selectedWorkspaceId;
+  String? _editingWorkspaceId;
+  String? _pendingDirectoryPath;
+  WorkspaceProfile? _detectedWorkspaceProfile;
+  late final TextEditingController _inlineRenameController = TextEditingController();
+  late final FocusNode _inlineRenameFocusNode = FocusNode();
+
+  WorkspaceProfile get _selectedWorkspace {
+    return widget.state.workspaces.firstWhere(
+      (w) => w.id == _selectedWorkspaceId,
+      orElse: () => widget.state.currentWorkspace,
+    );
+  }
 
   @override
   void initState() {
@@ -95,7 +111,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _generalSubTab = _savedGeneralSubTab.clamp(0, 3);
     _panelSubTab = _savedPanelSubTab.clamp(0, 2);
     _contentSubTab = _savedContentSubTab.clamp(0, 0);
-    _dataSubTab = _savedDataSubTab.clamp(0, 1);
+    _dataSubTab = _savedDataSubTab.clamp(0, 2);
+    _selectedWorkspaceId = widget.state.currentWorkspace.id;
     _triggerMode = widget.state.settings.triggerMode;
     _hotkey = widget.state.settings.hotkey;
     _invertScrollDirection = widget.state.settings.invertScrollDirection;
@@ -130,6 +147,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _cfD1SyncIntervalMinutes = s.cfD1SyncIntervalMinutes;
     _workerSubTab = _savedWorkerSubTab ?? (s.cfWorkerUrl.trim().isNotEmpty ? 0 : 1);
 
+    _isWorkerOnline = widget.state.getWorkspaceCloudOnline(_selectedWorkspace.id);
+    _workerPingRtt = widget.state.getWorkspacePingRtt(_selectedWorkspace.id);
     if (s.cfWorkerUrl.trim().isNotEmpty) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _autoCheckWorkerHealth();
@@ -140,23 +159,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
   Future<void> _autoCheckWorkerHealth() async {
     final url = _cfD1WorkerUrlController.text.trim();
     if (url.isEmpty || !mounted) return;
-    setState(() {
-      _isTestingCfD1 = true;
-    });
+    // 静默检测连通性，不弹加载提示，不洗掉已有已连接状态
     final service = CfD1SyncService(workerUrl: url, isDevMode: true);
     final res = await service.checkHealth();
     if (mounted) {
       setState(() {
-        _isTestingCfD1 = false;
         if (res['success'] == true) {
           _isWorkerOnline = true;
           _workerPingRtt = res['rttMs'] as double?;
+          widget.state.setWorkspaceCloudOnline(_selectedWorkspace.id, true, rttMs: _workerPingRtt);
         } else {
-          _isWorkerOnline = false;
-          _cfD1TestMessage = _text(
-            '⚠️ Worker 节点连接未响应 (${res['error'] ?? res['status']})，请在右侧核实 URL 或重新部署',
-            '⚠️ Worker ping failed (${res['error'] ?? res['status']}), please verify URL or redeploy',
-          );
+          if (_isWorkerOnline != true) {
+            _isWorkerOnline = false;
+            widget.state.setWorkspaceCloudOnline(_selectedWorkspace.id, false);
+          }
         }
       });
     }
@@ -171,6 +187,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _cfD1DatabaseIdController.dispose();
     _cfR2BucketNameController.dispose();
     _cfWorkerNameController.dispose();
+    _inlineRenameController.dispose();
+    _inlineRenameFocusNode.dispose();
     super.dispose();
   }
 
@@ -295,6 +313,125 @@ class _SettingsDialogState extends State<SettingsDialog> {
         }),
       ),
     );
+  }
+
+  Future<void> _pickDirectoryForSelectedWorkspace() async {
+    try {
+      await windowManager.setAlwaysOnTop(false);
+      final selected = await FilePicker.platform.getDirectoryPath(
+        dialogTitle: _text('选择数据存储文件夹', 'Select Data Folder'),
+      );
+      if (selected != null && mounted) {
+        final cleanPath = selected.replaceAll('\\', '/');
+        final currentPath = _selectedWorkspace.directoryPath;
+        if (cleanPath.toLowerCase() == currentPath.toLowerCase()) {
+          setState(() {
+            _pendingDirectoryPath = null;
+            _detectedWorkspaceProfile = null;
+          });
+          return;
+        }
+
+        WorkspaceProfile? detected;
+        final wsFile = File('$cleanPath/workspace.json');
+        if (wsFile.existsSync()) {
+          try {
+            final content = wsFile.readAsStringSync();
+            final decoded = jsonDecode(content);
+            if (decoded is Map<String, dynamic>) {
+              detected = WorkspaceProfile.fromJson(decoded);
+            }
+          } catch (e) {
+            debugPrint('Failed to parse detected workspace.json: $e');
+          }
+        }
+
+        setState(() {
+          _pendingDirectoryPath = cleanPath;
+          _detectedWorkspaceProfile = detected;
+        });
+      }
+    } catch (e) {
+      debugPrint('Failed to pick directory: $e');
+    } finally {
+      await windowManager.setAlwaysOnTop(true);
+    }
+  }
+
+  Future<void> _applyPendingDirectory() async {
+    if (_pendingDirectoryPath == null) return;
+    final targetPath = _pendingDirectoryPath!;
+    final detected = _detectedWorkspaceProfile;
+    final isCurrent = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+
+    // 1. 构建更新后的 WorkspaceProfile（若检测到已有元数据，自动载入其云端同步配置）
+    final oldProfile = _selectedWorkspace;
+    WorkspaceProfile updatedProfile;
+    if (detected != null) {
+      updatedProfile = oldProfile.copyWith(
+        directoryPath: targetPath,
+        cfWorkerUrl: detected.cfWorkerUrl,
+        cfAccountId: detected.cfAccountId,
+        cfApiToken: detected.cfApiToken,
+        cfD1DatabaseId: detected.cfD1DatabaseId,
+        cfR2BucketName: detected.cfR2BucketName,
+        cfD1AutoSync: detected.cfD1AutoSync,
+        cfD1SyncIntervalMinutes: detected.cfD1SyncIntervalMinutes,
+        vaultId: detected.vaultId ?? oldProfile.vaultId,
+      );
+    } else {
+      updatedProfile = oldProfile.copyWith(directoryPath: targetPath);
+    }
+
+    // 2. 保存工作区档案
+    await widget.state.saveWorkspaceProfile(updatedProfile);
+
+    // 3. 立即回填输入框，使云端存储标签页能即刻看到该配置
+    _cfD1WorkerUrlController.text = updatedProfile.cfWorkerUrl ?? '';
+    _cfAccountIdController.text = updatedProfile.cfAccountId ?? '';
+    _cfApiTokenController.text = updatedProfile.cfApiToken ?? '';
+    _cfD1DatabaseIdController.text = updatedProfile.cfD1DatabaseId ?? '';
+    _cfR2BucketNameController.text = updatedProfile.cfR2BucketName ?? '';
+    _cfD1AutoSync = updatedProfile.cfD1AutoSync;
+    _cfD1SyncIntervalMinutes = updatedProfile.cfD1SyncIntervalMinutes;
+
+    // 4. 若为当前激活工作区，同步更新当前全局激活配置并重载数据
+    if (isCurrent) {
+      _dataDirectory = targetPath;
+      final newSettings = widget.state.settings.copyWith(
+        dataDirectory: targetPath,
+        cfWorkerUrl: updatedProfile.cfWorkerUrl ?? '',
+        cfAccountId: updatedProfile.cfAccountId,
+        cfApiToken: updatedProfile.cfApiToken,
+        cfD1DatabaseId: updatedProfile.cfD1DatabaseId,
+        cfR2BucketName: updatedProfile.cfR2BucketName,
+        cfD1AutoSync: updatedProfile.cfD1AutoSync,
+        cfD1SyncIntervalMinutes: updatedProfile.cfD1SyncIntervalMinutes,
+        vaultId: updatedProfile.vaultId,
+      );
+      await widget.state.updateSettings(newSettings);
+      await widget.state.reloadAllData();
+    }
+
+    // 5. 清理待应用状态，使「应用」按钮消失
+    setState(() {
+      _pendingDirectoryPath = null;
+      _detectedWorkspaceProfile = null;
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            detected != null && detected.hasCloudConfig
+                ? _text('已应用目录，并自动载入云端同步节点（${detected.cfWorkerUrl}）', 'Directory applied & cloud config loaded (${detected.cfWorkerUrl})')
+                : _text('已成功应用新数据存储目录！', 'Data storage directory applied!'),
+          ),
+          duration: const Duration(seconds: 3),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _selectDataDirectory() async {
@@ -450,40 +587,205 @@ class _SettingsDialogState extends State<SettingsDialog> {
     }
   }
 
-  Future<void> _showNotesBackupDialog() async {
+  Future<void> _showCreateWorkspaceDialog() async {
+    final nameCtrl = TextEditingController(text: _text('新工作区', 'New Workspace'));
+    String? customPath;
+    WorkspaceInitType initType = WorkspaceInitType.blank;
+    bool inheritCloud = false;
+
     widget.state.setDialogOpen(true);
     await showDialog(
       context: context,
       builder: (ctx) {
         return StatefulBuilder(
           builder: (dialogCtx, setDialogState) {
-            final backups = widget.state.getNotesBackups();
+            return AlertDialog(
+              backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+              title: Text(
+                _text('新建工作区', 'Create Workspace'),
+                style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87, fontSize: 16),
+              ),
+              content: SizedBox(
+                width: 440,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _text('工作区名称', 'Workspace Name'),
+                        style: TextStyle(fontSize: 12, color: _isDarkTheme ? Colors.white70 : Colors.black54),
+                      ),
+                      const SizedBox(height: 6),
+                      TextField(
+                        controller: nameCtrl,
+                        style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87, fontSize: 13),
+                        decoration: InputDecoration(
+                          hintText: _text('例如：工作、个人、学习...', 'e.g., Work, Personal...'),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(6)),
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        _text('本地存储目录', 'Local Directory'),
+                        style: TextStyle(fontSize: 12, color: _isDarkTheme ? Colors.white70 : Colors.black54),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              customPath ?? _text('默认（系统自动在 workspaces/ 下创建）', 'Default (workspaces/ under app dir)'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: _isDarkTheme ? Colors.white60 : Colors.black45,
+                                fontFamily: 'monospace',
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          OutlinedButton(
+                            onPressed: () async {
+                              await windowManager.setAlwaysOnTop(false);
+                              final sel = await FilePicker.platform.getDirectoryPath(
+                                dialogTitle: _text('选择存储文件夹', 'Select Folder'),
+                              );
+                              await windowManager.setAlwaysOnTop(true);
+                              if (sel != null) {
+                                setDialogState(() {
+                                  customPath = sel.replaceAll('\\', '/');
+                                });
+                              }
+                            },
+                            child: Text(_text('浏览', 'Browse'), style: const TextStyle(fontSize: 11)),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 14),
+                      Text(
+                        _text('数据初始化模式', 'Data Initialization'),
+                        style: TextStyle(fontSize: 12, color: _isDarkTheme ? Colors.white70 : Colors.black54),
+                      ),
+                      RadioListTile<WorkspaceInitType>(
+                        value: WorkspaceInitType.blank,
+                        groupValue: initType,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(_text('全新空白工作区（推荐）', 'Blank Workspace (Recommended)'), style: const TextStyle(fontSize: 12)),
+                        subtitle: Text(_text('创建干净的空文件夹，不含历史数据', 'Create empty directory with no legacy data'), style: const TextStyle(fontSize: 10)),
+                        onChanged: (v) => setDialogState(() => initType = v!),
+                      ),
+                      RadioListTile<WorkspaceInitType>(
+                        value: WorkspaceInitType.copy,
+                        groupValue: initType,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(_text('复制当前工作区数据', 'Copy Current Data'), style: const TextStyle(fontSize: 12)),
+                        subtitle: Text(_text('将现有的便签、剪贴板等副本拷贝到新工作区', 'Clone existing notes & clipboards into new folder'), style: const TextStyle(fontSize: 10)),
+                        onChanged: (v) => setDialogState(() => initType = v!),
+                      ),
+                      const SizedBox(height: 8),
+                      CheckboxListTile(
+                        value: inheritCloud,
+                        dense: true,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(_text('继承当前云端同步设置 (Cloudflare)', 'Inherit Current Cloud Config'), style: const TextStyle(fontSize: 12)),
+                        subtitle: Text(_text('若勾选，将绑定相同的 Worker 云节点；不勾选则为纯本地离线使用', 'If checked, links to same Worker; otherwise offline'), style: const TextStyle(fontSize: 10)),
+                        onChanged: (v) => setDialogState(() => inheritCloud = v ?? false),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text(_text('取消', 'Cancel')),
+                ),
+                ElevatedButton(
+                  onPressed: () async {
+                    final name = nameCtrl.text.trim();
+                    if (name.isEmpty) return;
+                    Navigator.of(ctx).pop();
+                    final created = await widget.state.createWorkspace(
+                      name: name,
+                      customPath: customPath,
+                      initType: initType,
+                      inheritCloudConfig: inheritCloud,
+                    );
+                    if (mounted) {
+                      setState(() {
+                        _selectedWorkspaceId = created.id;
+                        _dataSubTab = 0; // 新建后右侧先显示本地存储配置
+                        _pendingDirectoryPath = null;
+                        _detectedWorkspaceProfile = null;
+                        _dataDirectory = widget.state.getDataDirectoryPathSync();
+                        _cfD1WorkerUrlController.text = created.cfWorkerUrl ?? '';
+                        _cfAccountIdController.text = created.cfAccountId ?? '';
+                        _cfApiTokenController.text = created.cfApiToken ?? '';
+                        _cfD1DatabaseIdController.text = created.cfD1DatabaseId ?? '';
+                        _cfR2BucketNameController.text = created.cfR2BucketName ?? '';
+                        _cfD1AutoSync = created.cfD1AutoSync;
+                        _cfD1SyncIntervalMinutes = created.cfD1SyncIntervalMinutes;
+                        _isWorkerOnline = null;
+                        _workerPingRtt = null;
+                      });
+                    }
+                  },
+                  child: Text(_text('创建并切换', 'Create & Switch')),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    widget.state.setDialogOpen(false);
+  }
+
+  Future<void> _showNotesBackupDialog({WorkspaceProfile? workspace}) async {
+    final targetWs = workspace ?? _selectedWorkspace;
+    final isCurrent = targetWs.id == widget.state.currentWorkspace.id;
+    widget.state.setDialogOpen(true);
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            final backups = widget.state.getNotesBackups(customDir: targetWs.directoryPath);
             return AlertDialog(
               backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
               title: Row(
                 children: [
                   const Icon(Icons.history_rounded, size: 20, color: Color(0xFF007AFF)),
                   const SizedBox(width: 8),
-                  Text(
-                    _text('便签本地历史快照与安全恢复', 'Notes Snapshots & Disaster Recovery'),
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: _isDarkTheme ? Colors.white : Colors.black87,
+                  Expanded(
+                    child: Text(
+                      _text('【${targetWs.name}】便签本地历史快照与安全恢复', 'Notes Snapshots & Recovery [${targetWs.name}]'),
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: _isDarkTheme ? Colors.white : Colors.black87,
+                      ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                 ],
               ),
               content: SizedBox(
-                width: 520,
-                height: 380,
+                width: 560,
+                height: 400,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
                       _text(
-                        '系统在应用启动、每次同步前以及合并冲突时均会自动为便签生成本地快照备份（保留最新 30 份）。若发生误删或网盘覆盖，可在此一键恢复到任意历史快照。',
-                        'Local snapshots are auto-created at launch, pre-sync, and conflict merge (up to 30 copies). You can restore any historical version.',
+                        '系统在应用启动、每次同步前以及合并冲突时均会自动为便签生成本地快照备份（保留最新 5 份）。所有快照均支持查看内容预览并一键无损还原。',
+                        'Local snapshots are auto-created at launch, pre-sync, and conflict merge (up to 5 copies). All snapshots support full content preview and 1-click restore.',
                       ),
                       style: TextStyle(
                         fontSize: 11,
@@ -494,17 +796,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     Row(
                       children: [
                         Text(
-                          _text('当前有效便签: ${widget.state.notes.length} 条', 'Active Notes: ${widget.state.notes.length}'),
+                          isCurrent
+                              ? _text('当前有效便签: ${widget.state.notes.length} 条', 'Active Notes: ${widget.state.notes.length}')
+                              : _text('工作区目录: ${targetWs.directoryPath}', 'Directory: ${targetWs.directoryPath}'),
                           style: TextStyle(
                             fontSize: 11,
                             fontWeight: FontWeight.bold,
                             color: _isDarkTheme ? Colors.white : Colors.black87,
                           ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                         const Spacer(),
                         InkWell(
                           onTap: () async {
-                            final backupDir = Directory('${widget.state.getDataDirectoryPathSync()}/backups/notes');
+                            final backupDir = Directory('${targetWs.directoryPath}/backups/notes');
                             if (!backupDir.existsSync()) backupDir.createSync(recursive: true);
                             await widget.state.openDirectoryPath(backupDir.path);
                           },
@@ -560,6 +866,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                   reasonTag = _text('恢复前保护', 'Pre-Restore');
                                 } else if (name.contains('recovered')) {
                                   reasonTag = _text('灾备自愈恢复', 'Disaster Recovered');
+                                } else if (name.contains('manual')) {
+                                  reasonTag = _text('手动备份', 'Manual');
                                 } else {
                                   reasonTag = _text('自动定时快照', 'Auto-Save');
                                 }
@@ -599,50 +907,76 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                       color: _isDarkTheme ? Colors.white54 : Colors.black45,
                                     ),
                                   ),
-                                  trailing: ElevatedButton(
-                                    onPressed: () async {
-                                      final ok = await showDialog<bool>(
-                                        context: context,
-                                        builder: (c) => AlertDialog(
-                                          backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
-                                          title: Text(_text('确认恢复此快照？', 'Restore Snapshot?')),
-                                          content: Text(_text(
-                                            '即将恢复包含 $count 条便签的快照（时间: $timeStr）。\n系统在恢复前会自动为当前便签再备份一份，确保安全。',
-                                            'Restore snapshot with $count notes ($timeStr)? Current state will be backed up.',
-                                          )),
-                                          actions: [
-                                            TextButton(
-                                              onPressed: () => Navigator.of(c).pop(false),
-                                              child: Text(_text('取消', 'Cancel')),
-                                            ),
-                                            TextButton(
-                                              onPressed: () => Navigator.of(c).pop(true),
-                                              child: Text(_text('确认恢复', 'Restore')),
-                                            ),
-                                          ],
+                                  trailing: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      OutlinedButton.icon(
+                                        onPressed: () => _showSnapshotPreviewDialog(
+                                          filePath: path,
+                                          fileName: name,
+                                          modified: modified,
+                                          reasonTag: reasonTag,
+                                          targetWorkspace: targetWs,
+                                          accentColor: const Color(0xFF007AFF),
+                                          textColor: _isDarkTheme ? Colors.white : Colors.black87,
+                                          subColor: _isDarkTheme ? Colors.white60 : Colors.black54,
                                         ),
-                                      );
-                                      if (ok == true) {
-                                        final res = await widget.state.restoreNotesFromBackup(path);
-                                        if (res && mounted) {
-                                          setDialogState(() {});
-                                          setState(() {});
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(
-                                              content: Text(_text('🎉 成功恢复 $count 条便签！', 'Successfully restored $count notes!')),
-                                              backgroundColor: Colors.green,
+                                        icon: const Icon(Icons.visibility_outlined, size: 12),
+                                        label: Text(_text('预览', 'Preview'), style: const TextStyle(fontSize: 10.5)),
+                                        style: OutlinedButton.styleFrom(
+                                          foregroundColor: const Color(0xFF007AFF),
+                                          side: const BorderSide(color: Color(0xFF007AFF), width: 0.8),
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                          minimumSize: const Size(0, 26),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      ElevatedButton(
+                                        onPressed: () async {
+                                          final ok = await showDialog<bool>(
+                                            context: context,
+                                            builder: (c) => AlertDialog(
+                                              backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                                              title: Text(_text('确认恢复此快照？', 'Restore Snapshot?')),
+                                              content: Text(_text(
+                                                '即将恢复包含 $count 条便签的快照（时间: $timeStr）到工作区【${targetWs.name}】。\n系统在恢复前会自动为当前便签再备份一份，确保安全。',
+                                                'Restore snapshot with $count notes ($timeStr) into workspace [${targetWs.name}]? Current notes will be backed up.',
+                                              )),
+                                              actions: [
+                                                TextButton(
+                                                  onPressed: () => Navigator.of(c).pop(false),
+                                                  child: Text(_text('取消', 'Cancel')),
+                                                ),
+                                                TextButton(
+                                                  onPressed: () => Navigator.of(c).pop(true),
+                                                  child: Text(_text('确认恢复', 'Restore')),
+                                                ),
+                                              ],
                                             ),
                                           );
-                                        }
-                                      }
-                                    },
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: const Color(0xFF007AFF),
-                                      foregroundColor: Colors.white,
-                                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                      minimumSize: const Size(0, 26),
-                                    ),
-                                    child: Text(_text('恢复', 'Restore'), style: const TextStyle(fontSize: 11)),
+                                          if (ok == true) {
+                                            final res = await widget.state.restoreNotesFromBackup(path, targetDir: targetWs.directoryPath);
+                                            if (res && mounted) {
+                                              setDialogState(() {});
+                                              setState(() {});
+                                              ScaffoldMessenger.of(context).showSnackBar(
+                                                SnackBar(
+                                                  content: Text(_text('🎉 成功恢复 $count 条便签至【${targetWs.name}】！', 'Successfully restored $count notes to [${targetWs.name}]!')),
+                                                  backgroundColor: Colors.green,
+                                                ),
+                                              );
+                                            }
+                                          }
+                                        },
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: Colors.green,
+                                          foregroundColor: Colors.white,
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                          minimumSize: const Size(0, 26),
+                                        ),
+                                        child: Text(_text('恢复', 'Restore'), style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold)),
+                                      ),
+                                    ],
                                   ),
                                 );
                               },
@@ -653,7 +987,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.of(ctx).pop(),
+                  onPressed: () => Navigator.of(dialogCtx).pop(),
                   child: Text(_text('关闭', 'Close')),
                 ),
               ],
@@ -665,9 +999,364 @@ class _SettingsDialogState extends State<SettingsDialog> {
     widget.state.setDialogOpen(false);
   }
 
+  Future<void> _showSnapshotPreviewDialog({
+    required String filePath,
+    required String fileName,
+    required DateTime modified,
+    required String reasonTag,
+    required WorkspaceProfile targetWorkspace,
+    required Color accentColor,
+    required Color textColor,
+    required Color subColor,
+  }) async {
+    final notes = widget.state.previewNotesBackup(filePath);
+    final timeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(modified);
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        String filterText = '';
+        Note? selectedNote = notes.isNotEmpty ? notes.first : null;
+
+        return StatefulBuilder(
+          builder: (previewCtx, setPreviewState) {
+            final filtered = notes.where((n) {
+              if (filterText.isEmpty) return true;
+              return n.title.toLowerCase().contains(filterText.toLowerCase()) ||
+                  n.content.toLowerCase().contains(filterText.toLowerCase());
+            }).toList();
+
+            if (selectedNote != null && !filtered.contains(selectedNote) && filtered.isNotEmpty) {
+              selectedNote = filtered.first;
+            }
+
+            return AlertDialog(
+              backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+              titlePadding: const EdgeInsets.fromLTRB(20, 16, 20, 10),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+              actionsPadding: const EdgeInsets.fromLTRB(20, 10, 20, 14),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: accentColor.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Icon(Icons.visibility_rounded, size: 18, color: accentColor),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              _text('快照内容预览', 'Snapshot Content Preview'),
+                              style: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                                color: _isDarkTheme ? Colors.white : Colors.black87,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: accentColor.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                '${notes.length} ${_text("条便签", "notes")}',
+                                style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: accentColor),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                              decoration: BoxDecoration(
+                                color: _isDarkTheme ? Colors.white10 : Colors.black.withValues(alpha: 0.06),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                reasonTag,
+                                style: TextStyle(fontSize: 10, color: subColor),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${_text("快照时间", "Time")}: $timeStr · ${_text("工作区", "Workspace")}: ${targetWorkspace.name}',
+                          style: TextStyle(fontSize: 10.5, color: subColor),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              content: SizedBox(
+                width: 760,
+                height: 480,
+                child: Row(
+                  children: [
+                    // 左侧：便签列表与搜索
+                    SizedBox(
+                      width: 280,
+                      child: Column(
+                        children: [
+                          Container(
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: _isDarkTheme ? Colors.white.withValues(alpha: 0.05) : Colors.black.withValues(alpha: 0.04),
+                              borderRadius: BorderRadius.circular(6),
+                              border: Border.all(color: _isDarkTheme ? Colors.white12 : Colors.black12),
+                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 8),
+                            child: Row(
+                              children: [
+                                Icon(Icons.search, size: 14, color: subColor),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: TextField(
+                                    style: TextStyle(fontSize: 11, color: textColor),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      border: InputBorder.none,
+                                      hintText: _text('搜索此快照中的便签...', 'Search notes in snapshot...'),
+                                      hintStyle: TextStyle(fontSize: 11, color: subColor),
+                                      contentPadding: const EdgeInsets.symmetric(vertical: 7),
+                                    ),
+                                    onChanged: (val) {
+                                      setPreviewState(() => filterText = val.trim());
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Expanded(
+                            child: filtered.isEmpty
+                                ? Center(
+                                    child: Text(
+                                      _text('无匹配便签', 'No matching notes'),
+                                      style: TextStyle(fontSize: 11, color: subColor),
+                                    ),
+                                  )
+                                : ListView.separated(
+                                    itemCount: filtered.length,
+                                    separatorBuilder: (_, __) => const SizedBox(height: 3),
+                                    itemBuilder: (c, idx) {
+                                      final note = filtered[idx];
+                                      final isSelected = selectedNote?.id == note.id;
+                                      final noteTimeStr = DateFormat('MM-dd HH:mm').format(note.updatedAt);
+                                      final snippet = note.content.trim().replaceAll('\n', ' ');
+                                      return InkWell(
+                                        onTap: () => setPreviewState(() => selectedNote = note),
+                                        borderRadius: BorderRadius.circular(6),
+                                        child: Container(
+                                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                                          decoration: BoxDecoration(
+                                            color: isSelected
+                                                ? accentColor.withValues(alpha: 0.15)
+                                                : (_isDarkTheme ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02)),
+                                            borderRadius: BorderRadius.circular(6),
+                                            border: Border.all(
+                                              color: isSelected ? accentColor.withValues(alpha: 0.5) : Colors.transparent,
+                                            ),
+                                          ),
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Row(
+                                                children: [
+                                                  Expanded(
+                                                    child: Text(
+                                                      note.title.trim().isEmpty ? _text('未命名便签', 'Untitled') : note.title,
+                                                      style: TextStyle(
+                                                        fontSize: 11,
+                                                        fontWeight: FontWeight.bold,
+                                                        color: isSelected ? accentColor : textColor,
+                                                      ),
+                                                      maxLines: 1,
+                                                      overflow: TextOverflow.ellipsis,
+                                                    ),
+                                                  ),
+                                                  Text(
+                                                    noteTimeStr,
+                                                    style: TextStyle(fontSize: 9.5, color: subColor),
+                                                  ),
+                                                ],
+                                              ),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                snippet.isEmpty ? _text('（无内容）', '(Empty)') : snippet,
+                                                style: TextStyle(fontSize: 10, color: subColor),
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    const VerticalDivider(width: 1),
+                    const SizedBox(width: 12),
+                    // 右侧：当前选中便签的完整内容与详情
+                    Expanded(
+                      child: selectedNote == null
+                          ? Center(
+                              child: Text(
+                                _text('请选择左侧便签查看详情', 'Select a note on left to preview'),
+                                style: TextStyle(fontSize: 12, color: subColor),
+                              ),
+                            )
+                          : Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Expanded(
+                                      child: Text(
+                                        selectedNote!.title.trim().isEmpty ? _text('未命名便签', 'Untitled') : selectedNote!.title,
+                                        style: TextStyle(
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.bold,
+                                          color: textColor,
+                                        ),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: _isDarkTheme ? Colors.white.withValues(alpha: 0.06) : Colors.black.withValues(alpha: 0.05),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        '${selectedNote!.content.length} ${_text("字符", "chars")}',
+                                        style: TextStyle(fontSize: 9.5, color: subColor),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 4),
+                                Row(
+                                  children: [
+                                    Text(
+                                      '${_text("创建于", "Created")}: ${DateFormat('yyyy-MM-dd HH:mm').format(selectedNote!.createdAt)}',
+                                      style: TextStyle(fontSize: 10, color: subColor),
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Text(
+                                      '${_text("更新于", "Updated")}: ${DateFormat('yyyy-MM-dd HH:mm').format(selectedNote!.updatedAt)}',
+                                      style: TextStyle(fontSize: 10, color: subColor),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 8),
+                                const Divider(height: 1),
+                                const SizedBox(height: 8),
+                                Expanded(
+                                  child: Container(
+                                    width: double.infinity,
+                                    padding: const EdgeInsets.all(10),
+                                    decoration: BoxDecoration(
+                                      color: _isDarkTheme ? Colors.white.withValues(alpha: 0.02) : Colors.black.withValues(alpha: 0.02),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: _isDarkTheme ? Colors.white10 : Colors.black12),
+                                    ),
+                                    child: SingleChildScrollView(
+                                      child: SelectableText(
+                                        selectedNote!.content.isEmpty ? _text('（便签正文为空）', '(Empty content)') : selectedNote!.content,
+                                        style: TextStyle(
+                                          fontSize: 11.5,
+                                          height: 1.5,
+                                          color: selectedNote!.content.isEmpty ? subColor : textColor,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(previewCtx).pop(),
+                  child: Text(_text('关闭', 'Close'), style: TextStyle(color: subColor)),
+                ),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    final confirm = await showDialog<bool>(
+                      context: context,
+                      builder: (c) => AlertDialog(
+                        backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                        title: Text(_text('确认恢复此快照？', 'Restore Snapshot?')),
+                        content: Text(_text(
+                          '即将恢复包含 ${notes.length} 条便签的快照到工作区【${targetWorkspace.name}】。\n系统会自动备份当前便签，安全无忧。',
+                          'Restore snapshot with ${notes.length} notes into workspace [${targetWorkspace.name}]? Current notes will be backed up.',
+                        )),
+                        actions: [
+                          TextButton(onPressed: () => Navigator.of(c).pop(false), child: Text(_text('取消', 'Cancel'))),
+                          ElevatedButton(
+                            onPressed: () => Navigator.of(c).pop(true),
+                            style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                            child: Text(_text('确认恢复', 'Restore')),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (confirm == true) {
+                      final ok = await widget.state.restoreNotesFromBackup(filePath, targetDir: targetWorkspace.directoryPath);
+                      if (ok && mounted) {
+                        Navigator.of(previewCtx).pop();
+                        setState(() {});
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(_text('🎉 成功将快照恢复至【${targetWorkspace.name}】（共 ${notes.length} 条便签）！', 'Restored ${notes.length} notes to [${targetWorkspace.name}]!')),
+                            backgroundColor: Colors.green,
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  icon: const Icon(Icons.restore_rounded, size: 14),
+                  label: Text(
+                    _text('恢复此快照 (${notes.length} 条便签)', 'Restore Snapshot (${notes.length} notes)'),
+                    style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _save({bool closeAfterSave = true}) async {
+    final isActiveSelected = _selectedWorkspaceId == widget.state.currentWorkspace.id;
     final oldDir = widget.state.getDataDirectoryPathSync();
-    final isDirChanged = _dataDirectory.toLowerCase() != oldDir.toLowerCase();
+    final isDirChanged = isActiveSelected && (_dataDirectory.toLowerCase() != oldDir.toLowerCase());
 
     final updated = AppSettings(
       triggerMode: _triggerMode,
@@ -696,14 +1385,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
       r2AutoSync: false,
       r2SyncIntervalMinutes: widget.state.settings.r2SyncIntervalMinutes,
       r2LastSyncTime: widget.state.settings.r2LastSyncTime,
-      cfWorkerUrl: _cfD1WorkerUrlController.text.trim(),
+      cfWorkerUrl: isActiveSelected ? _cfD1WorkerUrlController.text.trim() : widget.state.settings.cfWorkerUrl,
       cfD1Mode: _cfD1Mode,
-      cfAccountId: _cfAccountIdController.text.trim(),
-      cfApiToken: _cfApiTokenController.text.trim(),
-      cfD1DatabaseId: _cfD1DatabaseIdController.text.trim(),
-      cfR2BucketName: _cfR2BucketNameController.text.trim(),
-      cfD1AutoSync: _cfD1AutoSync,
-      cfD1SyncIntervalMinutes: _cfD1SyncIntervalMinutes,
+      cfAccountId: isActiveSelected ? _cfAccountIdController.text.trim() : widget.state.settings.cfAccountId,
+      cfApiToken: isActiveSelected ? _cfApiTokenController.text.trim() : widget.state.settings.cfApiToken,
+      cfD1DatabaseId: isActiveSelected ? _cfD1DatabaseIdController.text.trim() : widget.state.settings.cfD1DatabaseId,
+      cfR2BucketName: isActiveSelected ? _cfR2BucketNameController.text.trim() : widget.state.settings.cfR2BucketName,
+      cfD1AutoSync: isActiveSelected ? _cfD1AutoSync : widget.state.settings.cfD1AutoSync,
+      cfD1SyncIntervalMinutes: isActiveSelected ? _cfD1SyncIntervalMinutes : widget.state.settings.cfD1SyncIntervalMinutes,
+      activeWorkspaceId: _selectedWorkspaceId,
+      vaultId: _selectedWorkspace.vaultId,
     );
 
     if (isDirChanged) {
@@ -839,6 +1530,20 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } else {
       await widget.state.updateSettings(updated);
     }
+
+    final curWs = _selectedWorkspace;
+    await widget.state.saveWorkspaceProfile(
+      curWs.copyWith(
+        directoryPath: curWs.id == widget.state.currentWorkspace.id ? _dataDirectory : curWs.directoryPath,
+        cfWorkerUrl: _cfD1WorkerUrlController.text.trim(),
+        cfAccountId: _cfAccountIdController.text.trim(),
+        cfApiToken: _cfApiTokenController.text.trim(),
+        cfD1DatabaseId: _cfD1DatabaseIdController.text.trim(),
+        cfR2BucketName: _cfR2BucketNameController.text.trim(),
+        cfD1AutoSync: _cfD1AutoSync,
+        cfD1SyncIntervalMinutes: _cfD1SyncIntervalMinutes,
+      ),
+    );
 
     if (closeAfterSave && mounted) {
       if (widget.onClose != null) {
@@ -977,12 +1682,13 @@ class _SettingsDialogState extends State<SettingsDialog> {
     final borderColor = _isDarkTheme
         ? Colors.white.withValues(alpha: 0.08)
         : Colors.black.withValues(alpha: 0.08);
-    final hasCol4 = _fourthColumnType != null;
+    final isDataTab = _settingsTab == 3;
+    final hasCol4 = isDataTab || _fourthColumnType != null;
 
     const col1Width = 175.0;
-    const col2Width = 220.0;
-    final col3Width = hasCol4 ? 360.0 : 420.0;
-    const col4Width = 340.0;
+    final col2Width = isDataTab ? 230.0 : 220.0;
+    final col3Width = isDataTab ? 200.0 : (hasCol4 ? 360.0 : 420.0);
+    final col4Width = isDataTab ? 430.0 : 340.0;
     final totalMinWidth =
         col1Width + col2Width + col3Width + (hasCol4 ? col4Width : 0.0);
 
@@ -1227,18 +1933,57 @@ class _SettingsDialogState extends State<SettingsDialog> {
             decoration: BoxDecoration(
               border: Border(bottom: BorderSide(color: borderColor)),
             ),
-            child: Row(
-              children: [
-                Text(
-                  _tabFullLabel(_settingsTab),
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: textColor,
+            child: _settingsTab == 3
+                ? Row(
+                    children: [
+                      Icon(Icons.workspaces_outlined, size: 14, color: accentColor),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _text('工作区', 'Workspaces'),
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: textColor,
+                          ),
+                        ),
+                      ),
+                      InkWell(
+                        onTap: _showCreateWorkspaceDialog,
+                        borderRadius: BorderRadius.circular(4),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.add_rounded, size: 14, color: accentColor),
+                              const SizedBox(width: 2),
+                              Text(
+                                _text('新建', 'New'),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: accentColor,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                : Row(
+                    children: [
+                      Text(
+                        _tabFullLabel(_settingsTab),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: textColor,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
-            ),
           ),
 
           // 第 2 栏子菜单项列表
@@ -1285,6 +2030,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
             child: Row(
               children: [
+                if (_settingsTab == 3) ...[
+                  Icon(Icons.storage_rounded, size: 14, color: accentColor),
+                  const SizedBox(width: 6),
+                ],
                 Expanded(
                   child: Text(
                     _thirdColumnTitle(),
@@ -1296,28 +2045,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (_settingsTab == 3 && _dataSubTab == 1) ...[
-                  InkWell(
-                    onTap: () => GlobalSyncLogDialog.show(context, state: widget.state),
-                    borderRadius: BorderRadius.circular(4),
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.receipt_long_rounded, size: 13, color: subColor),
-                          const SizedBox(width: 3),
-                          Text(
-                            _text('同步日志', 'Logs'),
-                            style: TextStyle(fontSize: 10.5, color: subColor),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                ],
-                if (_fourthColumnType == null)
+                if (_settingsTab != 3 && _fourthColumnType == null)
                   ElevatedButton(
                     onPressed: () async => await _save(),
                     style: ElevatedButton.styleFrom(
@@ -1371,7 +2099,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // 第 4 栏顶部标题 + 收起按钮
+          // 第 4 栏顶部标题 + 收起/保存按钮
           Container(
             height: 36,
             padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -1380,8 +2108,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ),
             child: Row(
               children: [
-                Icon(Icons.subdirectory_arrow_right_rounded, size: 14, color: accentColor),
-                const SizedBox(width: 5),
+                if (_fourthColumnType != null) ...[
+                  InkWell(
+                    onTap: () => setState(() {
+                      _fourthColumnType = null;
+                      _isEditingWorker = false;
+                    }),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(3),
+                      child: Icon(Icons.arrow_back_rounded, size: 15, color: accentColor),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                ] else ...[
+                  Icon(
+                    _settingsTab == 3
+                        ? (_dataSubTab == 0
+                            ? Icons.folder_outlined
+                            : (_dataSubTab == 1 ? Icons.history_rounded : Icons.cloud_outlined))
+                        : Icons.subdirectory_arrow_right_rounded,
+                    size: 14,
+                    color: accentColor,
+                  ),
+                  const SizedBox(width: 5),
+                ],
                 Expanded(
                   child: Text(
                     _fourthColumnTitle(),
@@ -1393,17 +2144,53 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                InkWell(
-                  onTap: () => setState(() {
-                    _fourthColumnType = null;
-                    _isEditingWorker = false;
-                  }),
-                  borderRadius: BorderRadius.circular(4),
-                  child: Padding(
-                    padding: const EdgeInsets.all(3),
-                    child: Icon(Icons.close_rounded, size: 15, color: subColor),
+                if (_settingsTab == 3 && _dataSubTab == 2) ...[
+                  InkWell(
+                    onTap: () => GlobalSyncLogDialog.show(context, state: widget.state),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.receipt_long_rounded, size: 13, color: subColor),
+                          const SizedBox(width: 3),
+                          Text(
+                            _text('同步日志', 'Logs'),
+                            style: TextStyle(fontSize: 10.5, color: subColor),
+                          ),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
+                  const SizedBox(width: 6),
+                ],
+                if (_settingsTab == 3 || _fourthColumnType == null) ...[
+                  ElevatedButton(
+                    onPressed: () async => await _save(),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                      minimumSize: const Size(0, 24),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      elevation: 0,
+                    ),
+                    child: Text(_text('保存', 'Save'), style: const TextStyle(fontSize: 10.5)),
+                  ),
+                ] else if (_fourthColumnType != null) ...[
+                  InkWell(
+                    onTap: () => setState(() {
+                      _fourthColumnType = null;
+                      _isEditingWorker = false;
+                    }),
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.all(3),
+                      child: Icon(Icons.close_rounded, size: 15, color: subColor),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1632,6 +2419,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     IconData? icon,
     Color? accentColor,
     Color? textColor,
+    Widget? headerTrailing,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
@@ -1665,6 +2453,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     color: textColor ?? Colors.white,
                   ),
                 ),
+                if (headerTrailing != null) ...[
+                  const Spacer(),
+                  headerTrailing,
+                ],
               ],
             ),
             const SizedBox(height: 8),
@@ -1693,11 +2485,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
     if (_cfD1WorkerUrlController.text.trim().isEmpty) {
       return _text('未配置云端节点', 'Not configured');
     }
-    if (_isWorkerOnline == true) {
-      final rtt = _workerPingRtt != null ? ' (${_workerPingRtt!.toStringAsFixed(0)}ms)' : '';
-      return _text('已连接$rtt', 'Connected$rtt');
+    final wsOnline = widget.state.getWorkspaceCloudOnline(_selectedWorkspace.id) ?? _isWorkerOnline;
+    final isCur = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+    if (wsOnline == true || (isCur && (widget.state.lastD1SyncSuccess == true || widget.state.isD1Syncing))) {
+      final rtt = (_workerPingRtt ?? widget.state.getWorkspacePingRtt(_selectedWorkspace.id));
+      final rttStr = rtt != null ? ' (${rtt.toStringAsFixed(0)}ms)' : '';
+      return _text('已连接$rttStr', 'Connected$rttStr');
     }
-    if (_isWorkerOnline == false) {
+    if (wsOnline == false) {
       return _text('连接未响应', 'Unreachable');
     }
     return _text('已配置 (待测试)', 'Configured');
@@ -1705,8 +2500,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   Color _cloudStatusDotColor() {
     if (_cfD1WorkerUrlController.text.trim().isEmpty) return Colors.grey;
-    if (_isWorkerOnline == true) return Colors.green;
-    if (_isWorkerOnline == false) return Colors.redAccent;
+    final wsOnline = widget.state.getWorkspaceCloudOnline(_selectedWorkspace.id) ?? _isWorkerOnline;
+    final isCur = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+    if (wsOnline == true || (isCur && (widget.state.lastD1SyncSuccess == true || widget.state.isD1Syncing))) {
+      return Colors.green;
+    }
+    if (wsOnline == false) return Colors.redAccent;
     return Colors.orangeAccent;
   }
 
@@ -1842,40 +2641,376 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
       ];
     } else {
-      return [
-        _buildSecondColumnItem(
-          selected: _dataSubTab == 0,
-          icon: Icons.folder_outlined,
-          title: _text('本地存储', 'Local Storage'),
-          subtitle: _text('保存目录与数据导入', 'Path & Data Import'),
+      // TAB 3: 数据存储与同步 -> 第一列显示：列出所有工作区，并提供切换按钮
+      return widget.state.workspaces.map((ws) {
+        final isSelected = ws.id == _selectedWorkspaceId;
+        final isCurrent = ws.id == widget.state.currentWorkspace.id;
+        return _buildWorkspaceColumnItem(
+          ws: ws,
+          isSelected: isSelected,
+          isCurrent: isCurrent,
           accentColor: accentColor,
           textColor: textColor,
           subColor: subColor,
-          onTap: () => setState(() {
-            _dataSubTab = 0;
-            _savedDataSubTab = 0;
-            _fourthColumnType = null;
-          }),
-        ),
-        const SizedBox(height: 4),
-        _buildSecondColumnItem(
-          selected: _dataSubTab == 1,
-          icon: Icons.cloud_outlined,
-          title: _text('云端存储', 'Cloud Storage'),
-          subtitle: _cloudStatusSummary(),
-          statusDotColor: _cloudStatusDotColor(),
-          accentColor: accentColor,
-          textColor: textColor,
-          subColor: subColor,
-          onTap: () => setState(() {
-            _dataSubTab = 1;
-            _savedDataSubTab = 1;
-            _fourthColumnType = null;
-          }),
-        ),
-      ];
+        );
+      }).toList();
     }
   }
+
+  Future<void> _switchToWorkspace(String wsId) async {
+    await widget.state.switchWorkspace(wsId);
+    if (!mounted) return;
+    _selectWorkspace(wsId);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(_text('已切换至工作区【${widget.state.currentWorkspace.name}】', 'Switched to workspace: ${widget.state.currentWorkspace.name}')),
+        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  void _selectWorkspace(String wsId) {
+    setState(() {
+      _selectedWorkspaceId = wsId;
+      _dataSubTab = 0; // 点击工作区，右侧默认先展示本地存储配置
+      _pendingDirectoryPath = null;
+      _detectedWorkspaceProfile = null;
+      _isEditingWorker = false;
+      final target = _selectedWorkspace;
+      if (wsId == widget.state.currentWorkspace.id) {
+        _dataDirectory = widget.state.getDataDirectoryPathSync();
+        _cfD1WorkerUrlController.text = widget.state.settings.cfWorkerUrl;
+        _cfAccountIdController.text = widget.state.settings.cfAccountId ?? '';
+        _cfApiTokenController.text = widget.state.settings.cfApiToken ?? '';
+        _cfD1DatabaseIdController.text = widget.state.settings.cfD1DatabaseId ?? '';
+        _cfR2BucketNameController.text = widget.state.settings.cfR2BucketName ?? '';
+        _cfD1AutoSync = widget.state.settings.cfD1AutoSync;
+        _cfD1SyncIntervalMinutes = widget.state.settings.cfD1SyncIntervalMinutes;
+      } else {
+        // 仅查看/配置非激活工作区，严禁污染当前激活工作区的 _dataDirectory
+        _cfD1WorkerUrlController.text = target.cfWorkerUrl ?? '';
+        _cfAccountIdController.text = target.cfAccountId ?? '';
+        _cfApiTokenController.text = target.cfApiToken ?? '';
+        _cfD1DatabaseIdController.text = target.cfD1DatabaseId ?? '';
+        _cfR2BucketNameController.text = target.cfR2BucketName ?? '';
+        _cfD1AutoSync = target.cfD1AutoSync;
+        _cfD1SyncIntervalMinutes = target.cfD1SyncIntervalMinutes;
+      }
+      // 保留并读取工作区上次持久化的连通状态与 RTT，避免每次切换被重置为“待测试”
+      _isWorkerOnline = widget.state.getWorkspaceCloudOnline(wsId);
+      _workerPingRtt = widget.state.getWorkspacePingRtt(wsId);
+    });
+
+    // 后台静默健康检测（带 5 分钟节流，绝不弹窗打扰）
+    final target = _selectedWorkspace;
+    if (target.cfWorkerUrl != null && target.cfWorkerUrl!.trim().isNotEmpty) {
+      widget.state.silentCheckWorkspaceHealth(target).then((_) {
+        if (mounted && _selectedWorkspaceId == wsId) {
+          setState(() {
+            _isWorkerOnline = widget.state.getWorkspaceCloudOnline(wsId);
+            _workerPingRtt = widget.state.getWorkspacePingRtt(wsId);
+          });
+        }
+      });
+    }
+  }
+
+  void _startInlineRename(WorkspaceProfile ws) {
+    setState(() {
+      _editingWorkspaceId = ws.id;
+      _inlineRenameController.text = ws.name;
+      _inlineRenameController.selection = TextSelection(
+        baseOffset: 0,
+        extentOffset: ws.name.length,
+      );
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _inlineRenameFocusNode.requestFocus();
+    });
+  }
+
+  Future<void> _commitInlineRename(String wsId) async {
+    final newName = _inlineRenameController.text.trim();
+    if (newName.isNotEmpty) {
+      await widget.state.renameWorkspace(wsId, newName);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(_text('工作区已更名为【$newName】', 'Workspace renamed to [$newName]')),
+            duration: const Duration(seconds: 2),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    }
+    if (mounted) {
+      setState(() {
+        _editingWorkspaceId = null;
+      });
+    }
+  }
+
+  void _cancelInlineRename() {
+    if (mounted) {
+      setState(() {
+        _editingWorkspaceId = null;
+      });
+    }
+  }
+
+  Future<void> _deleteWorkspaceConfirm(WorkspaceProfile ws) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+        title: Text(_text('确认删除工作区？', 'Delete Workspace?'), style: TextStyle(color: _isDarkTheme ? Colors.white : Colors.black87)),
+        content: Text(
+          _text('确定要从列表中移除工作区【${ws.name}】吗？本地已有文件不会被强行销毁。', 'Remove workspace【${ws.name}】? Local files will remain.'),
+          style: TextStyle(color: _isDarkTheme ? Colors.white70 : Colors.black54),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(_text('取消', 'Cancel'))),
+          TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(_text('删除', 'Delete'), style: const TextStyle(color: Colors.redAccent))),
+        ],
+      ),
+    );
+    if (confirm == true) {
+      await widget.state.deleteWorkspace(ws.id);
+      if (mounted) {
+        _selectWorkspace(widget.state.currentWorkspace.id);
+      }
+    }
+  }
+
+  Widget _buildWorkspaceColumnItem({
+    required WorkspaceProfile ws,
+    required bool isSelected,
+    required bool isCurrent,
+    required Color accentColor,
+    required Color textColor,
+    required Color subColor,
+  }) {
+    final isEditing = _editingWorkspaceId == ws.id;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      decoration: BoxDecoration(
+        color: isSelected
+            ? accentColor.withValues(alpha: _isDarkTheme ? 0.2 : 0.1)
+            : (_isDarkTheme ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.025)),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+          color: isSelected
+              ? accentColor.withValues(alpha: 0.5)
+              : (_isDarkTheme ? Colors.white10 : Colors.black12),
+          width: isSelected ? 1.5 : 1.0,
+        ),
+      ),
+      child: InkWell(
+        onTap: isEditing ? null : () => _selectWorkspace(ws.id),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (isEditing)
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.workspaces_outlined,
+                        size: 15,
+                        color: accentColor,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: SizedBox(
+                          height: 26,
+                          child: TextField(
+                            controller: _inlineRenameController,
+                            focusNode: _inlineRenameFocusNode,
+                            autofocus: true,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: textColor,
+                            ),
+                            decoration: InputDecoration(
+                              isDense: true,
+                              contentPadding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(4),
+                                borderSide: BorderSide(color: accentColor),
+                              ),
+                              enabledBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(4),
+                                borderSide: BorderSide(color: accentColor.withValues(alpha: 0.7)),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(4),
+                                borderSide: BorderSide(color: accentColor, width: 1.5),
+                              ),
+                            ),
+                            onSubmitted: (_) => _commitInlineRename(ws.id),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // √ 确认
+                      Tooltip(
+                        message: _text('保存名称', 'Save name'),
+                        child: InkWell(
+                          onTap: () => _commitInlineRename(ws.id),
+                          borderRadius: BorderRadius.circular(4),
+                          child: const Padding(
+                            padding: EdgeInsets.all(3),
+                            child: Icon(Icons.check_rounded, size: 17, color: Colors.green),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      // × 取消
+                      Tooltip(
+                        message: _text('取消', 'Cancel'),
+                        child: InkWell(
+                          onTap: _cancelInlineRename,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Padding(
+                            padding: const EdgeInsets.all(3),
+                            child: Icon(Icons.close_rounded, size: 17, color: subColor),
+                          ),
+                        ),
+                      ),
+                    ],
+                  )
+                else
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.workspaces_outlined,
+                        size: 15,
+                        color: isSelected ? accentColor : subColor,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          ws.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                            color: isSelected ? (_isDarkTheme ? Colors.white : accentColor) : textColor,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.edit_outlined, size: 13.5),
+                        tooltip: _text('重命名', 'Rename'),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                        splashRadius: 13,
+                        color: subColor.withValues(alpha: 0.7),
+                        hoverColor: accentColor.withValues(alpha: 0.15),
+                        onPressed: () => _startInlineRename(ws),
+                      ),
+                      if (widget.state.workspaces.length > 1) ...[
+                        const SizedBox(width: 2),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline_rounded, size: 14),
+                          tooltip: _text('删除工作区', 'Delete Workspace'),
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 20, minHeight: 20),
+                          splashRadius: 13,
+                          color: subColor.withValues(alpha: 0.6),
+                          hoverColor: Colors.redAccent.withValues(alpha: 0.15),
+                          onPressed: () => _deleteWorkspaceConfirm(ws),
+                        ),
+                      ],
+                    ],
+                  ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        ws.hasCloudConfig ? '☁️ 云端已绑定' : '💻 纯本地离线',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 10, color: subColor),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    if (isCurrent)
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.green.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                          border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(width: 5, height: 5, decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle)),
+                            const SizedBox(width: 4),
+                            Text(
+                              _text('当前激活', 'Active'),
+                              style: const TextStyle(fontSize: 9.5, color: Colors.green, fontWeight: FontWeight.bold),
+                            ),
+                          ],
+                        ),
+                      )
+                    else
+                      MouseRegion(
+                        cursor: SystemMouseCursors.click,
+                        child: ElevatedButton.icon(
+                          onPressed: () => _switchToWorkspace(ws.id),
+                          icon: const Icon(Icons.swap_horiz_rounded, size: 13),
+                          label: Text(
+                            _text('切换', 'Switch'),
+                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
+                          ),
+                          style: ButtonStyle(
+                            backgroundColor: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.hovered)) {
+                                return accentColor.withValues(alpha: 0.85);
+                              }
+                              return accentColor;
+                            }),
+                            foregroundColor: const WidgetStatePropertyAll(Colors.white),
+                            elevation: WidgetStateProperty.resolveWith((states) {
+                              if (states.contains(WidgetState.hovered)) return 2.5;
+                              return 0.0;
+                            }),
+                            shadowColor: WidgetStatePropertyAll(accentColor.withValues(alpha: 0.5)),
+                            padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(horizontal: 10, vertical: 4)),
+                            minimumSize: const WidgetStatePropertyAll(Size(0, 24)),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            shape: WidgetStatePropertyAll(RoundedRectangleBorder(borderRadius: BorderRadius.circular(5))),
+                            mouseCursor: const WidgetStatePropertyAll(SystemMouseCursors.click),
+                          ),
+                        ),
+                      ),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 14,
+                      color: isSelected ? accentColor : subColor.withValues(alpha: 0.4),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    }
 
   Widget _buildSecondColumnItem({
     required bool selected,
@@ -2056,9 +3191,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } else if (_settingsTab == 2) {
       return _text('剪贴板记录上限', 'Clipboard History Limit');
     } else {
-      return _dataSubTab == 0
-          ? _text('本地存储', 'Local Storage')
-          : _text('云端存储', 'Cloud Storage');
+      return '${_selectedWorkspace.name} · ${_text('存储方式', 'Storage')}';
     }
   }
 
@@ -2182,302 +3315,79 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } else if (_settingsTab == 2) {
       return _buildClipboardLimitConfigContent(accentColor, textColor, subColor);
     } else {
-      // TAB 3: 数据存储与同步（仅分「本地存储」和「云端存储」两项）
-      if (_dataSubTab == 0) {
-        // 本地存储
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              _text(
-                '当前数据保存目录（便签、剪贴板历史、图片与文件）：',
-                'Current data directory (notes, clipboard, images, files):',
-              ),
-              style: TextStyle(fontSize: 11, color: subColor),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-              decoration: BoxDecoration(
-                color: _isDarkTheme
-                    ? Colors.white.withValues(alpha: 0.04)
-                    : Colors.black.withValues(alpha: 0.03),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: _isDarkTheme ? Colors.white12 : Colors.black12,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.folder_rounded, size: 15, color: accentColor),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _dataDirectory,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: textColor),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  TextButton(
-                    onPressed: _selectDataDirectory,
-                    style: TextButton.styleFrom(
-                      foregroundColor: accentColor,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      minimumSize: const Size(0, 24),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(_text('更改', 'Change'), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  ),
-                  TextButton(
-                    onPressed: () => widget.state.openDirectoryPath(_dataDirectory),
-                    style: TextButton.styleFrom(
-                      foregroundColor: subColor,
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      minimumSize: const Size(0, 24),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    ),
-                    child: Text(_text('打开', 'Open'), style: const TextStyle(fontSize: 11)),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildExtendableOptionRow(
-              typeKey: 'local_merge',
-              icon: Icons.sync_alt_rounded,
-              title: _text('历史数据合并', 'Merge Historical Data'),
-              subtitle: _text('点击在右侧延展，从旧目录增量导入数据', 'Click to import & merge data from another folder'),
-              accentColor: accentColor,
-              textColor: textColor,
-              subColor: subColor,
-            ),
-          ],
-        );
-      } else {
-        // 云端存储
-        final workerUrl = _cfD1WorkerUrlController.text.trim();
-        final isConnected = workerUrl.isNotEmpty && _isWorkerOnline != false;
-        final showReadOnlyConnected = isConnected && !_isEditingWorker;
-        final dotColor = _cloudStatusDotColor();
-
-        return Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // 1. Worker 同步滑块开关 (Switch)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              decoration: BoxDecoration(
-                color: _isDarkTheme
-                    ? Colors.white.withValues(alpha: 0.03)
-                    : Colors.black.withValues(alpha: 0.025),
-                borderRadius: BorderRadius.circular(7),
-                border: Border.all(
-                  color: _isDarkTheme ? Colors.white12 : Colors.black12,
-                ),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.cloud_sync_rounded, size: 15, color: accentColor),
-                  const SizedBox(width: 8),
-                  Text(
-                    _text('Worker 同步', 'Worker Sync'),
-                    style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: textColor),
-                  ),
-                  const SizedBox(width: 8),
-                  if (_cfD1AutoSync)
-                    DropdownButton<int>(
-                      value: _cfD1SyncIntervalMinutes,
-                      isDense: true,
-                      underline: const SizedBox.shrink(),
-                      dropdownColor: dropdownBg,
-                      style: TextStyle(fontSize: 10.5, color: accentColor, fontWeight: FontWeight.bold),
-                      items: [1, 3, 5, 10, 15, 30, 60].map((m) {
-                        return DropdownMenuItem<int>(
-                          value: m,
-                          child: Text(_text('每 $m 分钟', 'Every $m min')),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        if (val != null) {
-                          setState(() => _cfD1SyncIntervalMinutes = val);
-                          _save(closeAfterSave: false);
-                        }
-                      },
-                    ),
-                  const Spacer(),
-                  Switch(
-                    value: _cfD1AutoSync,
-                    activeColor: accentColor,
-                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                    onChanged: (val) {
-                      setState(() => _cfD1AutoSync = val);
-                      _save(closeAfterSave: false);
-                    },
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            // 2. 若已连接成功且未处于手动更改状态：只读显示 Worker 地址 + 右侧「更改」，隐藏多余部署入口
-            if (showReadOnlyConnected) ...[
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                decoration: BoxDecoration(
-                  color: _isDarkTheme
-                      ? Colors.white.withValues(alpha: 0.03)
-                      : Colors.black.withValues(alpha: 0.025),
-                  borderRadius: BorderRadius.circular(7),
-                  border: Border.all(
-                    color: _isDarkTheme ? Colors.white12 : Colors.black12,
-                  ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          width: 7,
-                          height: 7,
-                          decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
-                        ),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: SelectableText(
-                            workerUrl,
-                            maxLines: 1,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontFamily: 'monospace',
-                              color: textColor,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        Tooltip(
-                          message: _text('复制地址', 'Copy URL'),
-                          child: InkWell(
-                            borderRadius: BorderRadius.circular(4),
-                            onTap: () {
-                              Clipboard.setData(ClipboardData(text: workerUrl));
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(_text('已复制 Worker 地址到剪贴板', 'Worker URL copied to clipboard')),
-                                  duration: const Duration(seconds: 2),
-                                  behavior: SnackBarBehavior.floating,
-                                ),
-                              );
-                            },
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-                              child: Icon(
-                                Icons.copy_rounded,
-                                size: 13,
-                                color: subColor,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 4),
-                        TextButton(
-                          onPressed: () {
-                            setState(() {
-                              _isEditingWorker = true;
-                              _fourthColumnType = 'worker_url';
-                            });
-                          },
-                          style: TextButton.styleFrom(
-                            foregroundColor: accentColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            minimumSize: const Size(0, 24),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                          child: Text(
-                            _text('更改', 'Change'),
-                            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text(
-                          _cloudStatusSummary(),
-                          style: TextStyle(fontSize: 10, color: subColor),
-                        ),
-                        const Spacer(),
-                        OutlinedButton.icon(
-                          onPressed: _isTestingCfD1 ? null : () => _testWorkerConnection(),
-                          icon: _isTestingCfD1
-                              ? const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2))
-                              : const Icon(Icons.speed_rounded, size: 12),
-                          label: Text(_text('测试', 'Test'), style: const TextStyle(fontSize: 10.5)),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: accentColor,
-                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            minimumSize: const Size(0, 24),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        ElevatedButton.icon(
-                          onPressed: (_isTestingCfD1 || widget.state.isD1Syncing) ? null : () => _triggerSyncAll(),
-                          icon: widget.state.isD1Syncing
-                              ? const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                              : const Icon(Icons.sync_rounded, size: 12),
-                          label: Text(
-                            widget.state.isD1Syncing ? _text('同步中...', 'Syncing...') : _text('立即同步', 'Sync Now'),
-                            style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: accentColor,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
-                            minimumSize: const Size(0, 24),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                            elevation: 0,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ] else ...[
-              // 未连接 或 用户点击了「更改」：左侧保持单一入口，点击右侧直接弹出填写 Worker 地址
-              _buildExtendableOptionRow(
-                typeKey: 'worker_url',
-                icon: Icons.link_rounded,
-                title: _text('Worker 地址', 'Worker Address'),
-                subtitle: _text('填写 Worker 地址并连接云端', 'Enter Worker URL and connect'),
-                accentColor: accentColor,
-                textColor: textColor,
-                subColor: subColor,
-              ),
-            ],
-
-            if (widget.state.isD1Syncing || _cfD1TestMessage != null || widget.state.lastD1SyncMessage != null) ...[
-              const SizedBox(height: 8),
-              _buildFeedbackBanner(accentColor, textColor),
-            ],
-          ],
-        );
-      }
+      // TAB 3: 数据存储与同步 -> 第二列显示：本地存储、快照恢复、云端存储
+      final snapshotCount = widget.state.getNotesBackupsCount(customDir: _selectedWorkspace.directoryPath);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildSecondColumnItem(
+            selected: _dataSubTab == 0,
+            icon: Icons.folder_outlined,
+            title: _text('本地存储', 'Local Storage'),
+            subtitle: _text('保存目录、迁移导入与存储配置', 'Directory & Migration'),
+            accentColor: accentColor,
+            textColor: textColor,
+            subColor: subColor,
+            onTap: () => setState(() {
+              _dataSubTab = 0;
+              _savedDataSubTab = 0;
+              _fourthColumnType = null;
+            }),
+          ),
+          const SizedBox(height: 6),
+          _buildSecondColumnItem(
+            selected: _dataSubTab == 1,
+            icon: Icons.history_rounded,
+            title: _text('快照恢复', 'Snapshots & Recovery'),
+            subtitle: snapshotCount == 0
+                ? _text('暂无备份快照', 'No snapshots yet')
+                : _text('$snapshotCount 份快照 · 预览与还原', '$snapshotCount snapshots · Preview & Restore'),
+            statusDotColor: snapshotCount == 0 ? Colors.grey : Colors.green,
+            accentColor: accentColor,
+            textColor: textColor,
+            subColor: subColor,
+            onTap: () => setState(() {
+              _dataSubTab = 1;
+              _savedDataSubTab = 1;
+              _fourthColumnType = null;
+            }),
+          ),
+          const SizedBox(height: 6),
+          _buildSecondColumnItem(
+            selected: _dataSubTab == 2,
+            icon: Icons.cloud_outlined,
+            title: _text('云端存储', 'Cloud Storage'),
+            subtitle: _cloudStatusSummary(),
+            statusDotColor: _cloudStatusDotColor(),
+            accentColor: accentColor,
+            textColor: textColor,
+            subColor: subColor,
+            onTap: () => setState(() {
+              _dataSubTab = 2;
+              _savedDataSubTab = 2;
+              _fourthColumnType = null;
+            }),
+          ),
+        ],
+      );
     }
   }
 
   String _fourthColumnTitle() {
-    return switch (_fourthColumnType) {
-      'wake_params' => _text('唤醒方式详细参数', 'Wake Parameters'),
-      'local_merge' => _text('历史数据合并', 'Merge Historical Data'),
-      'worker_url' => _text('Worker 地址', 'Worker Address'),
-      'cf_auto_deploy' => _text('CF 自动部署', 'CF Auto Deploy'),
-      _ => _text('详细配置', 'Details'),
-    };
+    if (_fourthColumnType == 'wake_params') return _text('唤醒方式详细参数', 'Wake Parameters');
+    if (_fourthColumnType == 'local_merge') return _text('历史数据合并', 'Merge Historical Data');
+    if (_fourthColumnType == 'worker_url') return _text('Worker 地址', 'Worker Address');
+    if (_fourthColumnType == 'cf_auto_deploy') return _text('CF 自动部署', 'CF Auto Deploy');
+    if (_settingsTab == 3) {
+      if (_dataSubTab == 0) {
+        return _text('本地存储配置 · ${_selectedWorkspace.name}', 'Local Storage · ${_selectedWorkspace.name}');
+      }
+      if (_dataSubTab == 1) {
+        return _text('快照备份与恢复 · ${_selectedWorkspace.name}', 'Snapshots & Recovery · ${_selectedWorkspace.name}');
+      }
+      return _text('云端存储配置 · ${_selectedWorkspace.name}', 'Cloud Storage · ${_selectedWorkspace.name}');
+    }
+    return _text('详细配置', 'Details');
   }
 
   Widget _buildFourthColumnBody({
@@ -2486,6 +3396,30 @@ class _SettingsDialogState extends State<SettingsDialog> {
     required Color subColor,
     required Color dropdownBg,
   }) {
+    if (_settingsTab == 3) {
+      if (_fourthColumnType == 'local_merge') {
+        return _buildLocalDataMergeContent(accentColor, textColor, subColor);
+      }
+      if (_fourthColumnType == 'cf_auto_deploy') {
+        return _buildAutoDeployWorkerForm(
+          accentColor: accentColor,
+          textColor: textColor,
+          subColor: subColor,
+          allowExtendFourthCol: false,
+        );
+      }
+      if (_fourthColumnType == 'worker_url') {
+        return _buildExistingWorkerForm(accentColor, textColor, subColor);
+      }
+      if (_dataSubTab == 0) {
+        return _buildLocalStorageDetailsPane(accentColor, textColor, subColor, dropdownBg);
+      } else if (_dataSubTab == 1) {
+        return _buildSnapshotRecoveryPane(accentColor, textColor, subColor);
+      } else {
+        return _buildCloudStoragePane(accentColor, textColor, subColor, dropdownBg, isWide: true);
+      }
+    }
+
     switch (_fourthColumnType) {
       case 'wake_params':
         return Column(
@@ -2513,6 +3447,767 @@ class _SettingsDialogState extends State<SettingsDialog> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  Widget _buildInactiveWorkspaceNoticeBanner(
+    Color accentColor,
+    Color textColor,
+    Color subColor,
+  ) {
+    if (_selectedWorkspace.id == widget.state.currentWorkspace.id) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: accentColor.withValues(alpha: _isDarkTheme ? 0.12 : 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: accentColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.visibility_outlined, size: 16, color: accentColor),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _text('正在查看【${_selectedWorkspace.name}】的配置', 'Viewing [${_selectedWorkspace.name}] config'),
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.bold, color: textColor),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  _text('当前未激活此工作区。本地数据未改动。', 'Inactive workspace. Local data remains unchanged.'),
+                  style: TextStyle(fontSize: 10, color: subColor),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLocalStorageDetailsPane(
+    Color accentColor,
+    Color textColor,
+    Color subColor,
+    Color dropdownBg,
+  ) {
+    final isCurrent = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+    final currentDir = _selectedWorkspace.directoryPath;
+    final displayDirPath = _pendingDirectoryPath ?? (isCurrent ? _dataDirectory : currentDir);
+    final hasPendingChange = _pendingDirectoryPath != null &&
+        _pendingDirectoryPath!.toLowerCase() != currentDir.toLowerCase();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!isCurrent)
+          _buildInactiveWorkspaceNoticeBanner(accentColor, textColor, subColor),
+
+        // 1. 工作区状态卡片
+        _buildCardSection(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.workspaces_outlined, size: 16, color: accentColor),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _editingWorkspaceId == _selectedWorkspace.id
+                        ? Row(
+                            children: [
+                              Expanded(
+                                child: SizedBox(
+                                  height: 26,
+                                  child: TextField(
+                                    controller: _inlineRenameController,
+                                    focusNode: _inlineRenameFocusNode,
+                                    autofocus: true,
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.bold,
+                                      color: textColor,
+                                    ),
+                                    decoration: InputDecoration(
+                                      isDense: true,
+                                      contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                      border: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(4),
+                                        borderSide: BorderSide(color: accentColor),
+                                      ),
+                                      focusedBorder: OutlineInputBorder(
+                                        borderRadius: BorderRadius.circular(4),
+                                        borderSide: BorderSide(color: accentColor, width: 1.5),
+                                      ),
+                                    ),
+                                    onSubmitted: (_) => _commitInlineRename(_selectedWorkspace.id),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Tooltip(
+                                message: _text('保存名称', 'Save name'),
+                                child: InkWell(
+                                  onTap: () => _commitInlineRename(_selectedWorkspace.id),
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: const Padding(
+                                    padding: EdgeInsets.all(4),
+                                    child: Icon(Icons.check_rounded, size: 18, color: Colors.green),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 2),
+                              Tooltip(
+                                message: _text('取消', 'Cancel'),
+                                child: InkWell(
+                                  onTap: _cancelInlineRename,
+                                  borderRadius: BorderRadius.circular(4),
+                                  child: Padding(
+                                    padding: const EdgeInsets.all(4),
+                                    child: Icon(Icons.close_rounded, size: 18, color: subColor),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  _selectedWorkspace.name,
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: textColor),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                icon: const Icon(Icons.edit_outlined, size: 14),
+                                tooltip: _text('重命名工作区', 'Rename Workspace'),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(minWidth: 22, minHeight: 22),
+                                splashRadius: 14,
+                                color: subColor,
+                                onPressed: () => _startInlineRename(_selectedWorkspace),
+                              ),
+                            ],
+                          ),
+                  ),
+                  if (isCurrent)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.green.withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: Colors.green.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(width: 6, height: 6, decoration: const BoxDecoration(color: Colors.green, shape: BoxShape.circle)),
+                          const SizedBox(width: 5),
+                          Text(
+                            _text('当前激活', 'Active'),
+                            style: const TextStyle(fontSize: 10, color: Colors.green, fontWeight: FontWeight.bold),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                '🔑 配对 ID (Vault ID): ${_selectedWorkspace.vaultId ?? '自动匹配'}',
+                style: TextStyle(fontSize: 10, color: subColor, fontFamily: 'monospace'),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 2. 本地存储目录卡片
+        _buildCardSection(
+          title: _text('本地数据存储目录', 'Local Data Directory'),
+          icon: Icons.folder_outlined,
+          accentColor: accentColor,
+          textColor: textColor,
+          headerTrailing: hasPendingChange
+              ? MouseRegion(
+                  cursor: SystemMouseCursors.click,
+                  child: ElevatedButton.icon(
+                    onPressed: _applyPendingDirectory,
+                    icon: const Icon(Icons.check_rounded, size: 13),
+                    label: Text(
+                      _text('应用', 'Apply'),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      minimumSize: const Size(0, 24),
+                      elevation: 1,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                    ),
+                  ),
+                )
+              : null,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '便签内容、剪贴板历史记录、临时图片与暂存文件均保存在此目录中。',
+                  'Notes, clipboard history, temp images, and files are stored here.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: hasPendingChange
+                      ? (_detectedWorkspaceProfile != null ? Colors.green.withValues(alpha: 0.08) : accentColor.withValues(alpha: 0.08))
+                      : (_isDarkTheme ? Colors.white.withValues(alpha: 0.04) : Colors.black.withValues(alpha: 0.03)),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: hasPendingChange
+                        ? (_detectedWorkspaceProfile != null ? Colors.green.withValues(alpha: 0.4) : accentColor.withValues(alpha: 0.4))
+                        : (_isDarkTheme ? Colors.white.withValues(alpha: 0.08) : Colors.black.withValues(alpha: 0.08)),
+                  ),
+                ),
+                child: SelectableText(
+                  displayDirPath,
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontFamily: 'monospace',
+                    color: textColor,
+                  ),
+                ),
+              ),
+              if (hasPendingChange) ...[
+                const SizedBox(height: 8),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: (_detectedWorkspaceProfile != null ? Colors.green : Colors.amber).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: (_detectedWorkspaceProfile != null ? Colors.green : Colors.amber).withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _detectedWorkspaceProfile != null ? Icons.cloud_done_rounded : Icons.info_outline_rounded,
+                        size: 16,
+                        color: _detectedWorkspaceProfile != null ? Colors.green : Colors.amber,
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _detectedWorkspaceProfile != null
+                                  ? _text(
+                                      '检测到该目录包含已有工作区【${_detectedWorkspaceProfile!.name}】',
+                                      'Workspace【${_detectedWorkspaceProfile!.name}】detected in this folder',
+                                    )
+                                  : _text('新选中的存储目录尚未应用', 'Selected directory not yet applied'),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: textColor,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _detectedWorkspaceProfile != null
+                                  ? _text(
+                                      '关联云端：${_detectedWorkspaceProfile!.hasCloudConfig ? (_detectedWorkspaceProfile!.cfWorkerUrl ?? "已配置") : "纯本地离线"}。点击「应用」将自动同步回填。',
+                                      'Cloud: ${_detectedWorkspaceProfile!.hasCloudConfig ? (_detectedWorkspaceProfile!.cfWorkerUrl ?? "Configured") : "Offline"}. Click Apply to load.',
+                                    )
+                                  : _text('点击「应用」或下方按钮立即生效', 'Click Apply to save this directory'),
+                              style: TextStyle(fontSize: 10, color: subColor),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: _pickDirectoryForSelectedWorkspace,
+                    icon: const Icon(Icons.edit_location_alt_rounded, size: 13),
+                    label: Text(
+                      _text('更改位置', 'Change Location'),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    ),
+                  ),
+                  if (hasPendingChange) ...[
+                    const SizedBox(width: 8),
+                    MouseRegion(
+                      cursor: SystemMouseCursors.click,
+                      child: ElevatedButton.icon(
+                        onPressed: _applyPendingDirectory,
+                        icon: const Icon(Icons.check_rounded, size: 13),
+                        label: Text(
+                          _text('应用', 'Apply'),
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                          elevation: 1,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                        ),
+                      ),
+                    ),
+                  ],
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () => widget.state.openDirectoryPath(displayDirPath),
+                    icon: const Icon(Icons.folder_open_rounded, size: 13),
+                    label: Text(
+                      _text('打开文件夹', 'Open in Folder'),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: accentColor,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 3. 数据迁移与增量合并
+        _buildCardSection(
+          title: _text('数据迁移与增量合并', 'Data Migration & Merge'),
+          icon: Icons.sync_alt_rounded,
+          accentColor: accentColor,
+          textColor: textColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '更换电脑或重装系统后，可从其他文件夹导入历史数据。系统会自动进行增量合并，不会覆盖现有数据。',
+                  'Import data after system reinstall. Existing data will not be overwritten.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor),
+              ),
+              const SizedBox(height: 8),
+              if (isCurrent) ...[
+                OutlinedButton.icon(
+                  onPressed: _manualSyncData,
+                  icon: const Icon(Icons.drive_folder_upload_rounded, size: 14),
+                  label: Text(
+                    _text('选择文件夹并合并数据', 'Select Folder & Merge Data'),
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: accentColor,
+                    side: BorderSide(color: accentColor.withValues(alpha: 0.4)),
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  ),
+                ),
+              ] else ...[
+                Text(
+                  _text('（请先切换至此工作区，即可进行数据合并操作）', '(Switch to this workspace to merge data)'),
+                  style: TextStyle(fontSize: 10.5, color: subColor, fontStyle: FontStyle.italic),
+                ),
+              ],
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 4. 便签历史快照
+        _buildCardSection(
+          title: _text('便签本地历史快照 (防误删/防覆盖)', 'Notes Local Snapshots'),
+          icon: Icons.history_rounded,
+          accentColor: accentColor,
+          textColor: textColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '系统在启动、同步前及内容变更时自动生成本地快照（保留最新 5 份）。无论发生冲突或误改，均可撤回恢复。',
+                  'Snapshots are auto-created at launch, pre-sync, and changes (up to 5 copies). Restore historical versions anytime.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor),
+              ),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() {
+                      _dataSubTab = 1;
+                      _savedDataSubTab = 1;
+                      _fourthColumnType = null;
+                    }),
+                    icon: const Icon(Icons.history_rounded, size: 14),
+                    label: Text(
+                      _text('管理快照与安全恢复', 'Manage Snapshots & Recovery'),
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final backupDir = Directory('$displayDirPath/backups/notes');
+                      if (!backupDir.existsSync()) backupDir.createSync(recursive: true);
+                      widget.state.openDirectoryPath(backupDir.path);
+                    },
+                    icon: const Icon(Icons.folder_open_rounded, size: 14),
+                    label: Text(
+                      _text('打开快照目录', 'Open Directory'),
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: accentColor,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSnapshotRecoveryPane(
+    Color accentColor,
+    Color textColor,
+    Color subColor,
+  ) {
+    final isCurrent = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+    final backups = widget.state.getNotesBackups(customDir: _selectedWorkspace.directoryPath);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (!isCurrent)
+          _buildInactiveWorkspaceNoticeBanner(accentColor, textColor, subColor),
+
+        // 1. 顶部工作区快照概览卡片
+        _buildCardSection(
+          title: _text('工作区快照概览', 'Workspace Snapshots Overview'),
+          icon: Icons.history_rounded,
+          accentColor: accentColor,
+          textColor: textColor,
+          headerTrailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isCurrent) ...[
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    await widget.state.createNotesBackup('manual');
+                    if (mounted) {
+                      setState(() {});
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(_text('📸 已成功为当前工作区生成手动快照！', 'Manual snapshot created successfully!')),
+                          backgroundColor: Colors.green,
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.camera_alt_outlined, size: 12),
+                  label: Text(_text('新建快照', 'New Snapshot'), style: const TextStyle(fontSize: 11)),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: accentColor,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    minimumSize: const Size(0, 24),
+                    elevation: 0,
+                  ),
+                ),
+                const SizedBox(width: 8),
+              ],
+              OutlinedButton.icon(
+                onPressed: () async {
+                  final dir = Directory('${_selectedWorkspace.directoryPath}/backups/notes');
+                  if (!dir.existsSync()) dir.createSync(recursive: true);
+                  await widget.state.openDirectoryPath(dir.path);
+                },
+                icon: const Icon(Icons.folder_open_rounded, size: 12),
+                label: Text(_text('打开快照目录', 'Open Folder'), style: const TextStyle(fontSize: 11)),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: textColor,
+                  side: BorderSide(color: _isDarkTheme ? Colors.white24 : Colors.black26),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: const Size(0, 24),
+                ),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '系统在应用启动、每次云端同步前、网盘冲突合并以及手动操作时均会自动生成便签快照备份（自动保留最新 5 份）。所有快照均支持查看内容预览并一键无损还原。',
+                  'Local snapshots are auto-created at launch, pre-sync, conflict merge, and manual backups (up to 5 copies). All snapshots support full content preview and 1-click restore.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor, height: 1.4),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: _isDarkTheme ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: _isDarkTheme ? Colors.white10 : Colors.black12),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.inventory_2_outlined, size: 16, color: accentColor),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${_selectedWorkspace.name} · ',
+                      style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: textColor),
+                    ),
+                    Text(
+                      _text('共 ${backups.length} 份可用快照', '${backups.length} snapshots available'),
+                      style: TextStyle(fontSize: 11, color: backups.isEmpty ? Colors.orangeAccent : Colors.green),
+                    ),
+                    const Spacer(),
+                    if (isCurrent)
+                      Text(
+                        _text('当前便签数: ${widget.state.notes.length}', 'Active Notes: ${widget.state.notes.length}'),
+                        style: TextStyle(fontSize: 11, color: subColor),
+                      ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        // 2. 快照列表卡片
+        _buildCardSection(
+          title: _text('历史快照列表', 'Historical Snapshots'),
+          icon: Icons.list_alt_rounded,
+          accentColor: accentColor,
+          textColor: textColor,
+          child: backups.isEmpty
+              ? Container(
+                  padding: const EdgeInsets.symmetric(vertical: 36),
+                  alignment: Alignment.center,
+                  child: Column(
+                    children: [
+                      Icon(Icons.history_toggle_off_rounded, size: 36, color: subColor.withValues(alpha: 0.4)),
+                      const SizedBox(height: 10),
+                      Text(
+                        _text('当前工作区暂无历史快照', 'No snapshots found for this workspace'),
+                        style: TextStyle(fontSize: 12, color: subColor),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _text('当您在此工作区编辑便签或进行同步时，系统将自动生成快照。', 'Snapshots will be automatically created when syncing or launching.'),
+                        style: TextStyle(fontSize: 10.5, color: subColor.withValues(alpha: 0.7)),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.separated(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: backups.length,
+                  separatorBuilder: (_, __) => Divider(
+                    height: 1,
+                    color: _isDarkTheme ? Colors.white10 : Colors.black.withValues(alpha: 0.06),
+                  ),
+                  itemBuilder: (itemCtx, index) {
+                    final b = backups[index];
+                    final name = b['fileName'] as String? ?? '';
+                    final count = b['count'] as int? ?? 0;
+                    final modified = b['modified'] as DateTime? ?? DateTime.now();
+                    final path = b['path'] as String? ?? '';
+                    final sizeKb = ((b['size'] as int? ?? 0) / 1024).toStringAsFixed(1);
+                    final timeStr = DateFormat('yyyy-MM-dd HH:mm:ss').format(modified);
+
+                    String reasonTag = '';
+                    if (name.contains('conflict_merged')) {
+                      reasonTag = _text('网盘冲突合并', 'Conflict Merged');
+                    } else if (name.contains('pre_sync')) {
+                      reasonTag = _text('同步前置备份', 'Pre-Sync');
+                    } else if (name.contains('cloud_merged')) {
+                      reasonTag = _text('云端同步后', 'Cloud Merged');
+                    } else if (name.contains('app_launch')) {
+                      reasonTag = _text('应用启动快照', 'Launch');
+                    } else if (name.contains('before_restore')) {
+                      reasonTag = _text('恢复前保护', 'Pre-Restore');
+                    } else if (name.contains('recovered')) {
+                      reasonTag = _text('灾备自愈恢复', 'Disaster Recovered');
+                    } else if (name.contains('manual')) {
+                      reasonTag = _text('手动备份', 'Manual');
+                    } else {
+                      reasonTag = _text('自动定时快照', 'Auto-Save');
+                    }
+
+                    return Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                      child: Row(
+                        children: [
+                          Container(
+                            padding: const EdgeInsets.all(7),
+                            decoration: BoxDecoration(
+                              color: accentColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Icon(Icons.description_outlined, size: 16, color: accentColor),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      '$count ${_text("条便签", "notes")}',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: textColor,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1.5),
+                                      decoration: BoxDecoration(
+                                        color: accentColor.withValues(alpha: 0.12),
+                                        borderRadius: BorderRadius.circular(4),
+                                      ),
+                                      child: Text(
+                                        reasonTag,
+                                        style: TextStyle(fontSize: 10, color: accentColor, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  '$timeStr · ${sizeKb} KB',
+                                  style: TextStyle(fontSize: 10.5, color: subColor),
+                                ),
+                              ],
+                            ),
+                          ),
+                          // 预览按钮
+                          OutlinedButton.icon(
+                            onPressed: () => _showSnapshotPreviewDialog(
+                              filePath: path,
+                              fileName: name,
+                              modified: modified,
+                              reasonTag: reasonTag,
+                              targetWorkspace: _selectedWorkspace,
+                              accentColor: accentColor,
+                              textColor: textColor,
+                              subColor: subColor,
+                            ),
+                            icon: const Icon(Icons.visibility_outlined, size: 13),
+                            label: Text(_text('预览', 'Preview'), style: const TextStyle(fontSize: 11)),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: accentColor,
+                              side: BorderSide(color: accentColor.withValues(alpha: 0.4)),
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: const Size(0, 26),
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          // 恢复按钮
+                          ElevatedButton.icon(
+                            onPressed: () async {
+                              final ok = await showDialog<bool>(
+                                context: context,
+                                builder: (c) => AlertDialog(
+                                  backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                                  title: Text(_text('确认恢复此快照？', 'Restore Snapshot?')),
+                                  content: Text(_text(
+                                    '即将恢复包含 $count 条便签的快照（时间: $timeStr）到工作区【${_selectedWorkspace.name}】。\n系统在恢复前会自动为当前便签再备份一份，确保万无一失。',
+                                    'Restore snapshot with $count notes ($timeStr) into workspace [${_selectedWorkspace.name}]? Current notes will be backed up.',
+                                  )),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () => Navigator.of(c).pop(false),
+                                      child: Text(_text('取消', 'Cancel')),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () => Navigator.of(c).pop(true),
+                                      style: ElevatedButton.styleFrom(backgroundColor: Colors.green, foregroundColor: Colors.white),
+                                      child: Text(_text('确认恢复', 'Restore')),
+                                    ),
+                                  ],
+                                ),
+                              );
+                              if (ok == true) {
+                                final res = await widget.state.restoreNotesFromBackup(path, targetDir: _selectedWorkspace.directoryPath);
+                                if (res && mounted) {
+                                  setState(() {});
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                      content: Text(_text('🎉 成功恢复 $count 条便签至【${_selectedWorkspace.name}】！', 'Successfully restored $count notes to [${_selectedWorkspace.name}]!')),
+                                      backgroundColor: Colors.green,
+                                    ),
+                                  );
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.restore_rounded, size: 13),
+                            label: Text(_text('恢复', 'Restore'), style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                              minimumSize: const Size(0, 26),
+                              elevation: 0,
+                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(5)),
+                            ),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
   }
 
   // ===========================================================================
@@ -3076,8 +4771,64 @@ class _SettingsDialogState extends State<SettingsDialog> {
         ),
         const SizedBox(height: 10),
         Row(
-          mainAxisAlignment: MainAxisAlignment.end,
           children: [
+            if (_cfD1WorkerUrlController.text.trim().isNotEmpty || widget.state.settings.cfWorkerUrl.trim().isNotEmpty) ...[
+              TextButton.icon(
+                onPressed: () async {
+                  final confirm = await showDialog<bool>(
+                    context: context,
+                    builder: (ctx) => AlertDialog(
+                      backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                      title: Text(_text('确认解除当前工作区云端绑定？', 'Disconnect Cloud Sync?'), style: TextStyle(color: textColor)),
+                      content: Text(
+                        _text('解除后此工作区将转为纯本地离线模式，云端原有数据仍会保留。', 'This workspace will switch to offline mode. Data on Cloudflare remains intact.'),
+                        style: TextStyle(color: subColor),
+                      ),
+                      actions: [
+                        TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(_text('取消', 'Cancel'))),
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(true),
+                          child: Text(_text('解除绑定', 'Disconnect'), style: const TextStyle(color: Colors.redAccent)),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (confirm == true) {
+                    setState(() {
+                      _cfD1WorkerUrlController.clear();
+                      _cfD1AutoSync = false;
+                      _isEditingWorker = false;
+                      _isWorkerOnline = false;
+                      _fourthColumnType = null;
+                      _cfD1TestMessage = null;
+                    });
+                    final curWs = widget.state.currentWorkspace;
+                    await widget.state.updateCurrentWorkspaceProfile(
+                      curWs.copyWith(
+                        cfWorkerUrl: '',
+                        cfD1AutoSync: false,
+                      ),
+                    );
+                    await widget.state.updateSettings(
+                      widget.state.settings.copyWith(
+                        cfWorkerUrl: '',
+                        cfD1AutoSync: false,
+                      ),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.link_off_rounded, size: 14, color: Colors.redAccent),
+                label: Text(
+                  _text('解除绑定', 'Disconnect'),
+                  style: const TextStyle(fontSize: 11, color: Colors.redAccent),
+                ),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  minimumSize: const Size(0, 26),
+                ),
+              ),
+            ],
+            const Spacer(),
             ElevatedButton.icon(
               onPressed: _isTestingCfD1
                   ? null
@@ -3298,6 +5049,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                               cfApiToken: apiToken,
                               cfD1DatabaseId: res['d1DatabaseId'],
                               cfR2BucketName: res['r2BucketName'] ?? bucketName,
+                            ),
+                          );
+                          final curWs = widget.state.currentWorkspace;
+                          widget.state.updateCurrentWorkspaceProfile(
+                            curWs.copyWith(
+                              cfWorkerUrl: res['workerUrl'],
+                              cfAccountId: accountId,
+                              cfApiToken: apiToken,
+                              cfD1DatabaseId: res['d1DatabaseId'],
+                              cfR2BucketName: res['r2BucketName'] ?? bucketName,
+                              cfD1AutoSync: true,
                             ),
                           );
                         } else {
@@ -4474,6 +6236,153 @@ class _SettingsDialogState extends State<SettingsDialog> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _buildCardSection(
+          title: _text('工作区 (Workspace)', 'Workspace'),
+          icon: Icons.workspaces_outlined,
+          accentColor: accentColor,
+          textColor: textColor,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                _text(
+                  '每个工作区对应一个独立的本地存储目录，并可独立绑定不同的云端同步节点。',
+                  'Each workspace has its own local storage directory and can link to a distinct cloud service.',
+                ),
+                style: TextStyle(fontSize: 11, color: subColor),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: dropdownBg,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(
+                          color: _isDarkTheme
+                              ? Colors.white.withValues(alpha: 0.12)
+                              : Colors.black.withValues(alpha: 0.12),
+                        ),
+                      ),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: widget.state.currentWorkspace.id,
+                          isExpanded: true,
+                          dropdownColor: dropdownBg,
+                          style: TextStyle(color: textColor, fontSize: 13, fontWeight: FontWeight.bold),
+                          items: widget.state.workspaces.map((ws) {
+                            return DropdownMenuItem<String>(
+                              value: ws.id,
+                              child: Text(ws.name),
+                            );
+                          }).toList(),
+                          onChanged: (val) async {
+                            if (val != null) {
+                              await widget.state.switchWorkspace(val);
+                              setState(() {
+                                _dataDirectory = widget.state.getDataDirectoryPathSync();
+                                _cfD1WorkerUrlController.text = widget.state.settings.cfWorkerUrl;
+                                _cfAccountIdController.text = widget.state.settings.cfAccountId ?? '';
+                                _cfApiTokenController.text = widget.state.settings.cfApiToken ?? '';
+                                _cfD1DatabaseIdController.text = widget.state.settings.cfD1DatabaseId ?? '';
+                                _cfR2BucketNameController.text = widget.state.settings.cfR2BucketName ?? '';
+                                _cfD1AutoSync = widget.state.settings.cfD1AutoSync;
+                                _cfD1SyncIntervalMinutes = widget.state.settings.cfD1SyncIntervalMinutes;
+                              });
+                              if (widget.state.settings.cfWorkerUrl.trim().isNotEmpty) {
+                                _autoCheckWorkerHealth();
+                              } else {
+                                setState(() => _isWorkerOnline = null);
+                              }
+                            }
+                          },
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  ElevatedButton.icon(
+                    onPressed: _showCreateWorkspaceDialog,
+                    icon: const Icon(Icons.add_rounded, size: 14),
+                    label: Text(_text('新建工作区', 'New Workspace'), style: const TextStyle(fontSize: 11)),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: accentColor,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    ),
+                  ),
+                  if (widget.state.workspaces.length > 1) ...[
+                    const SizedBox(width: 6),
+                    IconButton(
+                      icon: const Icon(Icons.delete_outline_rounded, size: 18),
+                      tooltip: _text('删除当前工作区', 'Delete Current Workspace'),
+                      color: Colors.redAccent,
+                      onPressed: () async {
+                        final confirm = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            backgroundColor: _isDarkTheme ? const Color(0xFF1E1E1E) : Colors.white,
+                            title: Text(_text('确认删除工作区？', 'Delete Workspace?'), style: TextStyle(color: textColor)),
+                            content: Text(
+                              _text('确定要从列表中移除工作区【${widget.state.currentWorkspace.name}】吗？本地已有文件不会被强行销毁。', 'Remove workspace? Local files will remain.'),
+                              style: TextStyle(color: subColor),
+                            ),
+                            actions: [
+                              TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: Text(_text('取消', 'Cancel'))),
+                              TextButton(onPressed: () => Navigator.of(ctx).pop(true), child: Text(_text('删除', 'Delete'), style: const TextStyle(color: Colors.redAccent))),
+                            ],
+                          ),
+                        );
+                        if (confirm == true) {
+                          await widget.state.deleteWorkspace(widget.state.currentWorkspace.id);
+                          setState(() {
+                            _dataDirectory = widget.state.getDataDirectoryPathSync();
+                            _cfD1WorkerUrlController.text = widget.state.settings.cfWorkerUrl;
+                            _cfAccountIdController.text = widget.state.settings.cfAccountId ?? '';
+                            _cfApiTokenController.text = widget.state.settings.cfApiToken ?? '';
+                            _cfD1DatabaseIdController.text = widget.state.settings.cfD1DatabaseId ?? '';
+                            _cfR2BucketNameController.text = widget.state.settings.cfR2BucketName ?? '';
+                            _cfD1AutoSync = widget.state.settings.cfD1AutoSync;
+                            _cfD1SyncIntervalMinutes = widget.state.settings.cfD1SyncIntervalMinutes;
+                          });
+                        }
+                      },
+                    ),
+                  ],
+                ],
+              ),
+              const SizedBox(height: 10),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: _isDarkTheme ? Colors.white.withValues(alpha: 0.03) : Colors.black.withValues(alpha: 0.02),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _text(
+                        '☁️ 关联云端：${widget.state.currentWorkspace.hasCloudConfig ? (widget.state.currentWorkspace.cfWorkerUrl ?? '已配置 Cloudflare') : '纯本地离线（未绑定云端）'}',
+                        'Cloud Service: ${widget.state.currentWorkspace.hasCloudConfig ? (widget.state.currentWorkspace.cfWorkerUrl ?? 'Configured') : 'Offline (No Cloud)'}',
+                      ),
+                      style: TextStyle(fontSize: 11, color: textColor, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '🔑 配对 ID (Vault ID): ${widget.state.currentWorkspace.vaultId ?? '自动匹配'}',
+                      style: TextStyle(fontSize: 10, color: subColor, fontFamily: 'monospace'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 12),
+        _buildCardSection(
           title: _text('本地数据存储目录', 'Local Data Directory'),
           icon: Icons.folder_outlined,
           accentColor: accentColor,
@@ -4608,8 +6517,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
             children: [
               Text(
                 _text(
-                  '系统在应用启动、每次同步前以及内容变更时会自动生成本地快照（保留最新 30 份）。无论发生网盘冲突还是意外改动，随时可一键撤回恢复。',
-                  'Local snapshots are auto-created at launch, pre-sync, and changes. You can restore any historical version anytime.',
+                  '系统在应用启动、每次同步前以及内容变更时会自动生成本地快照（保留最新 5 份）。无论发生网盘冲突还是意外改动，随时可一键撤回恢复。',
+                  'Local snapshots are auto-created at launch, pre-sync, and changes (up to 5 copies). You can restore any historical version anytime.',
                 ),
                 style: TextStyle(fontSize: 11, color: subColor),
               ),
@@ -4662,6 +6571,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
     Color dropdownBg, {
     required bool isWide,
   }) {
+    final wsOnline = widget.state.getWorkspaceCloudOnline(_selectedWorkspace.id) ?? _isWorkerOnline;
+    final isCur = _selectedWorkspace.id == widget.state.currentWorkspace.id;
+    final isSyncing = isCur && widget.state.isD1Syncing;
+    final lastSyncOk = isCur && widget.state.lastD1SyncSuccess == true;
+    final effectiveRtt = _workerPingRtt ?? widget.state.getWorkspacePingRtt(_selectedWorkspace.id);
+
     Color statusColor;
     String statusText;
     if (_isTestingCfD1) {
@@ -4670,10 +6585,10 @@ class _SettingsDialogState extends State<SettingsDialog> {
     } else if (_cfD1WorkerUrlController.text.trim().isEmpty) {
       statusColor = Colors.grey;
       statusText = _text('未配置云端同步', 'Cloud sync not configured');
-    } else if (_isWorkerOnline == true) {
+    } else if (wsOnline == true || lastSyncOk || isSyncing) {
       statusColor = Colors.green;
-      statusText = _text('已连接', 'Connected');
-    } else if (_isWorkerOnline == false) {
+      statusText = isSyncing ? _text('已连接 (同步中...)', 'Connected (Syncing...)') : _text('已连接', 'Connected');
+    } else if (wsOnline == false) {
       statusColor = Colors.redAccent;
       statusText = _text('连接未就绪', 'Unreachable');
     } else {
@@ -4681,9 +6596,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
       statusText = _text('待测试', 'Untested');
     }
 
+    final isCurrent = isCur;
+    final hasWorkerUrl = _cfD1WorkerUrlController.text.trim().isNotEmpty;
+    final isConfiguredAndHealthy = hasWorkerUrl && (wsOnline == true || lastSyncOk || isSyncing || (wsOnline == null && _selectedWorkspace.hasCloudConfig));
+    final shouldCollapseConfig = isConfiguredAndHealthy && !_isEditingWorker;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        if (!isCurrent)
+          _buildInactiveWorkspaceNoticeBanner(accentColor, textColor, subColor),
+
         // 1. 顶部状态与控制卡片
         _buildCardSection(
           child: Column(
@@ -4718,7 +6641,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
                       ],
                     ),
                   ),
-                  if (_workerPingRtt != null && _isWorkerOnline == true) ...[
+                  if (effectiveRtt != null && (wsOnline == true || lastSyncOk || isSyncing)) ...[
                     const SizedBox(width: 6),
                     Text(
                       '${_workerPingRtt!.toStringAsFixed(0)}ms',
@@ -4740,7 +6663,21 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                   const SizedBox(width: 6),
                   ElevatedButton.icon(
-                    onPressed: (_isTestingCfD1 || widget.state.isD1Syncing) ? null : () => _triggerSyncAll(),
+                    onPressed: (_isTestingCfD1 || widget.state.isD1Syncing)
+                        ? null
+                        : () {
+                            if (!isCurrent) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(_text('当前未激活【${_selectedWorkspace.name}】，请先切换工作区后再同步', 'Please switch to [${_selectedWorkspace.name}] before syncing')),
+                                  duration: const Duration(seconds: 2),
+                                  behavior: SnackBarBehavior.floating,
+                                ),
+                              );
+                              return;
+                            }
+                            _triggerSyncAll();
+                          },
                     icon: widget.state.isD1Syncing
                         ? const SizedBox(width: 10, height: 10, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                         : const Icon(Icons.cloud_sync_rounded, size: 13),
@@ -4856,12 +6793,54 @@ class _SettingsDialogState extends State<SettingsDialog> {
         const SizedBox(height: 12),
 
         // 2. 配置方式选项卡
-        _buildCardSection(
-          title: _text('配置云端连接', 'Setup Cloud Connection'),
-          icon: Icons.tune_rounded,
-          accentColor: accentColor,
-          textColor: textColor,
-          child: Column(
+        if (shouldCollapseConfig) ...[
+          _buildCardSection(
+            title: _text('云端连接配置', 'Cloud Connection Settings'),
+            icon: Icons.cloud_done_rounded,
+            accentColor: accentColor,
+            textColor: textColor,
+            headerTrailing: ElevatedButton.icon(
+              onPressed: () => setState(() => _isEditingWorker = true),
+              icon: const Icon(Icons.edit_rounded, size: 12),
+              label: Text(_text('修改配置', 'Edit Config'), style: const TextStyle(fontSize: 11)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: accentColor,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                minimumSize: const Size(0, 24),
+                elevation: 0,
+              ),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.check_circle_outline_rounded, color: Colors.green, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    _text(
+                      '当前节点服务正常，配置已折叠隐藏。如需更换节点或重新配置凭据，请点击右上角「修改配置」。',
+                      'Cloud service is connected. Config is collapsed. Click Edit Config to modify.',
+                    ),
+                    style: TextStyle(fontSize: 11, color: subColor),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ] else ...[
+          _buildCardSection(
+            title: _text('配置云端连接', 'Setup Cloud Connection'),
+            icon: Icons.tune_rounded,
+            accentColor: accentColor,
+            textColor: textColor,
+            headerTrailing: isConfiguredAndHealthy
+                ? TextButton.icon(
+                    onPressed: () => setState(() => _isEditingWorker = false),
+                    icon: const Icon(Icons.unfold_less_rounded, size: 13),
+                    label: Text(_text('收起', 'Collapse'), style: const TextStyle(fontSize: 11)),
+                  )
+                : null,
+            child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
@@ -5180,6 +7159,17 @@ class _SettingsDialogState extends State<SettingsDialog> {
                                       cfR2BucketName: res['r2BucketName'] ?? bucketName,
                                     ),
                                   );
+                                  final curWs = widget.state.currentWorkspace;
+                                  widget.state.updateCurrentWorkspaceProfile(
+                                    curWs.copyWith(
+                                      cfWorkerUrl: res['workerUrl'],
+                                      cfAccountId: accountId,
+                                      cfApiToken: apiToken,
+                                      cfD1DatabaseId: res['d1DatabaseId'],
+                                      cfR2BucketName: res['r2BucketName'] ?? bucketName,
+                                      cfD1AutoSync: true,
+                                    ),
+                                  );
                                 } else {
                                   _cfD1TestSuccess = false;
                                   _cfD1TestMessage = res['error'] ?? _text('❌ 部署失败，请检查令牌权限', 'Deployment failed');
@@ -5205,6 +7195,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
             ],
           ),
         ),
+        ],
 
         // 3. 反馈消息条
         if (widget.state.isD1Syncing || _cfD1TestMessage != null || widget.state.lastD1SyncMessage != null) ...[
@@ -5237,10 +7228,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
           _isWorkerOnline = true;
           _cfD1TestSuccess = true;
           _workerPingRtt = res['rttMs'] as double?;
-          if (closeEditOnSuccess) {
-            _isEditingWorker = false;
-            _fourthColumnType = null;
-          }
+          _isEditingWorker = false;
+          _fourthColumnType = null;
+          widget.state.setWorkspaceCloudOnline(_selectedWorkspace.id, true, rttMs: _workerPingRtt);
           _cfD1TestMessage = _text(
             '✅ Worker 连接正常！延迟: ${(_workerPingRtt ?? 0).toStringAsFixed(1)}ms',
             '✅ Connected! RTT: ${(_workerPingRtt ?? 0).toStringAsFixed(1)}ms',
@@ -5251,9 +7241,16 @@ class _SettingsDialogState extends State<SettingsDialog> {
               cfWorkerUrl: url,
             ),
           );
+          final curWs = widget.state.currentWorkspace;
+          widget.state.updateCurrentWorkspaceProfile(
+            curWs.copyWith(
+              cfWorkerUrl: url,
+            ),
+          );
         } else {
           _isWorkerOnline = false;
           _cfD1TestSuccess = false;
+          widget.state.setWorkspaceCloudOnline(_selectedWorkspace.id, false);
           _cfD1TestMessage = _text(
             '❌ 节点连接失败: ${res['error'] ?? res['status']}',
             'Connection failed: ${res['error'] ?? res['status']}',

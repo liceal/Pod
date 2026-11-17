@@ -3,7 +3,7 @@
 
 #define MyAppName "PodQuick"
 #ifndef MyAppVersion
-#define MyAppVersion "1.1.1"
+#define MyAppVersion "1.1.2"
 #endif
 #define MyAppPublisher "PodQuick"
 #define MyAppURL "https://github.com/liceal/Pod"

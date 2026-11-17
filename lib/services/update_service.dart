@@ -48,7 +48,7 @@ class UpdateService {
   static const String githubOwner = 'liceal';
   static const String githubRepo = 'Pod';
 
-  static String _currentVersion = '1.1.1';
+  static String _currentVersion = '1.1.2';
   static String get currentVersion => _currentVersion;
   static const int currentBuildNumber = 1;
 
@@ -135,7 +135,13 @@ class UpdateService {
         final latestVersion = (json['version'] as String? ?? '1.0.0').replaceFirst(RegExp(r'^[vV]'), '');
         final releaseNotes = json['releaseNotes'] as String? ?? '';
         final winUrl = json['windowsUrl'] as String? ?? 'PodQuick_Setup.exe';
-        final macUrl = json['macUrl'] as String? ?? 'PodQuick.dmg';
+        final macArm = json['macArmUrl'] as String? ?? 'PodQuick-arm.dmg';
+        final macX86 = json['macX86Url'] as String? ?? 'PodQuick-x86.dmg';
+        final isArm = await _isAppleSiliconMac();
+        final rawMacUrl = json['macUrl'] as String? ?? '';
+        final macUrl = isArm
+            ? (macArm.isNotEmpty ? macArm : rawMacUrl)
+            : (macX86.isNotEmpty ? macX86 : rawMacUrl);
 
         if (_isHigherVersion(latestVersion, currentVersion)) {
           return AppVersionInfo(
@@ -220,9 +226,9 @@ class UpdateService {
             winUrl = downloadUrl;
           }
         } else if (name.endsWith('.dmg')) {
-          if (name.contains('applesilicon') || name.contains('arm64') || name.contains('aarch64')) {
+          if (name.contains('applesilicon') || name.contains('arm64') || name.contains('aarch64') || name.contains('-arm') || name.contains('_arm')) {
             macArmUrl = downloadUrl;
-          } else if (name.contains('intel') || name.contains('x86_64') || name.contains('x64')) {
+          } else if (name.contains('intel') || name.contains('x86_64') || name.contains('x64') || name.contains('x86')) {
             macIntelUrl = downloadUrl;
           } else {
             macFallbackUrl = downloadUrl;
