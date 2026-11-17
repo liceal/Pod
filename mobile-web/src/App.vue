@@ -161,7 +161,7 @@ import FilesView from './views/FilesView.vue';
 import SettingsView from './views/SettingsView.vue';
 
 import { Note, ClipboardItem } from './types';
-import { ApiClient } from './api/client';
+import { ApiClient, CURRENT_WEB_VERSION } from './api/client';
 import { initTheme, activeTheme, toggleQuickTheme } from './utils/theme';
 
 type Tab = 'clipboard' | 'notes' | 'files' | 'settings';
@@ -328,11 +328,24 @@ const checkAndApplyPinProtection = async (): Promise<boolean> => {
 let lastAutoSyncTime = 0;
 let smartPollTimer: any = null;
 
+const checkForWebAutoUpdate = async () => {
+  try {
+    const health = await ApiClient.checkHealth();
+    if (health.ok && health.version && health.version !== CURRENT_WEB_VERSION) {
+      triggerToast(`🎉 发现云端新版本 v${health.version}，正在自动为您更新...`, 'success');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+    }
+  } catch {}
+};
+
 const triggerAutoFreshSync = () => {
   const now = Date.now();
   if (now - lastAutoSyncTime < 5000) return; // Debounce 5s
   lastAutoSyncTime = now;
   performSync(true, true);
+  checkForWebAutoUpdate();
 };
 
 const handleVisibilityChange = () => {

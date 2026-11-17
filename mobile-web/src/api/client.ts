@@ -10,15 +10,13 @@ const STORAGE_KEY_CLIPBOARD = 'podquick_cached_clipboard';
 const STORAGE_KEY_FILES = 'podquick_cached_files';
 const STORAGE_KEY_PENDING_NOTES = 'podquick_pending_notes';
 
+export const CURRENT_WEB_VERSION = '1.1.1';
+
 export class ApiClient {
   private static defaultBaseUrl = '';
 
   public static getBaseUrl(): string {
-    const saved = localStorage.getItem(STORAGE_KEY_WORKER_URL);
-    if (saved && saved.trim() && !saved.includes('workers.dev')) {
-      return saved.trim().replace(/\/+$/, '');
-    }
-    // If hosted in browser (custom domain, localhost, or worker), dynamically use origin!
+    // Hosted on Cloudflare Worker: Always dynamically use origin for direct same-origin connection!
     if (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http')) {
       return window.location.origin;
     }
@@ -144,17 +142,17 @@ export class ApiClient {
   }
 
   // Health check
-  public static async checkHealth(): Promise<{ ok: boolean; latencyMs: number; message: string }> {
+  public static async checkHealth(): Promise<{ ok: boolean; latencyMs: number; message: string; version?: string }> {
     const base = this.getBaseUrl();
     const t0 = performance.now();
     try {
-      const res = await fetch(`${base}/health`, { signal: AbortSignal.timeout(6000) });
+      const res = await fetch(`${base}/health?_t=${Date.now()}`, { signal: AbortSignal.timeout(6000) });
       const latencyMs = Math.round(performance.now() - t0);
       if (!res.ok) {
         return { ok: false, latencyMs, message: `HTTP ${res.status}` };
       }
       const data = await res.json();
-      return { ok: true, latencyMs, message: data.database || 'connected' };
+      return { ok: true, latencyMs, message: data.database || 'connected', version: data.version };
     } catch (e: any) {
       return { ok: false, latencyMs: Math.round(performance.now() - t0), message: e.message || '网络连接超时' };
     }

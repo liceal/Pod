@@ -73,25 +73,12 @@
       <div class="settings-section">
         <h3 class="section-title">Cloudflare 服务连接</h3>
         <div class="card setting-card">
-          <div class="form-item">
-            <label class="item-label">Worker 后端地址</label>
-            <div class="input-with-action">
-              <input
-                v-model="workerUrl"
-                type="url"
-                class="form-input"
-                placeholder="https://your-worker-domain.workers.dev"
-              />
-              <button class="btn btn-secondary btn-sm" @click="saveWorkerUrl">
-                保存
-              </button>
-            </div>
-            <p class="item-tip">
-              默认同域直连或官方 Worker 节点。修改后将自动切换数据源。
-            </p>
+          <div class="info-row">
+            <span class="info-label">服务节点 (同域直连)</span>
+            <span class="info-value text-mono">{{ currentOrigin }}</span>
           </div>
 
-          <div class="status-row">
+          <div class="status-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color, rgba(0,0,0,0.06));">
             <div class="status-left">
               <span class="status-dot" :class="{ online: isOnline, offline: !isOnline }"></span>
               <span class="status-text">{{ healthMessage }}</span>
@@ -244,16 +231,16 @@
         </div>
       </div>
 
-      <!-- 6. PWA 独立桌面模式状态 -->
-      <div class="settings-section">
-        <h3 class="section-title">桌面应用模式 (PWA)</h3>
+      <!-- 6. PWA 独立桌面模式状态 (仅移动端展示添加到桌面引导，桌面端浏览器自动隐藏) -->
+      <div v-if="isMobileDevice" class="settings-section">
+        <h3 class="section-title">移动桌面应用模式 (PWA)</h3>
         <div class="card setting-card pwa-card" :class="{ 'is-active-pwa': isPwaStandalone }">
           <div class="pwa-icon">
             <Icons name="cloud" size="24" />
           </div>
           <div class="pwa-text">
             <div class="pwa-title-row">
-              <p class="pwa-title">{{ isPwaStandalone ? '已激活 PWA 独立沉浸模式' : '添加到手机桌面' }}</p>
+              <p class="pwa-title">{{ isPwaStandalone ? '已激活 PWA 移动独立沉浸模式' : '添加到手机桌面' }}</p>
               <span v-if="isPwaStandalone" class="badge badge-accent">已开启手势系统</span>
             </div>
             <p class="pwa-desc">
@@ -277,7 +264,7 @@
             </div>
             <div class="brand-info">
               <h4 class="app-brand-name">PodQuick (轻蓄)</h4>
-              <p class="app-version-tag">版本号：<span class="version-num">v1.1.0</span> <span class="badge">最新稳定版</span></p>
+              <p class="app-version-tag">版本号：<span class="version-num">v1.1.1</span> <span class="badge">最新稳定版</span></p>
             </div>
           </div>
 
@@ -292,7 +279,7 @@
             </div>
             <div class="version-item">
               <span class="v-label">运行模式</span>
-              <span class="v-value">{{ isPwaStandalone ? 'PWA 桌面独立模式 (全手势)' : 'Mobile Web 浏览器模式' }}</span>
+              <span class="v-value">{{ runningModeText }}</span>
             </div>
           </div>
 
@@ -301,9 +288,9 @@
               <Icons name="notes" size="14" />
               <span>查看版本更新日志</span>
             </button>
-            <button class="btn btn-ghost btn-sm" @click="checkUpdates">
+            <button class="btn btn-ghost btn-sm" :disabled="checkingUpdate" @click="checkUpdates">
               <Icons name="refresh" size="14" :class="{ rotating: checkingUpdate }" />
-              <span>检查更新</span>
+              <span>{{ checkingUpdate ? '正在检查...' : '检查更新' }}</span>
             </button>
           </div>
         </div>
@@ -327,7 +314,7 @@
                 <div class="release-brand-icon">
                   <Icons name="cloud" size="18" />
                 </div>
-                <h3>PodQuick v1.1.0 更新日志</h3>
+                <h3>PodQuick v1.1.1 更新日志</h3>
               </div>
               <button class="release-close-btn" @click="showReleaseNotesModal = false" title="关闭">
                 <Icons name="close" size="16" />
@@ -335,13 +322,25 @@
             </div>
             <div class="release-modal-body">
               <div class="release-badge-bar">
-                <span class="badge badge-accent">2026 最新发行版</span>
-                <span class="sub-date">发布于 2026-09 · 全面优化</span>
+                <span class="badge badge-accent">v1.1.1 最新发行版</span>
+                <span class="sub-date">自动热更新 · 弱网防丢 · 智能冲突合并</span>
               </div>
               <ul class="release-list">
                 <li>
+                  <strong>全自动静默热更新系统</strong>
+                  无论在手机 Safari/Chrome 还是 PWA 主屏幕独立应用中，只要检测到云端发布了新版本，无需手动清理缓存或手动刷新，系统自动在切回前台时完成热更新。
+                </li>
+                <li>
+                  <strong>弱网与 VPN 断连离线队列</strong>
+                  在遭遇网络断开或 VPN 波动时，便签与操作自动在本地暂存队列中安全保护，网络恢复后无感自动同步至云端 D1，杜绝弹窗打扰。
+                </li>
+                <li>
+                  <strong>桌面端浏览器界面精简</strong>
+                  在电脑端浏览器中访问时，自动精简手机专属的 PWA 安装引导，直连当前 Cloudflare 节点，界面更轻爽自然。
+                </li>
+                <li>
                   <strong>四模块原生级丝滑滑屏（原生硬件加速 Scroll-Snap）</strong>
-                  彻底重构四大核心模块（剪贴板、便签、文件相册、设置）的左右滑动手势逻辑：全面采用移动端 GPU 硬件加速的 CSS Scroll-Snap 极简架构。手指拖拽 1:1 实时跟随，松手天然带有高刷新率惯性减速与柔和弹性吸附，彻底修复松手时偶尔丢失滑动动画直接闪跳的缺陷！
+                  彻底重构四大核心模块（剪贴板、便签、文件相册、设置）的左右滑动手势逻辑：全面采用移动端 GPU 硬件加速的 CSS Scroll-Snap 极简架构。手指拖拽 1:1 实时跟随，松手天然带有高刷新率惯性减速与柔和弹性吸附。
                 </li>
                 <li>
                   <strong>首尾橡皮筋弹性阻尼（iOS Rubber-band）</strong>
@@ -384,7 +383,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue';
 import Icons from '../components/Icons.vue';
-import { ApiClient } from '../api/client';
+import { ApiClient, CURRENT_WEB_VERSION } from '../api/client';
 import { currentThemeMode, setThemeMode, ThemeMode } from '../utils/theme';
 
 const props = defineProps<{
@@ -399,7 +398,7 @@ const emit = defineEmits<{
   (e: 'toast', msg: string, type?: 'success' | 'error' | 'info'): void;
 }>();
 
-const workerUrl = ref('');
+const currentOrigin = computed(() => (typeof window !== 'undefined' ? window.location.origin : '同域直连'));
 const checking = ref(false);
 const syncing = ref(false);
 const isOnline = ref(false);
@@ -413,6 +412,18 @@ const submittingPin = ref(false);
 const isPwaStandalone = ref(false);
 const showReleaseNotesModal = ref(false);
 const checkingUpdate = ref(false);
+
+const isMobileDevice = computed(() => {
+  if (typeof window === 'undefined') return true;
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+});
+
+const runningModeText = computed(() => {
+  if (!isMobileDevice.value) {
+    return 'Web 网页直连模式 (电脑浏览器)';
+  }
+  return isPwaStandalone.value ? 'PWA 移动端沉浸模式 (全手势)' : '移动端 Web 浏览器模式';
+});
 
 const checkPwaStatus = () => {
   if (typeof window !== 'undefined') {
@@ -428,13 +439,21 @@ const checkUpdates = async () => {
   checkingUpdate.value = true;
   emit('toast', '正在连接云端检查最新版本...', 'info');
   try {
-    await ApiClient.checkHealth();
-  } catch {}
-  setTimeout(() => {
+    const res = await ApiClient.checkHealth();
     checkingUpdate.value = false;
-    emit('toast', '已检测到最新发布版本 v1.1.0，已为您展开更新日志！', 'success');
+    if (res.ok && res.version && res.version !== CURRENT_WEB_VERSION) {
+      emit('toast', `🎉 发现云端新版本 v${res.version}，正在自动为您更新...`, 'success');
+      setTimeout(() => {
+        window.location.reload();
+      }, 1200);
+      return;
+    }
+    emit('toast', `当前已是最新版本 (v${CURRENT_WEB_VERSION})，已展开更新日志`, 'success');
     showReleaseNotesModal.value = true;
-  }, 500);
+  } catch (e: any) {
+    checkingUpdate.value = false;
+    emit('toast', `检查更新失败: ${e.message || '网络连接异常'}`, 'error');
+  }
 };
 
 const switchTheme = (mode: ThemeMode) => {
@@ -489,16 +508,6 @@ const checkConnection = async () => {
   } else {
     healthMessage.value = `连接异常: ${res.message}`;
   }
-};
-
-const saveWorkerUrl = () => {
-  if (!workerUrl.value.trim()) {
-    emit('toast', '请输入有效的 Worker 地址', 'error');
-    return;
-  }
-  ApiClient.setBaseUrl(workerUrl.value);
-  emit('toast', '后端地址已更新', 'success');
-  checkConnection();
 };
 
 const handleManualSync = async () => {
