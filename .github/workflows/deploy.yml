@@ -18,23 +18,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
-          cache-dependency-path: 'mobile-web/pnpm-lock.yaml'
+          cache: 'npm'
+          cache-dependency-path: 'mobile-web/package-lock.json'
 
       - name: Install Dependencies & Build Mobile Web
         run: |
           cd mobile-web
-          pnpm install --frozen-lockfile
-          pnpm run build
+          npm install
+          npm run build
 
       - name: Deploy to Cloudflare Worker
         env:
