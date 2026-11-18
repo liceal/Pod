@@ -461,10 +461,10 @@ const toggleFavorite = async (item: ClipboardItem) => {
 }
 
 .pill-btn.active {
-  background: var(--accent-gradient);
-  color: #ffffff;
-  border-color: transparent;
-  box-shadow: var(--accent-glow);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  border-color: var(--text-primary);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
   font-weight: 600;
 }
 

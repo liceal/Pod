@@ -713,9 +713,9 @@ interface FolderNode {
 
 // 检查是否为目录标记对象（.keep 占位对象或以 / 结尾的对象，或带有 is_directory 标识）
 const isFolderMarker = (f: FileMetadata): boolean => {
-  if (f.is_directory === true || f.mime_type === 'inode/directory') return true;
+  if (f.is_directory === true || f.mime_type === 'inode/directory' || f.mime_type === 'application/x-directory') return true;
   if (!f.file_key) return false;
-  return f.file_key.endsWith('/.keep') || f.file_key.endsWith('/');
+  return f.file_key.endsWith('/.keep') || f.file_key.endsWith('/') || f.file_key.endsWith('.keep');
 };
 
 // 获取目录标记对象对应的纯净相对目录路径（相对于 files/，如 files/照片/.keep -> 照片）
@@ -723,6 +723,8 @@ const getFolderMarkerRelPath = (fileKey: string): string => {
   let clean = getRelativeKey(fileKey);
   if (clean.endsWith('/.keep')) {
     clean = clean.slice(0, -6);
+  } else if (clean.endsWith('.keep')) {
+    clean = clean.slice(0, -5);
   } else if (clean.endsWith('/')) {
     clean = clean.slice(0, -1);
   }

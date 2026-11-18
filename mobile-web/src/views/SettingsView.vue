@@ -69,47 +69,48 @@
         </div>
       </div>
 
-      <!-- 2. Cloudflare Service Connection -->
+      <!-- 2. Cloud Connection & Sync Dashboard (Refactoring UI Unified Card) -->
       <div class="settings-section">
-        <h3 class="section-title">Cloudflare 服务连接</h3>
-        <div class="card setting-card">
-          <div class="info-row">
-            <span class="info-label">服务节点 (同域直连)</span>
-            <span class="info-value text-mono">{{ currentOrigin }}</span>
-          </div>
-
-          <div class="status-row" style="margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color, rgba(0,0,0,0.06));">
-            <div class="status-left">
+        <h3 class="section-title">云端同步与节点状态 (D1 + R2)</h3>
+        <div class="card setting-card sync-dashboard-card">
+          <!-- Top Bar: Status Pill + Actions -->
+          <div class="sync-header-row">
+            <div class="status-pill" :class="{ online: isOnline, offline: !isOnline }">
               <span class="status-dot" :class="{ online: isOnline, offline: !isOnline }"></span>
-              <span class="status-text">{{ healthMessage }}</span>
+              <span class="status-pill-text">{{ healthMessage }}</span>
             </div>
-            <button class="btn btn-ghost btn-sm" :disabled="checking" @click="checkConnection">
-              <Icons name="refresh" size="14" :class="{ rotating: checking }" />
-              <span>测速</span>
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- 3. Sync Status Section -->
-      <div class="settings-section">
-        <h3 class="section-title">数据同步状态 (D1 + R2)</h3>
-        <div class="card setting-card">
-          <div class="info-row">
-            <span class="info-label">上次同步时间</span>
-            <span class="info-value">{{ formattedLastSync }}</span>
+            <div class="sync-header-actions">
+              <button class="btn btn-secondary btn-sm" :disabled="checking" @click="checkConnection" title="测试节点延迟">
+                <Icons name="refresh" size="13" :class="{ rotating: checking }" />
+                <span>测速</span>
+              </button>
+              <button class="btn btn-primary btn-sm btn-glow" :disabled="syncing" @click="handleManualSync">
+                <Icons name="refresh" size="13" :class="{ rotating: syncing }" />
+                <span>{{ syncing ? '同步中...' : '立即同步' }}</span>
+              </button>
+            </div>
           </div>
 
-          <div class="info-row">
-            <span class="info-label">本地缓存数据</span>
-            <span class="info-value">{{ notesCount }} 便签 · {{ clipCount }} 剪贴板</span>
+          <!-- Metrics Grid: 3 Compact Inset Cells -->
+          <div class="sync-metrics-grid">
+            <div class="metric-cell">
+              <span class="metric-label">便签记录</span>
+              <span class="metric-value">{{ notesCount }} <small>条</small></span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">剪贴板缓存</span>
+              <span class="metric-value">{{ clipCount }} <small>条</small></span>
+            </div>
+            <div class="metric-cell">
+              <span class="metric-label">上次同步</span>
+              <span class="metric-value metric-time">{{ formattedLastSync }}</span>
+            </div>
           </div>
 
-          <div class="sync-actions">
-            <button class="btn btn-primary btn-glow full-width-btn" :disabled="syncing" @click="handleManualSync">
-              <Icons name="refresh" size="16" :class="{ rotating: syncing }" />
-              <span>{{ syncing ? '正在全量同步...' : '立即从云端全量同步' }}</span>
-            </button>
+          <!-- Node Origin Bar -->
+          <div class="node-origin-bar">
+            <span class="origin-tag">同域节点</span>
+            <span class="origin-url text-mono">{{ currentOrigin }}</span>
           </div>
         </div>
       </div>
@@ -264,7 +265,7 @@
             </div>
             <div class="brand-info">
               <h4 class="app-brand-name">PodQuick (轻蓄)</h4>
-              <p class="app-version-tag">版本号：<span class="version-num">v1.1.1</span> <span class="badge">最新稳定版</span></p>
+              <p class="app-version-tag">版本号：<span class="version-num">v1.1.4</span> <span class="badge">最新稳定版</span></p>
             </div>
           </div>
 
@@ -314,7 +315,7 @@
                 <div class="release-brand-icon">
                   <Icons name="cloud" size="18" />
                 </div>
-                <h3>PodQuick v1.1.1 更新日志</h3>
+                <h3>PodQuick v1.1.4 更新日志</h3>
               </div>
               <button class="release-close-btn" @click="showReleaseNotesModal = false" title="关闭">
                 <Icons name="close" size="16" />
@@ -322,21 +323,33 @@
             </div>
             <div class="release-modal-body">
               <div class="release-badge-bar">
-                <span class="badge badge-accent">v1.1.1 最新发行版</span>
-                <span class="sub-date">自动热更新 · 弱网防丢 · 智能冲突合并</span>
+                <span class="badge badge-accent">v1.1.4 最新发行版</span>
+                <span class="sub-date">Refactoring UI 极简重构 · 锚点记忆 · 空目录同步</span>
               </div>
               <ul class="release-list">
                 <li>
-                  <strong>全自动静默热更新系统</strong>
-                  无论在手机 Safari/Chrome 还是 PWA 主屏幕独立应用中，只要检测到云端发布了新版本，无需手动清理缓存或手动刷新，系统自动在切回前台时完成热更新。
+                  <strong>UI/UX 极简重构 (Refactoring UI)</strong>
+                  采用现代 Zinc-900 中性深色主题；同步设置整合为高内聚三宫格仪表盘卡片；桌面端升级原生分段控制器、内嵌微凹输入框与直达操作胶囊。
                 </li>
                 <li>
-                  <strong>弱网与 VPN 断连离线队列</strong>
-                  在遭遇网络断开或 VPN 波动时，便签与操作自动在本地暂存队列中安全保护，网络恢复后无感自动同步至云端 D1，杜绝弹窗打扰。
+                  <strong>URL 锚点路由与位置记忆</strong>
+                  底部四大模块切换或手势滑动时实时更新地址栏锚点（#clipboard / #notes / #files / #settings），页面刷新或再次进入自动停留原处。
                 </li>
                 <li>
-                  <strong>桌面端浏览器界面精简</strong>
-                  在电脑端浏览器中访问时，自动精简手机专属的 PWA 安装引导，直连当前 Cloudflare 节点，界面更轻爽自然。
+                  <strong>本地与线上空文件夹双向同步</strong>
+                  PC 客户端自动识别本地空文件夹并同步至线上网盘展示，支持同步期间位置锁定，彻底解决同步跳回剪贴板的问题。
+                </li>
+                <li>
+                  <strong>全新网盘与文件相册双模式</strong>
+                  支持大图网格平铺与紧凑详细列表双模式自由切换，文件按金色专属文件夹分级归类，层级清晰易操作。
+                </li>
+                <li>
+                  <strong>全自动多源 CDN 无感知热更新</strong>
+                  无论在手机 Safari/Chrome 还是电脑浏览器中打开，节点自动从高速 CDN 感知并拉取最新 Web 资源，无须开电脑即可保持最新。
+                </li>
+                <li>
+                  <strong>弱网与离线队列防丢</strong>
+                  网络断开或波动时，便签与相册在本地队列安全暂存，网络恢复后无感自动同步至云端，告别丢数据。
                 </li>
                 <li>
                   <strong>四模块原生级丝滑滑屏（原生硬件加速 Scroll-Snap）</strong>
@@ -444,8 +457,10 @@ const checkUpdates = async () => {
     if (res.ok && res.version && res.version !== CURRENT_WEB_VERSION) {
       emit('toast', `🎉 发现云端新版本 v${res.version}，正在自动为您更新...`, 'success');
       setTimeout(() => {
-        window.location.reload();
-      }, 1200);
+        const url = new URL(window.location.href);
+        url.searchParams.set('refresh', '1');
+        window.location.href = url.toString();
+      }, 1000);
       return;
     }
     emit('toast', `当前已是最新版本 (v${CURRENT_WEB_VERSION})，已展开更新日志`, 'success');
@@ -819,6 +834,122 @@ onMounted(() => {
 .form-input:focus {
   border-color: var(--accent-color);
   box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.sync-dashboard-card {
+  gap: 12px;
+}
+
+.sync-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+}
+
+.status-pill.online {
+  background-color: rgba(16, 185, 129, 0.12);
+  border-color: rgba(16, 185, 129, 0.3);
+  color: var(--success-color);
+}
+
+.status-pill.offline {
+  background-color: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.3);
+  color: var(--danger-color);
+}
+
+.status-pill-text {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.sync-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sync-metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.metric-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 9px 10px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+}
+
+.metric-label {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+.metric-value {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.metric-value small {
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  font-family: var(--font-family);
+}
+
+.metric-time {
+  font-size: 12px;
+  font-family: var(--font-family);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-origin-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-xs);
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-subtle);
+}
+
+.origin-tag {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.origin-url {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status-row {

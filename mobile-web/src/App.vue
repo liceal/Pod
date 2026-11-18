@@ -50,6 +50,7 @@
       :class="{ 'lock-scroll': isInsideFilesSubfolder }"
       @scroll.passive="handleTrackScroll"
       @touchstart.passive="handleTouchStart"
+      @touchend.passive="handleTouchEnd"
     >
       <div class="tab-page">
         <ClipboardView
@@ -151,7 +152,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import Icons from './components/Icons.vue';
 import Toast from './components/Toast.vue';
 import PinLockModal from './components/PinLockModal.vue';
@@ -166,23 +167,64 @@ import { initTheme, activeTheme, toggleQuickTheme } from './utils/theme';
 
 type Tab = 'clipboard' | 'notes' | 'files' | 'settings';
 const tabs: Tab[] = ['clipboard', 'notes', 'files', 'settings'];
+const STORAGE_KEY_ACTIVE_TAB = 'podquick_active_tab';
 
-const currentTab = ref<Tab>('clipboard');
+const parseHashToTab = (): Tab | null => {
+  if (typeof window === 'undefined') return null;
+  const raw = window.location.hash.replace(/^#\/?/, '').trim().toLowerCase();
+  if ((tabs as string[]).includes(raw)) {
+    return raw as Tab;
+  }
+  return null;
+};
+
+const getInitialTab = (): Tab => {
+  const fromHash = parseHashToTab();
+  if (fromHash) return fromHash;
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_TAB);
+    if (saved && (tabs as string[]).includes(saved)) {
+      return saved as Tab;
+    }
+  } catch {}
+  return 'clipboard';
+};
+
+const syncTabToUrlAndStorage = (tab: Tab) => {
+  try {
+    localStorage.setItem(STORAGE_KEY_ACTIVE_TAB, tab);
+  } catch {}
+  if (typeof window !== 'undefined') {
+    const targetHash = `#${tab}`;
+    if (window.location.hash !== targetHash) {
+      try {
+        window.history.replaceState(null, '', targetHash);
+      } catch {
+        window.location.hash = targetHash;
+      }
+    }
+  }
+};
+
+const currentTab = ref<Tab>(getInitialTab());
 const isStandalone = ref(false);
 const filesViewRef = ref<any>(null);
 const isInsideFilesSubfolder = ref(false);
 const tabsContainerRef = ref<HTMLElement | null>(null);
 
 let isProgrammaticScrolling = false;
+let isUserSwiping = false;
 let scrollEndTimer: any = null;
+let touchEndTimer: any = null;
 
 const currentIndex = computed(() => {
   const idx = tabs.indexOf(currentTab.value);
   return idx !== -1 ? idx : 0;
 });
 
-const switchTab = (tab: Tab) => {
+const switchTab = (tab: Tab, instant = false) => {
   currentTab.value = tab;
+  syncTabToUrlAndStorage(tab);
   const idx = tabs.indexOf(tab);
   if (tabsContainerRef.value && idx !== -1) {
     isProgrammaticScrolling = true;
@@ -190,33 +232,58 @@ const switchTab = (tab: Tab) => {
     const container = tabsContainerRef.value;
     container.style.scrollSnapType = 'none';
     const targetLeft = idx * container.clientWidth;
-    container.scrollTo({
-      left: targetLeft,
-      behavior: 'smooth',
-    });
-    scrollEndTimer = setTimeout(() => {
-      if (container) {
-        container.style.scrollSnapType = 'x mandatory';
-      }
+    if (instant) {
+      container.scrollLeft = targetLeft;
+      container.style.scrollSnapType = 'x mandatory';
       isProgrammaticScrolling = false;
-    }, 400);
+    } else {
+      container.scrollTo({
+        left: targetLeft,
+        behavior: 'smooth',
+      });
+      scrollEndTimer = setTimeout(() => {
+        if (container) {
+          container.style.scrollSnapType = 'x mandatory';
+        }
+        isProgrammaticScrolling = false;
+      }, 400);
+    }
+  }
+};
+
+const handleHashChange = () => {
+  const hashTab = parseHashToTab();
+  if (hashTab && hashTab !== currentTab.value) {
+    switchTab(hashTab, false);
   }
 };
 
 const handleTrackScroll = () => {
-  if (isProgrammaticScrolling || !tabsContainerRef.value) return;
+  // 核心保护：若非用户手动滑动触摸（如数据同步重渲染触发重排），绝不允许跳转标签页
+  if (isProgrammaticScrolling || isSyncing.value || !isUserSwiping || !tabsContainerRef.value) return;
   const { scrollLeft, clientWidth } = tabsContainerRef.value;
   if (!clientWidth) return;
   const idx = Math.round(scrollLeft / clientWidth);
   if (idx >= 0 && idx < tabs.length && tabs[idx] !== currentTab.value) {
     currentTab.value = tabs[idx];
+    syncTabToUrlAndStorage(tabs[idx]);
   }
 };
 
 const handleTouchStart = () => {
-  // Finger touch immediately yields control back to user
+  // 手指触摸屏幕，标记为用户主动滑动
+  isUserSwiping = true;
   isProgrammaticScrolling = false;
   clearTimeout(scrollEndTimer);
+  clearTimeout(touchEndTimer);
+};
+
+const handleTouchEnd = () => {
+  // 触摸结束后给 400ms 惯性滚动缓冲，随后解除用户手势锁定
+  clearTimeout(touchEndTimer);
+  touchEndTimer = setTimeout(() => {
+    isUserSwiping = false;
+  }, 400);
 };
 
 const handleResize = () => {
@@ -276,6 +343,7 @@ const handlePinUnlocked = () => {
 
 const performSync = async (incremental = false, isSilent = false) => {
   if (isSyncing.value) return;
+  const tabBeforeSync = currentTab.value;
   isSyncing.value = true;
   try {
     const res = await ApiClient.pullSync(incremental);
@@ -304,6 +372,18 @@ const performSync = async (incremental = false, isSilent = false) => {
     }
   } finally {
     isSyncing.value = false;
+    // 强制保证：同步结束后标签页与滚动条严格停留在同步前的标签，绝不跳往剪贴板
+    nextTick(() => {
+      if (currentTab.value !== tabBeforeSync) {
+        currentTab.value = tabBeforeSync;
+      }
+      if (tabsContainerRef.value) {
+        const idx = tabs.indexOf(tabBeforeSync);
+        if (idx !== -1) {
+          tabsContainerRef.value.scrollLeft = idx * tabsContainerRef.value.clientWidth;
+        }
+      }
+    });
   }
 };
 
@@ -372,6 +452,15 @@ onMounted(async () => {
   // Initialize theme engine
   initTheme();
 
+  // Restore active tab from URL hash (#clipboard / #notes / #files / #settings) or localStorage
+  const initialTab = getInitialTab();
+  currentTab.value = initialTab;
+  syncTabToUrlAndStorage(initialTab);
+  nextTick(() => {
+    switchTab(initialTab, true);
+  });
+  window.addEventListener('hashchange', handleHashChange);
+
   // Listen for 401 pin expired event from any background sync/file request
   window.addEventListener('podquick:pin-expired', () => {
     notes.value = [];
@@ -419,6 +508,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  window.removeEventListener('hashchange', handleHashChange);
   window.removeEventListener('resize', handleResize);
   window.removeEventListener('podquick:toast', handleCustomToast);
   document.removeEventListener('visibilitychange', handleVisibilityChange);

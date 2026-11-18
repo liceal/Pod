@@ -20,27 +20,27 @@
   --danger-color: #ef4444;
   --danger-light: rgba(239, 68, 68, 0.12);
 
-  /* DARK THEME (Default) */
-  --bg-primary: #090d16;          /* Deep rich obsidian canvas */
-  --bg-secondary: #111827;        /* Solid dark card & sheet background */
-  --bg-tertiary: #1f293d;         /* Elevated button & input background */
-  --bg-elevated: #2d3a54;         /* Hover state */
-  --bg-glass: rgba(17, 24, 39, 0.88);
-  --nav-bg: rgba(17, 24, 39, 0.94);
+  /* DARK THEME (Refactoring UI Modern Zinc Palette) */
+  --bg-primary: #0d0e12;          /* Calm, non-glare deep neutral canvas */
+  --bg-secondary: #16171d;        /* Solid Zinc-900 surface with crisp separation */
+  --bg-tertiary: #20222a;         /* Refined tactile controls & inset inputs */
+  --bg-elevated: #2b2e38;         /* Smooth hover & active state */
+  --bg-glass: rgba(22, 23, 29, 0.9);
+  --nav-bg: rgba(22, 23, 29, 0.95);
 
-  --border-color: rgba(255, 255, 255, 0.1);
-  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-color: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.04);
   --border-hover: rgba(59, 130, 246, 0.4);
 
-  --text-primary: #f8fafc;        /* Pure crisp white */
-  --text-secondary: #cbd5e1;      /* Bright readable silver */
-  --text-muted: #94a3b8;          /* Clear secondary gray */
+  --text-primary: #f4f4f6;        /* Crisp, readable high-contrast text */
+  --text-secondary: #a1a3af;      /* Calm secondary text (Zinc-400) */
+  --text-muted: #717382;          /* Subtle metadata (Zinc-500) */
 
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.35);
-  --shadow-md: 0 8px 24px rgba(0, 0, 0, 0.5);
-  --shadow-lg: 0 20px 48px -8px rgba(0, 0, 0, 0.7);
-  --shadow-xl: 0 24px 60px rgba(0, 0, 0, 0.75);
-  --bg-card: #111827;
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px -4px rgba(0, 0, 0, 0.6);
+  --shadow-xl: 0 20px 48px rgba(0, 0, 0, 0.7);
+  --bg-card: #16171d;
 }
 
 /* LIGHT THEME (Ultra Clean, Paper White & Slate) */
@@ -131,7 +131,7 @@ html, body {
 .card {
   background-color: var(--bg-secondary) !important;
   border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
   position: relative;
   transition: transform 0.16s cubic-bezier(0.16, 1, 0.3, 1),
@@ -140,7 +140,7 @@ html, body {
 }
 
 .card:hover {
-  border-color: var(--border-hover);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .card:active {

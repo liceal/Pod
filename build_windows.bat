@@ -77,7 +77,7 @@ if exist "C:\Program Files\Inno Setup 7\ISCC.exe" set "ISCC_PATH=C:\Program File
 
 set "APP_VER=1.1.0"
 if exist "release_info.json" (
-    for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content release_info.json -Raw | ConvertFrom-Json).version"`) do (
+    for /f "usebackq delims=" %%v in (`powershell -NoProfile -Command "(Get-Content release_info.json -Raw -Encoding UTF8 | ConvertFrom-Json).version"`) do (
         set "APP_VER=%%v"
     )
 )

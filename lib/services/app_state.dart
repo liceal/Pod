@@ -1174,15 +1174,60 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           ];
 
           final allLocalFiles = <File>[];
+          final allLocalDirs = <Directory>[];
           for (final dir in scanDirs) {
             if (dir.existsSync()) {
-              final list = dir.listSync(recursive: true).whereType<File>().toList();
-              for (final f in list) {
-                final normPath = f.path.replaceAll('\\', '/');
-                if (normPath.contains('/.') || normPath.contains('.trash')) continue;
-                final name = f.path.split(Platform.pathSeparator).last;
-                if (name.startsWith('.') || name.endsWith('.tmp')) continue;
-                allLocalFiles.add(f);
+              final entities = dir.listSync(recursive: true);
+              for (final e in entities) {
+                if (e is Directory) {
+                  final norm = e.path.replaceAll('\\', '/');
+                  if (!norm.contains('.trash') && !norm.split('/').last.startsWith('.')) {
+                    allLocalDirs.add(e);
+                  }
+                } else if (e is File) {
+                  final normPath = e.path.replaceAll('\\', '/');
+                  if (normPath.contains('.trash')) continue;
+                  final name = e.path.split(Platform.pathSeparator).last;
+                  final isKeep = name == '.keep';
+                  if (!isKeep && (normPath.contains('/.') || name.startsWith('.') || name.endsWith('.tmp'))) continue;
+                  allLocalFiles.add(e);
+                }
+              }
+            }
+          }
+
+          // 核心特性：自动检测空子目录，写入并同步 .keep 占位对象到云端 R2 与 D1
+          final normDataDirScan = dataDir.path.replaceAll('\\', '/');
+          final normCustomScan = customFilesPath?.replaceAll('\\', '/');
+          for (final d in allLocalDirs) {
+            final norm = d.path.replaceAll('\\', '/');
+            String cleanRel = '';
+            if (normCustomScan != null && normCustomScan.isNotEmpty && norm.startsWith(normCustomScan)) {
+              cleanRel = norm.substring(normCustomScan.length);
+              if (cleanRel.startsWith('/')) cleanRel = cleanRel.substring(1);
+              cleanRel = 'files/$cleanRel';
+            } else if (norm.startsWith(normDataDirScan)) {
+              cleanRel = norm.substring(normDataDirScan.length);
+              if (cleanRel.startsWith('/')) cleanRel = cleanRel.substring(1);
+            }
+            if (!cleanRel.startsWith('files/')) continue;
+            final dirName = cleanRel.split('/').last;
+            if (dirName.startsWith('.') || dirName == '.trash') continue;
+
+            // 检查该目录下是否有任何本地实际文件
+            final hasChildFile = allLocalFiles.any((f) {
+              final fNorm = f.path.replaceAll('\\', '/');
+              return fNorm.startsWith('$norm/') && !fNorm.endsWith('/.keep');
+            });
+            if (!hasChildFile) {
+              final keepFile = File('${d.path}${Platform.pathSeparator}.keep');
+              if (!keepFile.existsSync()) {
+                try {
+                  keepFile.writeAsBytesSync([]);
+                } catch (_) {}
+              }
+              if (keepFile.existsSync() && !allLocalFiles.any((f) => f.path == keepFile.path)) {
+                allLocalFiles.add(keepFile);
               }
             }
           }
@@ -1344,8 +1389,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
             // 如果本地已手动/OS删除此文件或整个文件夹，跳过下载
             if (isKeyDeleted(remoteKey)) continue;
-            // 忽略隐藏文件与临时文件
-            if (remoteKey.contains('/.') || remoteKey.startsWith('.')) continue;
+            // 忽略隐藏文件与临时文件（允许空目录占位标记 .keep）
+            final isDirMarker = remoteKey.endsWith('/.keep') || remoteKey.endsWith('/');
+            if (!isDirMarker && (remoteKey.contains('/.') || remoteKey.startsWith('.'))) continue;
 
             // 严格白名单：只同步用户文件管理(files/)或剪贴板图片(clipboard_images/)
             if (!remoteKey.startsWith('files/') && !remoteKey.startsWith('clipboard_images/')) {
@@ -1405,7 +1451,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                 !activeClipImageKeys.contains(relKey)) {
               continue;
             }
-            if (relKey.contains('/.') || relKey.contains('.trash')) {
+            if (!relKey.endsWith('/.keep') && (relKey.contains('/.') || relKey.contains('.trash'))) {
               continue;
             }
 
@@ -1460,10 +1506,26 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
           for (int i = 0; i < toDownload.length; i++) {
             final remoteInfo = toDownload[i];
             final relKey = remoteInfo['file_key'] as String;
-            final target = resolveLocalTarget(relKey);
             final fileName = relKey.split('/').last;
             final progressIndex = i + 1;
 
+            // 特殊处理：目录占位标记（.keep / / 结尾）直接在本地建立对应空目录并落盘占位符
+            if (relKey.endsWith('/.keep') || relKey.endsWith('/')) {
+              final cleanRel = relKey.replaceAll('/.keep', '').replaceAll(RegExp(r'/+$'), '');
+              final target = resolveLocalTarget(cleanRel);
+              final dir = Directory(target.path);
+              if (!dir.existsSync()) {
+                try { dir.createSync(recursive: true); } catch (_) {}
+              }
+              final keepFile = File('${dir.path}${Platform.pathSeparator}.keep');
+              if (!keepFile.existsSync()) {
+                try { keepFile.writeAsBytesSync([]); } catch (_) {}
+              }
+              newlyDownloadedCount++;
+              continue;
+            }
+
+            final target = resolveLocalTarget(relKey);
             addD1Log('↓ [$progressIndex/${toDownload.length}] 下载 $fileName');
 
             bool ok = false;
@@ -1496,12 +1558,14 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
             final relativePath = computeRelativeKey(file);
             final fileName = file.path.split(Platform.pathSeparator).last;
             final progressIndex = i + 1;
+            final isDirMarker = relativePath.endsWith('/.keep');
+            final mime = isDirMarker ? 'inode/directory' : null;
 
-            addD1Log('↑ [$progressIndex/${toUpload.length}] 上传 $fileName');
+            addD1Log('↑ [$progressIndex/${toUpload.length}] 上传 ${isDirMarker ? '📁 $relativePath' : fileName}');
 
             if (settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty) {
               final service = CfD1SyncService(workerUrl: settings.cfWorkerUrl, isDevMode: kDebugMode);
-              final res = await service.uploadFileToR2(file: file, fileKey: relativePath);
+              final res = await service.uploadFileToR2(file: file, fileKey: relativePath, mimeType: mime);
               if (res['success'] == true) {
                 newlyUploadedCount++;
 
@@ -1510,19 +1574,21 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                     settings.cfApiToken?.trim().isNotEmpty == true &&
                     settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
                   final lowerKey = relativePath.toLowerCase();
-                  final mime = lowerKey.endsWith('.png')
-                      ? 'image/png'
-                      : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
-                          ? 'image/jpeg'
-                          : 'application/octet-stream';
+                  final metaMime = isDirMarker
+                      ? 'inode/directory'
+                      : (lowerKey.endsWith('.png')
+                          ? 'image/png'
+                          : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
+                              ? 'image/jpeg'
+                              : 'application/octet-stream');
                   unawaited(CfD1SyncService.recordFileMetadataRestApi(
                     accountId: settings.cfAccountId!,
                     apiToken: settings.cfApiToken!,
                     d1DatabaseId: settings.cfD1DatabaseId!,
                     fileKey: relativePath,
-                    fileName: fileName,
+                    fileName: isDirMarker ? relativePath.replaceAll('/.keep', '').split('/').last : fileName,
                     fileSize: file.lengthSync(),
-                    mimeType: mime,
+                    mimeType: metaMime,
                   ));
                 }
               } else {
@@ -1537,21 +1603,22 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                     settings.cfApiToken?.trim().isNotEmpty == true &&
                     settings.cfD1DatabaseId?.trim().isNotEmpty == true) {
                   final lowerKey = relativePath.toLowerCase();
-                  final mime = lowerKey.endsWith('.png')
-                      ? 'image/png'
-                      : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
-                          ? 'image/jpeg'
-                          : 'application/octet-stream';
-
-                  await CfD1SyncService.recordFileMetadataRestApi(
+                  final metaMime = isDirMarker
+                      ? 'inode/directory'
+                      : (lowerKey.endsWith('.png')
+                          ? 'image/png'
+                          : (lowerKey.endsWith('.jpg') || lowerKey.endsWith('.jpeg'))
+                              ? 'image/jpeg'
+                              : 'application/octet-stream');
+                  unawaited(CfD1SyncService.recordFileMetadataRestApi(
                     accountId: settings.cfAccountId!,
                     apiToken: settings.cfApiToken!,
                     d1DatabaseId: settings.cfD1DatabaseId!,
                     fileKey: relativePath,
-                    fileName: fileName,
+                    fileName: isDirMarker ? relativePath.replaceAll('/.keep', '').split('/').last : fileName,
                     fileSize: file.lengthSync(),
-                    mimeType: mime,
-                  );
+                    mimeType: metaMime,
+                  ));
                 }
               } else {
                 addD1Log('❌ [$progressIndex/${toUpload.length}] (S3) 上传失败: $fileName');
@@ -1712,6 +1779,13 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     Timer(const Duration(seconds: 10), () {
       if (!_isD1Syncing && !_isShuttingDown && settings.cfD1AutoSync) {
         syncAllLocalDataAndFiles(isManual: false);
+      }
+    });
+
+    // 启动/配置变更后 3 秒静默探测当前工作区云端健康状况与 Web 节点版本
+    Timer(const Duration(seconds: 3), () {
+      if (!_isShuttingDown) {
+        silentCheckWorkspaceHealth(currentWorkspace);
       }
     });
   }
@@ -2487,18 +2561,33 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     return null;
   }
 
-  void setWorkspaceCloudOnline(String wsId, bool isOnline, {double? rttMs}) {
+  /// 记录各工作区探测到的线上 Worker 版本号
+  final Map<String, String?> _workspaceWorkerVersionMap = {};
+  bool _isAutoUpgradingWorker = false;
+
+  String? getWorkspaceWorkerVersion(String wsId) => _workspaceWorkerVersionMap[wsId];
+
+  bool isWorkspaceWorkerOutdated(String wsId) {
+    final v = _workspaceWorkerVersionMap[wsId];
+    if (v == null) return false;
+    return v != CfD1SyncService.currentWorkerVersion;
+  }
+
+  void setWorkspaceCloudOnline(String wsId, bool isOnline, {double? rttMs, String? version}) {
     _workspaceCloudOnlineMap[wsId] = isOnline;
     unawaited(_prefs.setBool('ws_cloud_online_$wsId', isOnline));
     if (rttMs != null) {
       _workspacePingRttMap[wsId] = rttMs;
       unawaited(_prefs.setDouble('ws_cloud_rtt_$wsId', rttMs));
     }
+    if (version != null) {
+      _workspaceWorkerVersionMap[wsId] = version;
+    }
     _workspaceLastHealthCheckMap[wsId] = DateTime.now();
     notifyListeners();
   }
 
-  /// 后台静默检测工作区云端连通性 (保留上次结果，不阻塞 UI，成功则维持/刷新绿色与延迟)
+  /// 后台静默检测工作区云端连通性与版本 (保留上次结果，不阻塞 UI，成功则维持/刷新绿色与延迟，落后则自动热升级)
   Future<void> silentCheckWorkspaceHealth(WorkspaceProfile ws) async {
     final url = ws.cfWorkerUrl?.trim() ?? '';
     if (url.isEmpty) return;
@@ -2506,7 +2595,8 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     final lastCheck = _workspaceLastHealthCheckMap[ws.id];
     if (lastCheck != null &&
         DateTime.now().difference(lastCheck).inMinutes < 5 &&
-        _workspaceCloudOnlineMap[ws.id] == true) {
+        _workspaceCloudOnlineMap[ws.id] == true &&
+        _workspaceWorkerVersionMap[ws.id] == CfD1SyncService.currentWorkerVersion) {
       return;
     }
 
@@ -2515,13 +2605,132 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       final res = await service.checkHealth();
       if (res['success'] == true) {
         final rtt = res['rttMs'] as double?;
-        setWorkspaceCloudOnline(ws.id, true, rttMs: rtt);
+        final serverVersion = res['version'] as String?;
+        setWorkspaceCloudOnline(ws.id, true, rttMs: rtt, version: serverVersion);
+
+        // 如果检测到线上 Web/Worker 版本与客户端内置版本不一致，且有 Cloudflare 凭据，后台自动静默热升级
+        if (serverVersion != CfD1SyncService.currentWorkerVersion) {
+          unawaited(_checkAndAutoUpgradeWorker(ws, detectedVersion: serverVersion));
+        }
       } else {
         if (_workspaceCloudOnlineMap[ws.id] != true) {
           setWorkspaceCloudOnline(ws.id, false);
         }
       }
     } catch (_) {}
+  }
+
+  /// 自动静默热升级 Cloudflare Worker 与 Web 随行端
+  Future<void> _checkAndAutoUpgradeWorker(WorkspaceProfile ws, {String? detectedVersion}) async {
+    if (_isAutoUpgradingWorker) return;
+    final accountId = ws.cfAccountId?.trim().isNotEmpty == true ? ws.cfAccountId!.trim() : settings.cfAccountId?.trim();
+    final apiToken = ws.cfApiToken?.trim().isNotEmpty == true ? ws.cfApiToken!.trim() : settings.cfApiToken?.trim();
+
+    if (accountId == null || accountId.isEmpty || apiToken == null || apiToken.isEmpty) {
+      debugPrint('ℹ️ [Worker Upgrade] 发现线上 Web/Worker 版本 ($detectedVersion) 需升级至 ${CfD1SyncService.currentWorkerVersion}，但未配置 CF API Token，跳过静默升级。');
+      return;
+    }
+
+    _isAutoUpgradingWorker = true;
+    try {
+      debugPrint('🚀 [Worker Upgrade] 发现线上 Web 版本 ($detectedVersion) 落后于客户端 (${CfD1SyncService.currentWorkerVersion})，正在后台静默热升级...');
+      addD1Log(text(
+        '🚀 检测到线上 Web 节点版本 (${detectedVersion ?? "旧版"}) 落后，开始后台静默热升级至 v${CfD1SyncService.currentWorkerVersion}...',
+        'Outdated Worker version (${detectedVersion ?? "legacy"}) detected. Auto-upgrading to v${CfD1SyncService.currentWorkerVersion}...',
+      ));
+
+      String workerName = 'pod-quick-backend';
+      try {
+        final targetUrl = ws.cfWorkerUrl?.trim().isNotEmpty == true ? ws.cfWorkerUrl! : settings.cfWorkerUrl;
+        final uri = Uri.parse(targetUrl);
+        final host = uri.host;
+        if (host.contains('.')) {
+          workerName = host.split('.').first;
+        }
+      } catch (_) {}
+
+      final res = await CfD1SyncService.updateWorkerCodeAndWeb(
+        accountId: accountId,
+        apiToken: apiToken,
+        workerName: workerName,
+        d1DatabaseId: ws.cfD1DatabaseId ?? settings.cfD1DatabaseId,
+        r2BucketName: ws.cfR2BucketName ?? settings.cfR2BucketName,
+        onLog: (msg) {
+          debugPrint('[Worker Silent Upgrade] $msg');
+          addD1Log(msg);
+        },
+      );
+
+      if (res['success'] == true) {
+        _workspaceWorkerVersionMap[ws.id] = CfD1SyncService.currentWorkerVersion;
+        notifyListeners();
+        debugPrint('🎉 [Worker Upgrade] Cloudflare Worker 与 Web 控制台已成功静默升级至 v${CfD1SyncService.currentWorkerVersion}！');
+        addD1Log(text(
+          '🎉 Cloudflare Worker 与 Web 随行控制台已静默升级至最新版 v${CfD1SyncService.currentWorkerVersion}！',
+          'Cloudflare Worker and Web console upgraded to v${CfD1SyncService.currentWorkerVersion} successfully!',
+        ));
+      } else {
+        debugPrint('⚠️ [Worker Upgrade] 静默升级失败: ${res['error']}');
+      }
+    } catch (e) {
+      debugPrint('⚠️ [Worker Upgrade] 静默升级异常: $e');
+    } finally {
+      _isAutoUpgradingWorker = false;
+    }
+  }
+
+  /// 手动触发升级 Worker 节点与 Web 控制台
+  Future<Map<String, dynamic>> manualUpgradeWorkerNode({
+    WorkspaceProfile? workspace,
+    String? accountId,
+    String? apiToken,
+    Function(String msg)? onLog,
+  }) async {
+    final ws = workspace ?? currentWorkspace;
+    final effectiveAccountId = (accountId != null && accountId.trim().isNotEmpty)
+        ? accountId.trim()
+        : ((ws.cfAccountId?.trim().isNotEmpty == true)
+            ? ws.cfAccountId!.trim()
+            : settings.cfAccountId?.trim());
+
+    final effectiveApiToken = (apiToken != null && apiToken.trim().isNotEmpty)
+        ? apiToken.trim()
+        : ((ws.cfApiToken?.trim().isNotEmpty == true)
+            ? ws.cfApiToken!.trim()
+            : settings.cfApiToken?.trim());
+
+    if (effectiveAccountId == null || effectiveAccountId.isEmpty || effectiveApiToken == null || effectiveApiToken.isEmpty) {
+      return {
+        'success': false,
+        'error': text('未找到 Cloudflare API 凭据，请在下方配置中填入 Account ID 与 API Token', 'Missing CF Account ID or API Token'),
+      };
+    }
+
+    String workerName = 'pod-quick-backend';
+    try {
+      final targetUrl = ws.cfWorkerUrl?.trim().isNotEmpty == true ? ws.cfWorkerUrl! : settings.cfWorkerUrl;
+      final uri = Uri.parse(targetUrl);
+      final host = uri.host;
+      if (host.contains('.')) {
+        workerName = host.split('.').first;
+      }
+    } catch (_) {}
+
+    final res = await CfD1SyncService.updateWorkerCodeAndWeb(
+      accountId: effectiveAccountId,
+      apiToken: effectiveApiToken,
+      workerName: workerName,
+      d1DatabaseId: ws.cfD1DatabaseId ?? settings.cfD1DatabaseId,
+      r2BucketName: ws.cfR2BucketName ?? settings.cfR2BucketName,
+      onLog: onLog,
+    );
+
+    if (res['success'] == true) {
+      _workspaceWorkerVersionMap[ws.id] = CfD1SyncService.currentWorkerVersion;
+      setWorkspaceCloudOnline(ws.id, true, version: CfD1SyncService.currentWorkerVersion);
+      notifyListeners();
+    }
+    return res;
   }
 
   Future<void> _saveWorkspaceMetadataFile() async {
@@ -2609,6 +2818,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
     String? customPath,
     WorkspaceInitType initType = WorkspaceInitType.blank,
     bool inheritCloudConfig = false,
+    bool autoSwitch = false,
   }) async {
     final cleanName = name.trim().isEmpty ? '新建工作区' : name.trim();
     final id = 'ws_${DateTime.now().millisecondsSinceEpoch}_${const Uuid().v4().substring(0, 6)}';
@@ -2618,7 +2828,12 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       dirPath = customPath.trim().replaceAll('\\', '/');
     } else {
       final baseAppSupport = await getApplicationSupportDirectory();
-      dirPath = '${baseAppSupport.path}/workspaces/$cleanName'.replaceAll('\\', '/');
+      String candidate = '${baseAppSupport.path}/workspaces/$cleanName'.replaceAll('\\', '/');
+      // 如果候选目录已被其他现有工作区占用，追加短时间戳后缀确保目录独立隔离
+      if (_workspaces.any((w) => w.directoryPath.toLowerCase() == candidate.toLowerCase())) {
+        candidate = '${baseAppSupport.path}/workspaces/${cleanName}_${DateTime.now().millisecondsSinceEpoch.toString().substring(8)}'.replaceAll('\\', '/');
+      }
+      dirPath = candidate;
     }
 
     final targetDir = Directory(dirPath);
@@ -2664,6 +2879,17 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       }
     } else if (initType == WorkspaceInitType.migrate) {
       await changeDataDirectory(dirPath);
+    } else if (initType == WorkspaceInitType.blank) {
+      // 全新空白工作区：彻底确保目录100%绝对干净，清空所有残留文件与备份快照
+      try {
+        if (targetDir.existsSync()) {
+          for (final entity in targetDir.listSync()) {
+            try {
+              entity.deleteSync(recursive: true);
+            } catch (_) {}
+          }
+        }
+      } catch (_) {}
     }
 
     final vaultId = 'vlt_${DateTime.now().millisecondsSinceEpoch}_${const Uuid().v4().substring(0, 8)}';
@@ -2681,9 +2907,20 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
       vaultId: vaultId,
     );
 
+    // 在目标目录写入工作区元数据
+    try {
+      final metaFile = File('${profile.directoryPath}/workspace.json');
+      metaFile.writeAsStringSync(jsonEncode(profile.toJson()));
+    } catch (_) {}
+
     _workspaces.add(profile);
     await _saveWorkspacesList();
-    await switchWorkspace(id);
+
+    if (autoSwitch) {
+      await switchWorkspace(id);
+    }
+
+    notifyListeners();
     return profile;
   }
 
@@ -5078,6 +5315,9 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   Timer? _d1LiveSyncDebounceTimer;
 
   void _triggerD1LiveAutoSync() {
+    // 设置弹窗开启时，用户正在配置凭据或查看设置，不触发剪贴板复制触发的即时同步
+    if (isDialogOpen) return;
+
     final isWorkerConfigured = settings.cfD1Mode == 0 && settings.cfWorkerUrl.trim().isNotEmpty;
     final isRestConfigured = settings.cfD1Mode == 1 &&
         settings.cfAccountId?.trim().isNotEmpty == true &&
@@ -5422,7 +5662,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   /// 高速获取快照文件总数 (仅读取目录项，不读取文件内容，耗时 < 1ms)
   int getNotesBackupsCount({String? customDir}) {
     try {
-      final dataDir = customDir ?? getDataDirectoryPathSync();
+      final cleanCustomDir = customDir?.trim();
+      final dataDir = (cleanCustomDir != null && cleanCustomDir.isNotEmpty)
+          ? cleanCustomDir
+          : getDataDirectoryPathSync();
       final backupDir = Directory('$dataDir/backups/notes');
       if (!backupDir.existsSync()) return 0;
       return backupDir
@@ -5438,7 +5681,10 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
   /// 获取便签本地快照备份文件列表 (毫秒级零阻塞响应，通过文件名提取与内存缓存消除卡顿)
   List<Map<String, dynamic>> getNotesBackups({String? customDir}) {
     try {
-      final dataDir = customDir ?? getDataDirectoryPathSync();
+      final cleanCustomDir = customDir?.trim();
+      final dataDir = (cleanCustomDir != null && cleanCustomDir.isNotEmpty)
+          ? cleanCustomDir
+          : getDataDirectoryPathSync();
       final backupDir = Directory('$dataDir/backups/notes');
       if (!backupDir.existsSync()) return [];
 

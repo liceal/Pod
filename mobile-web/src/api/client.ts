@@ -10,7 +10,7 @@ const STORAGE_KEY_CLIPBOARD = 'podquick_cached_clipboard';
 const STORAGE_KEY_FILES = 'podquick_cached_files';
 const STORAGE_KEY_PENDING_NOTES = 'podquick_pending_notes';
 
-export const CURRENT_WEB_VERSION = '1.1.1';
+export const CURRENT_WEB_VERSION = '1.1.4';
 
 export class ApiClient {
   private static defaultBaseUrl = '';

@@ -34,6 +34,9 @@ class CfSyncMetrics {
 }
 
 class CfD1SyncService {
+  /// 当前内置的 Worker 服务端与 Web 控制台基准版本
+  static const String currentWorkerVersion = '1.1.4';
+
   /// Cloudflare Worker 服务端 URL (支持开发环境与线上生产环境)
   final String workerUrl;
 
@@ -73,9 +76,12 @@ class CfD1SyncService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
+        final serverVersion = (data is Map && data['version'] is String)
+            ? data['version'] as String
+            : null;
         if (isDevMode) {
           debugPrint(
-            '✅ [CF D1 Health] 节点正常! 客户端网络往返: ${rttMs.toStringAsFixed(1)}ms, Worker处理耗时: ${serverTimeHeader ?? "N/A"}ms, D1数据库延迟: ${data['dbPingLatencyMs']}ms',
+            '✅ [CF D1 Health] 节点正常! 线上版本: ${serverVersion ?? "旧版"}, 客户端网络往返: ${rttMs.toStringAsFixed(1)}ms, Worker处理耗时: ${serverTimeHeader ?? "N/A"}ms, D1数据库延迟: ${data['dbPingLatencyMs']}ms',
           );
         }
         return {
@@ -83,6 +89,8 @@ class CfD1SyncService {
           'rttMs': rttMs,
           'serverTimeMs': serverTimeHeader,
           'serverData': data,
+          'version': serverVersion,
+          'isUpToDate': serverVersion == currentWorkerVersion,
         };
       } else {
         debugPrint(
@@ -1234,6 +1242,69 @@ function getWebHtml() {
   return _cachedHtml;
 }
 
+const REMOTE_WEB_SOURCES = [
+  'https://fastly.jsdelivr.net/gh/liceal/Pod@main/assets/web/index.html',
+  'https://cdn.jsdelivr.net/gh/liceal/Pod@main/assets/web/index.html',
+  'https://raw.githubusercontent.com/liceal/Pod/main/assets/web/index.html'
+];
+let _latestRemoteHtml = null;
+let _lastRemoteFetchTime = 0;
+const REMOTE_CACHE_TTL_MS = 3 * 60 * 1000;
+const WORKER_VERSION = '$currentWorkerVersion';
+
+function extractHtmlVersion(html) {
+  if (!html) return '0.0.0';
+  const m1 = html.match(/podquick-version"[^>]*content="([0-9]+\\.[0-9]+\\.[0-9]+)"/);
+  if (m1) return m1[1];
+  const m2 = html.match(/PodQuick\\s+v([0-9]+\\.[0-9]+\\.[0-9]+)/);
+  if (m2) return m2[1];
+  const m3 = html.match(/>v([0-9]+\\.[0-9]+\\.[0-9]+)<\\/span>/);
+  if (m3) return m3[1];
+  return '0.0.0';
+}
+
+function compareVer(v1, v2) {
+  const p1 = String(v1 || '0.0.0').split('.').map(Number);
+  const p2 = String(v2 || '0.0.0').split('.').map(Number);
+  for (let i = 0; i < 3; i++) {
+    const a = p1[i] || 0;
+    const b = p2[i] || 0;
+    if (a > b) return 1;
+    if (a < b) return -1;
+  }
+  return 0;
+}
+
+async function fetchLatestWebHtml(force = false) {
+  const now = Date.now();
+  if (!force && _latestRemoteHtml && (now - _lastRemoteFetchTime < REMOTE_CACHE_TTL_MS)) {
+    return _latestRemoteHtml;
+  }
+  const embeddedHtml = getWebHtml();
+  const embeddedVer = extractHtmlVersion(embeddedHtml) !== '0.0.0' ? extractHtmlVersion(embeddedHtml) : WORKER_VERSION;
+  for (const src of REMOTE_WEB_SOURCES) {
+    try {
+      const resp = await fetch(src + (force ? `?t=\${now}` : ''), {
+        headers: { 'User-Agent': 'PodQuick-EdgeWorker/1.1' },
+        cf: { cacheTtl: 180, cacheEverything: true }
+      });
+      if (resp.ok) {
+        const text = await resp.text();
+        if (text && text.includes('<!DOCTYPE html>') && text.length > 50000) {
+          const remoteVer = extractHtmlVersion(text);
+          if (compareVer(remoteVer, embeddedVer) >= 0) {
+            _latestRemoteHtml = text;
+            _lastRemoteFetchTime = now;
+            return text;
+          }
+        }
+      }
+    } catch (_) {}
+  }
+  _lastRemoteFetchTime = now;
+  return _latestRemoteHtml || embeddedHtml;
+}
+
 let _tablesEnsured = false;
 async function ensureD1Tables(db) {
   if (_tablesEnsured || !db) return;
@@ -1306,7 +1377,7 @@ export default {
         const t0 = performance.now();
         const dbCheck = await env.DB.prepare('SELECT 1 as alive').first();
         const t1 = performance.now();
-        response = new Response(JSON.stringify({ status: 'ok', version: '1.1.1', database: dbCheck ? 'connected' : 'error', dbPingLatencyMs: (t1 - t0).toFixed(2) }), { headers: { 'Content-Type': 'application/json' } });
+        response = new Response(JSON.stringify({ status: 'ok', version: '$currentWorkerVersion', database: dbCheck ? 'connected' : 'error', dbPingLatencyMs: (t1 - t0).toFixed(2) }), { headers: { 'Content-Type': 'application/json' } });
       } else if (path === '/api/v1/vault/info' || path === '/api/v1/vault') {
         try {
           await env.DB.prepare('CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);').run();
@@ -1367,7 +1438,9 @@ export default {
         try {
           const body = await request.json();
           let folderPath = String(body.folderPath || body.path || '').trim();
-          folderPath = folderPath.split('\\\\').join('/').replace(/^\/+/, '').replace(/\/+\$/, '');
+          folderPath = folderPath.split('\\\\').join('/');
+          while (folderPath.startsWith('/')) folderPath = folderPath.slice(1);
+          while (folderPath.endsWith('/')) folderPath = folderPath.slice(0, -1);
           if (!folderPath.startsWith('files/')) folderPath = `files/\${folderPath}`;
           const markerKey = `\${folderPath}/.keep`;
           const folderName = folderPath.split('/').pop() || folderPath;
@@ -1421,12 +1494,41 @@ export default {
           response = new Response(JSON.stringify({ success: true, hasPin: false }), { headers: { 'Content-Type': 'application/json' } });
         }
       } else if (!path.startsWith('/api/')) {
-        return new Response(getWebHtml(), {
+        const isForceRefresh = url.searchParams.has('refresh') || url.searchParams.has('reload');
+        let htmlContent = _latestRemoteHtml;
+        const isCacheExpired = !htmlContent || (Date.now() - _lastRemoteFetchTime >= REMOTE_CACHE_TTL_MS);
+
+        if (isForceRefresh) {
+          try {
+            htmlContent = await fetchLatestWebHtml(true);
+          } catch (_) {
+            htmlContent = getWebHtml();
+          }
+        } else if (isCacheExpired) {
+          try {
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 1500));
+            const fetched = await Promise.race([fetchLatestWebHtml(false), timeoutPromise]);
+            if (fetched) {
+              htmlContent = fetched;
+            } else {
+              htmlContent = _latestRemoteHtml || getWebHtml();
+              if (ctx && ctx.waitUntil) {
+                ctx.waitUntil(fetchLatestWebHtml(false));
+              }
+            }
+          } catch (_) {
+            htmlContent = _latestRemoteHtml || getWebHtml();
+          }
+        }
+
+        htmlContent = htmlContent || getWebHtml();
+        return new Response(htmlContent, {
           headers: {
             'Content-Type': 'text/html; charset=utf-8',
             'Cache-Control': 'no-cache, no-store, must-revalidate',
             'Pragma': 'no-cache',
             'Expires': '0',
+            'X-Web-Source': htmlContent === _latestRemoteHtml ? 'remote-hot-reload' : 'embedded-fallback',
           },
         });
       } else {
@@ -1560,5 +1662,24 @@ export default {
       onLog?.call('❌ 自动部署发生异常: $e');
       return {'success': false, 'error': e.toString()};
     }
+  }
+
+  /// 9. 快速热升级/重新发布 Worker 脚本与内置 Web 控制台
+  static Future<Map<String, dynamic>> updateWorkerCodeAndWeb({
+    required String accountId,
+    required String apiToken,
+    String workerName = 'pod-quick-backend',
+    String? d1DatabaseId,
+    String? r2BucketName,
+    Function(String msg)? onLog,
+  }) async {
+    return deployWorkerAndD1(
+      accountId: accountId,
+      apiToken: apiToken,
+      workerName: workerName,
+      d1Name: d1DatabaseId ?? 'pod-quick-d1',
+      r2BucketName: r2BucketName ?? 'pod-quick-files-apac',
+      onLog: onLog,
+    );
   }
 }
