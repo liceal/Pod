@@ -265,7 +265,7 @@
             </div>
             <div class="brand-info">
               <h4 class="app-brand-name">PodQuick (轻蓄)</h4>
-              <p class="app-version-tag">版本号：<span class="version-num">v1.1.4</span> <span class="badge">最新稳定版</span></p>
+              <p class="app-version-tag">版本号：<span class="version-num">v1.1.5</span> <span class="badge">最新稳定版</span></p>
             </div>
           </div>
 
@@ -315,7 +315,7 @@
                 <div class="release-brand-icon">
                   <Icons name="cloud" size="18" />
                 </div>
-                <h3>PodQuick v1.1.4 更新日志</h3>
+                <h3>PodQuick v1.1.5 更新日志</h3>
               </div>
               <button class="release-close-btn" @click="showReleaseNotesModal = false" title="关闭">
                 <Icons name="close" size="16" />
@@ -323,8 +323,8 @@
             </div>
             <div class="release-modal-body">
               <div class="release-badge-bar">
-                <span class="badge badge-accent">v1.1.4 最新发行版</span>
-                <span class="sub-date">Refactoring UI 极简重构 · 锚点记忆 · 空目录同步</span>
+                <span class="badge badge-accent">v1.1.5 最新发行版</span>
+                <span class="sub-date">Windows 任务栏静默隐藏修复 · 布局溢出修复</span>
               </div>
               <ul class="release-list">
                 <li>

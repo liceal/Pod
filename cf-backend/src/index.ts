@@ -195,7 +195,7 @@ async function handleHealth(env: Env): Promise<Response> {
   return new Response(
     JSON.stringify({
       status: 'ok',
-      version: '1.1.4',
+      version: '1.1.5',
       environment: env.ENVIRONMENT,
       database: dbCheck ? 'connected' : 'error',
       dbPingLatencyMs: (t1 - t0).toFixed(2),

@@ -1862,6 +1862,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
 
         await windowManager.waitUntilReadyToShow(windowOptions, () async {
           await windowManager.setAsFrameless();
+          await windowManager.setSkipTaskbar(true);
           await windowManager.setMinimumSize(const Size(1, 1));
           await windowManager.setAlwaysOnTop(true);
           await windowManager.setHasShadow(false);
@@ -1891,6 +1892,7 @@ class AppState extends ChangeNotifier with WindowListener, TrayListener {
                     (e) => debugPrint('Failed to set startup bounds: $e'),
                   );
               await windowManager.show();
+              await windowManager.setSkipTaskbar(true);
             }
           }
         });

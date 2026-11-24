@@ -1,5 +1,18 @@
 # 更新日志 (Changelog)
 
+## [1.1.5] - 2026-11-24
+
+### 🐛 问题修复与体验优化
+- **Windows 任务栏静默隐藏彻底修复**：
+  - 从 Win32 原生窗口创建阶段（`CreateWindowEx`）即注入 `WS_EX_TOOLWINDOW` 扩展样式，避免应用启动时在任务栏短暂露脸。
+  - 拦截并纠正 `WM_STYLECHANGING` 消息，杜绝插件或系统事件错误回写 `WS_EX_APPWINDOW`，确保应用在作为后台常驻托盘工具时始终纯净隐藏于任务栏。
+  - 在 Flutter 引擎生命周期与窗口呈现关键路径中双重保障 `setSkipTaskbar(true)`。
+- **设置面板分段控件布局溢出修复**：
+  - 修复设置中心「配置云端连接」分段选择器在小尺寸/高缩放屏幕下产生的 14 像素横向溢出（RenderFlex overflowed）。
+  - 分段标签适配弹性缩放与省略号截断（`Flexible` + `TextOverflow.ellipsis`），优化文字长度。
+
+---
+
 ## [1.1.4] - 2026-11-18
 
 ### 🎨 UI/UX 极简重构与数据同步交互升级 (Refactoring UI)

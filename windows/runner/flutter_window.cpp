@@ -133,7 +133,7 @@ bool FlutterWindow::OnCreate() {
     return false;
   }
 
-  // Force window to be borderless popup style from the beginning
+  // Force window to be borderless popup style and toolwindow (hidden from taskbar) from the beginning
   HWND hwnd = GetHandle();
   LONG style = GetWindowLong(hwnd, GWL_STYLE);
   style &= ~WS_CAPTION;
@@ -141,6 +141,12 @@ bool FlutterWindow::OnCreate() {
   style &= ~WS_SYSMENU;
   style |= WS_POPUP;
   SetWindowLong(hwnd, GWL_STYLE, style);
+
+  LONG ex_style = GetWindowLong(hwnd, GWL_EXSTYLE);
+  ex_style &= ~WS_EX_APPWINDOW;
+  ex_style |= WS_EX_TOOLWINDOW;
+  SetWindowLong(hwnd, GWL_EXSTYLE, ex_style);
+
   SetWindowPos(hwnd, nullptr, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
 
   // Register clipboard format listener for OS native clipboard change events
@@ -536,7 +542,8 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
     return 0;
   }
 
-  // Prevent caption/thickframe/sysmenu styles from being added back
+  // Prevent caption/thickframe/sysmenu styles from being added back,
+  // and always enforce WS_EX_TOOLWINDOW without WS_EX_APPWINDOW so it never appears in the taskbar.
   if (message == WM_STYLECHANGING) {
     STYLESTRUCT* ss = reinterpret_cast<STYLESTRUCT*>(lparam);
     if (wparam == GWL_STYLE) {
@@ -544,6 +551,9 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
       ss->styleNew &= ~WS_THICKFRAME;
       ss->styleNew &= ~WS_SYSMENU;
       ss->styleNew |= WS_POPUP;
+    } else if (wparam == GWL_EXSTYLE) {
+      ss->styleNew &= ~WS_EX_APPWINDOW;
+      ss->styleNew |= WS_EX_TOOLWINDOW;
     }
   }
 

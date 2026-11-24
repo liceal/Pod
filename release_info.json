@@ -1,8 +1,8 @@
 {
-  "version": "1.1.4",
+  "version": "1.1.5",
   "windowsUrl": "PodQuick_Setup.exe",
   "macArmUrl": "PodQuick-arm.dmg",
   "macX86Url": "PodQuick-x86.dmg",
   "macUrl": "PodQuick-arm.dmg",
-  "releaseNotes": "1. UI/UX 极简重构：基于 Refactoring UI 规范全面升级桌面端分段控制器、内嵌微凹输入框、直达操作胶囊与 Web 端 Zinc 深色主题及合一同步仪表盘。\n2. Web 锚点路由与位置记忆：切换标签实时更新地址栏锚点 (#clipboard/#notes/#files/#settings)，刷新或下次进入自动停留在原标签页。\n3. 空文件夹双向同步：支持本地空文件夹自动识别并同步至线上网盘展示。\n4. 关键交互修复：修复线上同步时自动跳回剪贴板的问题；修复复制凭据时触发后台同步导致部署按钮置灰等待的问题；新增 Web 节点版本号防倒退保护。"
+  "releaseNotes": "1. Windows 任务栏彻底隐藏修复：彻底解决 Windows 开机自启或后台静默运行时任务栏偶发残留应用图标的问题，从 Win32 窗口底层创建阶段即强制置入 WS_EX_TOOLWINDOW，且拦截动态样式覆写。\n2. 样式与布局溢出修复：修复设置面板「配置云端连接」分段控件在特定缩放比例下产生的 14 像素横向布局溢出（RenderFlex overflowed）。\n3. 细节与稳定性增强：优化多端生命周期管理与静默状态同步稳定性。"
 }

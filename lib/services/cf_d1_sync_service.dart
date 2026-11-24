@@ -35,7 +35,7 @@ class CfSyncMetrics {
 
 class CfD1SyncService {
   /// 当前内置的 Worker 服务端与 Web 控制台基准版本
-  static const String currentWorkerVersion = '1.1.4';
+  static const String currentWorkerVersion = '1.1.5';
 
   /// Cloudflare Worker 服务端 URL (支持开发环境与线上生产环境)
   final String workerUrl;
