@@ -49,6 +49,9 @@
       class="app-main tabs-container"
       :class="{ 'lock-scroll': isInsideFilesSubfolder }"
       @scroll.passive="handleTrackScroll"
+      @scrollend.passive="handleScrollEnd"
+      @wheel.passive="handleWheelScroll"
+      @pointerdown.passive="handlePointerDown"
       @touchstart.passive="handleTouchStart"
       @touchend.passive="handleTouchEnd"
     >
@@ -258,9 +261,8 @@ const handleHashChange = () => {
   }
 };
 
-const handleTrackScroll = () => {
-  // 核心保护：若非用户手动滑动触摸（如数据同步重渲染触发重排），绝不允许跳转标签页
-  if (isProgrammaticScrolling || isSyncing.value || !isUserSwiping || !tabsContainerRef.value) return;
+const syncCurrentTabFromScroll = () => {
+  if (!tabsContainerRef.value) return;
   const { scrollLeft, clientWidth } = tabsContainerRef.value;
   if (!clientWidth) return;
   const idx = Math.round(scrollLeft / clientWidth);
@@ -270,20 +272,57 @@ const handleTrackScroll = () => {
   }
 };
 
-const handleTouchStart = () => {
-  // 手指触摸屏幕，标记为用户主动滑动
+const handleTrackScroll = () => {
+  // 核心保护：若非用户主动滑动（触摸屏 / 触摸板 / 鼠标滚轮），如数据同步重渲染触发重排，绝不允许跳转标签页
+  if (isProgrammaticScrolling || isSyncing.value || !isUserSwiping) return;
+  syncCurrentTabFromScroll();
+};
+
+const handleScrollEnd = () => {
+  // 兜底保障：当触摸板惯性滑动或吸附动画彻底静止时，同步一次最终停留的标签页与 URL 锚点
+  if (isProgrammaticScrolling || isSyncing.value) return;
+  if (isUserSwiping) {
+    syncCurrentTabFromScroll();
+    isUserSwiping = false;
+  }
+};
+
+const markActiveInteraction = (autoResetMs = 650) => {
   isUserSwiping = true;
   isProgrammaticScrolling = false;
   clearTimeout(scrollEndTimer);
   clearTimeout(touchEndTimer);
+  if (autoResetMs > 0) {
+    touchEndTimer = setTimeout(() => {
+      isUserSwiping = false;
+    }, autoResetMs);
+  }
+};
+
+const handleWheelScroll = (e: WheelEvent) => {
+  // 触摸板双指左右滑动或鼠标横向滚轮
+  if (Math.abs(e.deltaX) > 1) {
+    markActiveInteraction(650);
+  }
+};
+
+const handlePointerDown = (e: PointerEvent) => {
+  if (e.pointerType !== 'touch') {
+    markActiveInteraction(800);
+  }
+};
+
+const handleTouchStart = () => {
+  // 手指触摸屏幕，标记为用户主动滑动
+  markActiveInteraction(0);
 };
 
 const handleTouchEnd = () => {
-  // 触摸结束后给 400ms 惯性滚动缓冲，随后解除用户手势锁定
+  // 触摸结束后给 450ms 惯性滚动缓冲，随后解除用户手势锁定
   clearTimeout(touchEndTimer);
   touchEndTimer = setTimeout(() => {
     isUserSwiping = false;
-  }, 400);
+  }, 450);
 };
 
 const handleResize = () => {
