@@ -1,8 +1,8 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "windowsUrl": "PodQuick_Setup.exe",
   "macArmUrl": "PodQuick-arm.dmg",
   "macX86Url": "PodQuick-x86.dmg",
   "macUrl": "PodQuick-arm.dmg",
-  "releaseNotes": "1. Windows 任务栏彻底隐藏修复：彻底解决 Windows 开机自启或后台静默运行时任务栏偶发残留应用图标的问题，从 Win32 窗口底层创建阶段即强制置入 WS_EX_TOOLWINDOW，且拦截动态样式覆写。\n2. 样式与布局溢出修复：修复设置面板「配置云端连接」分段控件在特定缩放比例下产生的 14 像素横向布局溢出（RenderFlex overflowed）。\n3. 细节与稳定性增强：优化多端生命周期管理与静默状态同步稳定性。"
+  "releaseNotes": "1. 修复切换工作区后便签一直加载的问题：切换到空工作区或便签重新加载期间，便签面板不再无限显示加载动画，改为正常展示便签列表与「新建便签」入口。\n2. 稳定性增强：统一列表与详情视图的状态判定，避免空便签状态下触发详情渲染异常，搜索与视图切换保持一致可用。"
 }

@@ -25,7 +25,6 @@ class NotesPane extends StatefulWidget {
 }
 
 class _NotesPaneState extends State<NotesPane> {
-
   late TextEditingController _editorController;
   late TextEditingController _searchController;
   final ScrollController _listScrollController = ScrollController();
@@ -314,28 +313,36 @@ class _NotesPaneState extends State<NotesPane> {
       onPointerPanZoomEnd: _handleBackPanZoomEnd,
       child: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onHorizontalDragStart: _disableDragGesture ? null : (_) {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = _isMouseButtonDown;
-        },
-        onHorizontalDragUpdate: _disableDragGesture ? null : (details) {
-          if (_ignoreCurrentBackDrag) return;
-          _swipeDistance += details.delta.dx;
-        },
-        onHorizontalDragEnd: _disableDragGesture ? null : (details) {
-          if (!_ignoreCurrentBackDrag) {
-            final velocity = details.primaryVelocity ?? 0;
-            if (_swipeDistance > 80 || velocity > 520) {
-              _showListView();
-            }
-          }
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
-        onHorizontalDragCancel: _disableDragGesture ? null : () {
-          _swipeDistance = 0;
-          _ignoreCurrentBackDrag = false;
-        },
+        onHorizontalDragStart: _disableDragGesture
+            ? null
+            : (_) {
+                _swipeDistance = 0;
+                _ignoreCurrentBackDrag = _isMouseButtonDown;
+              },
+        onHorizontalDragUpdate: _disableDragGesture
+            ? null
+            : (details) {
+                if (_ignoreCurrentBackDrag) return;
+                _swipeDistance += details.delta.dx;
+              },
+        onHorizontalDragEnd: _disableDragGesture
+            ? null
+            : (details) {
+                if (!_ignoreCurrentBackDrag) {
+                  final velocity = details.primaryVelocity ?? 0;
+                  if (_swipeDistance > 80 || velocity > 520) {
+                    _showListView();
+                  }
+                }
+                _swipeDistance = 0;
+                _ignoreCurrentBackDrag = false;
+              },
+        onHorizontalDragCancel: _disableDragGesture
+            ? null
+            : () {
+                _swipeDistance = 0;
+                _ignoreCurrentBackDrag = false;
+              },
         child: child,
       ),
     );
@@ -541,32 +548,32 @@ class _NotesPaneState extends State<NotesPane> {
         child: Listener(
           onPointerSignal: _handleEditorPointerSignal,
           child: TextField(
-              controller: _editorController,
-              focusNode: _editorFocusNode,
-              scrollController: _scrollController,
-              maxLines: null,
-              minLines: null,
-              expands: true,
-              textAlignVertical: TextAlignVertical.top,
-              keyboardType: TextInputType.multiline,
-              style: editorTextStyle,
-              decoration: InputDecoration(
-                hintText: context.text(
-                  '开始书写便签内容...',
-                  'Start writing note content...',
-                ),
-                hintStyle: editorTextStyle.copyWith(
-                  color: widget.isDark ? Colors.white24 : Colors.black26,
-                ),
-                border: InputBorder.none,
-                contentPadding: const EdgeInsets.only(left: 10, right: 2),
-                isDense: true,
+            controller: _editorController,
+            focusNode: _editorFocusNode,
+            scrollController: _scrollController,
+            maxLines: null,
+            minLines: null,
+            expands: true,
+            textAlignVertical: TextAlignVertical.top,
+            keyboardType: TextInputType.multiline,
+            style: editorTextStyle,
+            decoration: InputDecoration(
+              hintText: context.text(
+                '开始书写便签内容...',
+                'Start writing note content...',
               ),
-              onChanged: _onContentChanged,
+              hintStyle: editorTextStyle.copyWith(
+                color: widget.isDark ? Colors.white24 : Colors.black26,
+              ),
+              border: InputBorder.none,
+              contentPadding: const EdgeInsets.only(left: 10, right: 2),
+              isDense: true,
             ),
+            onChanged: _onContentChanged,
           ),
         ),
-      );
+      ),
+    );
   }
 
   @override
@@ -574,9 +581,7 @@ class _NotesPaneState extends State<NotesPane> {
     final active = widget.state.activeNote;
     final allNotes = widget.state.filteredNotes;
 
-    if (active == null) {
-      return const Center(child: CircularProgressIndicator());
-    }
+    final effectiveShowList = active == null ? true : _showList;
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.0, horizontal: 2.0),
@@ -596,7 +601,7 @@ class _NotesPaneState extends State<NotesPane> {
               height: 26,
               child: Row(
                 children: [
-                  if (_showList)
+                  if (effectiveShowList)
                     Expanded(
                       child: Container(
                         height: 26,
@@ -666,7 +671,7 @@ class _NotesPaneState extends State<NotesPane> {
                   else
                     const Spacer(),
                   const SizedBox(width: 2),
-                  if (!_showList) ...[
+                  if (!effectiveShowList) ...[
                     Tooltip(
                       message: context.text('删除当前便签', 'Delete Current Note'),
                       child: MouseRegion(
@@ -734,14 +739,14 @@ class _NotesPaneState extends State<NotesPane> {
                   ),
                   const SizedBox(width: 2),
                   Tooltip(
-                    message: _showList
+                    message: effectiveShowList
                         ? context.text('当前为列表视图', 'Currently list view')
                         : context.text('返回列表视图', 'Back to list view'),
                     child: MouseRegion(
                       cursor: SystemMouseCursors.click,
                       child: AnimatedPress(
                         onTap: () {
-                          final willShowList = !_showList;
+                          final willShowList = !effectiveShowList;
                           setState(() => _showList = willShowList);
                           if (!willShowList) {
                             _focusEditorOnNextFrame();
@@ -772,9 +777,12 @@ class _NotesPaneState extends State<NotesPane> {
                   ListenableBuilder(
                     listenable: widget.state,
                     builder: (context, _) {
-                      final isSyncing = widget.state.isD1Syncing || widget.state.isR2Syncing;
+                      final isSyncing =
+                          widget.state.isD1Syncing || widget.state.isR2Syncing;
                       final hasError = widget.state.lastD1SyncSuccess == false;
-                      final primaryColor = Theme.of(context).colorScheme.primary;
+                      final primaryColor = Theme.of(
+                        context,
+                      ).colorScheme.primary;
                       const errorColor = Color(0xFFEF5350);
 
                       final IconData iconData;
@@ -784,19 +792,28 @@ class _NotesPaneState extends State<NotesPane> {
                       if (isSyncing) {
                         iconData = Icons.sync_rounded;
                         iconColor = primaryColor;
-                        tooltipText = context.text('云端同步中... (点击查看实时日志)', 'Cloud sync in progress... (Click to view logs)');
+                        tooltipText = context.text(
+                          '云端同步中... (点击查看实时日志)',
+                          'Cloud sync in progress... (Click to view logs)',
+                        );
                       } else if (hasError) {
                         iconData = Icons.error_outline_rounded;
                         iconColor = errorColor;
-                        tooltipText = context.text('云端同步异常 (点击查看排查日志)', 'Cloud sync error (Click to inspect logs)');
+                        tooltipText = context.text(
+                          '云端同步异常 (点击查看排查日志)',
+                          'Cloud sync error (Click to inspect logs)',
+                        );
                       } else {
                         iconData = Icons.priority_high_rounded; // 感叹号图标
                         iconColor = widget.state.lastD1SyncSuccess == true
                             ? primaryColor.withValues(alpha: 0.85)
                             : (widget.isDark
-                                ? Colors.white.withValues(alpha: 0.6)
-                                : Colors.black.withValues(alpha: 0.6));
-                        tooltipText = context.text('云端同步日志与状态 (点击查看)', 'Cloud sync logs & status (Click to view)');
+                                  ? Colors.white.withValues(alpha: 0.6)
+                                  : Colors.black.withValues(alpha: 0.6));
+                        tooltipText = context.text(
+                          '云端同步日志与状态 (点击查看)',
+                          'Cloud sync logs & status (Click to view)',
+                        );
                       }
 
                       return Tooltip(
@@ -818,8 +835,10 @@ class _NotesPaneState extends State<NotesPane> {
                                 color: hasError
                                     ? errorColor.withValues(alpha: 0.12)
                                     : (widget.isDark
-                                        ? Colors.white.withValues(alpha: 0.06)
-                                        : Colors.black.withValues(alpha: 0.04)),
+                                          ? Colors.white.withValues(alpha: 0.06)
+                                          : Colors.black.withValues(
+                                              alpha: 0.04,
+                                            )),
                                 borderRadius: BorderRadius.zero,
                               ),
                               child: Stack(
@@ -831,15 +850,14 @@ class _NotesPaneState extends State<NotesPane> {
                                       height: 13,
                                       child: CircularProgressIndicator(
                                         strokeWidth: 1.5,
-                                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                                        valueColor:
+                                            AlwaysStoppedAnimation<Color>(
+                                              primaryColor,
+                                            ),
                                       ),
                                     )
                                   else
-                                    Icon(
-                                      iconData,
-                                      size: 15,
-                                      color: iconColor,
-                                    ),
+                                    Icon(iconData, size: 15, color: iconColor),
                                   if (hasError)
                                     Positioned(
                                       top: 3,
@@ -865,12 +883,18 @@ class _NotesPaneState extends State<NotesPane> {
                   ListenableBuilder(
                     listenable: widget.state,
                     builder: (context, _) {
-                      final isSyncing = widget.state.isD1Syncing || widget.state.isR2Syncing;
-                      final primaryColor = Theme.of(context).colorScheme.primary;
+                      final isSyncing =
+                          widget.state.isD1Syncing || widget.state.isR2Syncing;
+                      final primaryColor = Theme.of(
+                        context,
+                      ).colorScheme.primary;
 
                       return Tooltip(
                         message: isSyncing
-                            ? context.text('设置 (后台云端同步中...)', 'Settings (Syncing in background...)')
+                            ? context.text(
+                                '设置 (后台云端同步中...)',
+                                'Settings (Syncing in background...)',
+                              )
                             : context.text('设置', 'Settings'),
                         child: MouseRegion(
                           cursor: SystemMouseCursors.click,
@@ -894,8 +918,8 @@ class _NotesPaneState extends State<NotesPane> {
                                     color: isSyncing
                                         ? primaryColor
                                         : (widget.isDark
-                                            ? Colors.white.withOpacity(0.6)
-                                            : Colors.black.withOpacity(0.6)),
+                                              ? Colors.white.withOpacity(0.6)
+                                              : Colors.black.withOpacity(0.6)),
                                   ),
                                   if (isSyncing)
                                     Positioned(
@@ -926,7 +950,7 @@ class _NotesPaneState extends State<NotesPane> {
 
           // Main Content Area with Transition
           Expanded(
-            child: _showList
+            child: effectiveShowList
                 ? _buildList(allNotes)
                 : _wrapDetailBackGesture(_buildDetail(active)),
           ),
